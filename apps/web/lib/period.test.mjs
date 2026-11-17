@@ -41,3 +41,56 @@ test("reversed settlement is absent from actuals, pending amount restored",()=>{
  assert.equal(r.receivable.open,240000);
  assert.equal(r.liveCash,0);
 });
+
+test("Case G: within_budgets adds only residual budget, never double-counting committed expenses",()=>{
+ const d={
+  wallets:[{id:"w",opening_balance_cents:"100000",opening_at:"2026-11-01T00:00:00Z"}],
+  categories:[{id:"c-food",name:"Alimentação",direction:"expense",parent_id:null,active:true}],
+  budgetRules:[{id:"r1",category_id:"c-food",limit_cents:"40000",starts_month:"2026-11",active:true}],
+  economicEvents:[{id:"e1",direction:"expense",description:"Mercado",amount_cents:"15980",occurred_on:"2026-11-17",category_id:"c-food",event_kind:"one_off",status:"committed"}],
+  titles:[{id:"t1",economic_event_id:"e1",direction:"expense",wallet_id:"w",category:"Alimentação",amount_cents:"15980",settled_cents:"0",due_on:"2026-11-20"}],
+  settlements:[],assets:[],liabilities:[]
+ };
+ const r=computeRange(d,"2026-11-17","2026-11-30","2026-11-17");
+ // Contractual: 100000 - 15980 = 84020
+ assert.equal(r.projectedCash,84020);
+ // Within budgets: 100000 - 40000 = 60000 (residual 24020 added once, NOT 15980 + 40000!)
+ assert.equal(r.totalResidualBudgetCents,24020);
+ assert.equal(r.projectedCashWithinBudgets,60000);
+});
+
+test("Case H: remaining budget is never reported as safe-to-spend when cash goes negative",()=>{
+ const d={
+  wallets:[{id:"w",opening_balance_cents:"50000",opening_at:"2026-11-01T00:00:00Z"}],
+  categories:[{id:"c-fun",name:"Lazer",direction:"expense",parent_id:null,active:true}],
+  budgetRules:[{id:"r1",category_id:"c-fun",limit_cents:"10000",starts_month:"2026-11",active:true}],
+  economicEvents:[],
+  titles:[{id:"t-rent",direction:"expense",wallet_id:"w",category:"Moradia",amount_cents:"80000",settled_cents:"0",due_on:"2026-11-20"}],
+  settlements:[],assets:[],liabilities:[]
+ };
+ const r=computeRange(d,"2026-11-17","2026-11-30","2026-11-17");
+ assert.equal(r.minCash,-30000);
+ assert.equal(r.safeToSpendCents,0);
+ assert.equal(r.firstNegative,"2026-11-20");
+});
+
+test("Case F & 31/12 projection: pending income does not raise liveCash; net worth reconciles to Dec 31",()=>{
+ const d={
+  wallets:[{id:"w",opening_balance_cents:"100000",opening_at:"2026-11-01T00:00:00Z"}],
+  categories:[{id:"c-food",name:"Alimentação",direction:"expense",parent_id:null,active:true}],
+  budgetRules:[{id:"r1",category_id:"c-food",limit_cents:"40000",starts_month:"2026-11",active:true}],
+  economicEvents:[],
+  titles:[{id:"t-sal",direction:"income",wallet_id:"w",category:"Salário",amount_cents:"270000",settled_cents:"0",due_on:"2026-12-05"}],
+  settlements:[],
+  assets:[{id:"a1",label:"Reserva",value_cents:"500000"}],
+  liabilities:[{id:"l1",label:"Financiamento",principal_cents:"200000"}]
+ };
+ const r=computeRange(d,"2026-11-17","2026-12-31","2026-11-17");
+ assert.equal(r.liveCash,100000);
+ assert.equal(r.projectedCash,370000);
+ assert.equal(r.netWorthPartial,670000);
+ // Residual budget for Nov (40000) + Dec (40000) = 80000
+ assert.equal(r.totalResidualBudgetCents,80000);
+ assert.equal(r.projectedCashWithinBudgets,290000);
+ assert.equal(r.netWorthWithinBudgets,590000);
+});
