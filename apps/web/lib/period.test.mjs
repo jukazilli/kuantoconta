@@ -18,3 +18,10 @@ test("date range helpers handle December and leap year",()=>{
  assert.equal(lastDayOfMonth("2028-02-04"),"2028-02-29");
  assert.equal(moveMonth("2026-12-15",1),"2027-01");
 });
+
+test("monthly bar respects the exact date range, not the complete calendar month",()=>{
+ const data2={...data,titles:[...data.titles,{direction:"expense",wallet_id:"w",category:"Outros",amount_cents:"5000",settled_cents:"0",due_on:"2026-11-05"}]};
+ const r=computeRange(data2,"2026-11-17","2026-11-30","2026-11-17");
+ assert.equal(r.payable.total,0);
+ assert.equal(r.months[0].expense,0);
+});

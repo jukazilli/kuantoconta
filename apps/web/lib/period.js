@@ -30,7 +30,13 @@ export function computeRange(data,start,end,today=brDay()){
    const c=s.category||"Outros";
    categoryTotals[c]=(categoryTotals[c]||0)+cents(s.amount_cents);
  }
- const months=full.months.filter(m=>m.month>=monthOf(from)&&m.month<=monthOf(to));
+ const months=full.months.filter(m=>m.month>=monthOf(from)&&m.month<=monthOf(to)).map(m=>{
+   const inMonthTitles=titles.filter(t=>monthOf(t.due_on)===m.month&&inRange(t.due_on,from,to));
+   const inMonthPaid=settlements.filter(t=>monthOf(t.settled_on)===m.month&&inRange(t.settled_on,from,to));
+   const sum=direction=>inMonthTitles.filter(t=>t.direction===direction).reduce((n,t)=>n+Math.max(0,cents(t.amount_cents)-cents(t.settled_cents)),0)+inMonthPaid.filter(t=>t.direction===direction).reduce((n,t)=>n+cents(t.amount_cents),0);
+   const income=sum("income"),expense=sum("expense");
+   return {...m,income,expense,result:income-expense};
+ });
  const overdue=titles.filter(t=>isoDate(t.due_on)<from&&cents(t.amount_cents)>cents(t.settled_cents));
  return {...full,periodStart:from,periodEnd:to,receivable:recv,payable:pay,periodResult:recv.total-pay.total,categoryTotals,months,overdueCount:overdue.length,projectedCash:to<today?null:full.projectedCash,netWorthPartial:to<today?null:full.netWorthPartial};
 }
