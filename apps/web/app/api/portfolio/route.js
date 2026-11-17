@@ -49,20 +49,21 @@ export async function GET(){
  const owner=await authenticate();if(!owner.id)return error(owner.error,owner.status);
  try{
   await seedDefaultCategories(owner.id);
-  const [wallets,titles,settlements,assets,liabilities,savedCategories,recurringRules,cancelledRecurring,cancellations,budgetRules,budgetPeriods]=await Promise.all([
+  const [wallets,titles,settlements,assets,liabilities,savedCategories,recurringRules,cancelledRecurring,cancellations,budgetRules,budgetPeriods,economicEvents]=await Promise.all([
    sql`SELECT id,name,opening_balance_cents::text,opening_at,created_at FROM public.kc_wallets WHERE user_id=${owner.id} ORDER BY created_at LIMIT 100`,
-   sql`SELECT id,wallet_id,description,direction,category,subcategory,amount_cents::text,settled_cents::text,due_on::text,recurrence,installment_index,installment_total,series_id,created_at FROM public.kc_titles WHERE user_id=${owner.id} AND cancelled_at IS NULL ORDER BY due_on,id LIMIT 4000`,
+   sql`SELECT id,wallet_id,description,direction,category,subcategory,category_id,subcategory_id,economic_event_id,amount_cents::text,settled_cents::text,due_on::text,recurrence,installment_index,installment_total,series_id,created_at FROM public.kc_titles WHERE user_id=${owner.id} AND cancelled_at IS NULL ORDER BY due_on,id LIMIT 4000`,
    sql`SELECT s.id,s.title_id,s.wallet_id,s.amount_cents::text,s.settled_on::text,s.created_at,s.reversed_at,s.reversal_reason,t.direction,t.category FROM public.kc_settlements s JOIN public.kc_titles t ON t.id=s.title_id AND t.user_id=s.user_id WHERE s.user_id=${owner.id} ORDER BY s.settled_on,s.created_at LIMIT 7000`,
    sql`SELECT id,label,value_cents::text,valued_on::text FROM public.kc_assets WHERE user_id=${owner.id} ORDER BY label LIMIT 200`,
    sql`SELECT id,label,principal_cents::text,valued_on::text FROM public.kc_liabilities WHERE user_id=${owner.id} ORDER BY label LIMIT 200`,
    sql`SELECT id,name,direction,parent_id,canonical_key,active FROM public.kc_categories WHERE user_id=${owner.id} ORDER BY name LIMIT 300`,
-   sql`SELECT id,wallet_id,direction,description,category,subcategory,amount_cents::text,starts_on::text,ends_on::text,paused_at::text,created_at FROM public.kc_recurring_rules WHERE user_id=${owner.id} ORDER BY starts_on LIMIT 300`,
+   sql`SELECT id,wallet_id,direction,description,category,subcategory,category_id,subcategory_id,amount_cents::text,starts_on::text,ends_on::text,paused_at::text,created_at FROM public.kc_recurring_rules WHERE user_id=${owner.id} ORDER BY starts_on LIMIT 300`,
    sql`SELECT series_id,installment_index FROM public.kc_titles WHERE user_id=${owner.id} AND cancelled_at IS NOT NULL AND series_id IS NOT NULL LIMIT 4000`,
    sql`SELECT title_id,SUM(cancelled_pending_cents)::text AS cancelled_pending_cents,MAX(original_amount_cents)::text AS original_amount_cents FROM public.kc_title_cancellation_events WHERE user_id=${owner.id} GROUP BY title_id LIMIT 4000`,
    sql`SELECT id,category_id,limit_cents::text,starts_month,ends_month,active,created_at FROM public.kc_budget_rules WHERE user_id=${owner.id} ORDER BY created_at LIMIT 300`,
-   sql`SELECT id,category_id,month,limit_cents::text,source_rule_id,version,updated_at FROM public.kc_budget_periods WHERE user_id=${owner.id} ORDER BY month DESC LIMIT 1200`
+   sql`SELECT id,category_id,month,limit_cents::text,source_rule_id,version,updated_at FROM public.kc_budget_periods WHERE user_id=${owner.id} ORDER BY month DESC LIMIT 1200`,
+   sql`SELECT id,direction,description,amount_cents::text,occurred_on::text,category_id,subcategory_id,event_kind,competence_source,status,recurring_rule_id,parent_event_id,created_at FROM public.kc_economic_events WHERE user_id=${owner.id} AND cancelled_at IS NULL ORDER BY occurred_on DESC,created_at DESC LIMIT 4000`
   ]);
-  return send({wallets,titles,settlements,assets,liabilities,recurringRules,cancelledRecurring,cancellations,categories:savedCategories,budgetRules,budgetPeriods,as_of:new Date().toISOString()});
+  return send({wallets,titles,settlements,assets,liabilities,recurringRules,cancelledRecurring,cancellations,categories:savedCategories,budgetRules,budgetPeriods,economicEvents,as_of:new Date().toISOString()});
  }catch(e){console.error("portfolio-get",e?.name);return error("Falha ao consultar as finanças.",500);}
 }
 export async function POST(request){
@@ -129,17 +130,24 @@ export async function POST(request){
    return send({saved:true,id:result[0]?.id});
   }
   if(x.action==="title"){
-   const description=textValue(x.description,140),category=textValue(x.category||"Outros",70);
+   const description=textValue(x.description,140),category=textValue(x.category,70);
    if(!description||!category||!day(x.dueOn)||!["income","expense"].includes(x.direction)||!uuid(x.walletId))return error("Descrição, data, tipo, categoria ou conta inválidos.");
    const w=await sql`SELECT id FROM public.kc_wallets WHERE id=${x.walletId}::uuid AND user_id=${owner.id}`;
    if(!w.length)return error("Conta não encontrada.",404);
-   const root=await sql`SELECT id FROM public.kc_categories WHERE user_id=${owner.id} AND direction=${x.direction} AND parent_id IS NULL AND name=${category} LIMIT 1`;
-   if(!root.length && !allowedRoot(x.direction,category))return error("Selecione uma categoria cadastrada.");
+   let root=await sql`SELECT id,name FROM public.kc_categories WHERE user_id=${owner.id} AND direction=${x.direction} AND parent_id IS NULL AND name=${category} LIMIT 1`;
+   if(!root.length && allowedRoot(x.direction,category)){
+    await seedDefaultCategories(owner.id);
+    root=await sql`SELECT id,name FROM public.kc_categories WHERE user_id=${owner.id} AND direction=${x.direction} AND parent_id IS NULL AND name=${category} LIMIT 1`;
+   }
+   if(!root.length)return error("Selecione uma categoria cadastrada.");
+   const categoryId=root[0].id;
    const subcategory=x.subcategory?textValue(x.subcategory,70):null;
    if(x.subcategory&&!subcategory)return error("Subcategoria inválida.");
+   let subcategoryId=null;
    if(subcategory){
-     const subs=await sql`SELECT id FROM public.kc_categories WHERE user_id=${owner.id} AND direction=${x.direction} AND name=${subcategory} AND parent_id IN (SELECT id FROM public.kc_categories WHERE user_id=${owner.id} AND name=${category} AND direction=${x.direction} AND parent_id IS NULL) LIMIT 1`;
+     const subs=await sql`SELECT id FROM public.kc_categories WHERE user_id=${owner.id} AND direction=${x.direction} AND name=${subcategory} AND parent_id=${categoryId}::uuid LIMIT 1`;
      if(!subs.length)return error("Selecione uma subcategoria já cadastrada.");
+     subcategoryId=subs[0].id;
    }
    const base=amount(x.amount);
    const mode=["single","installments","monthly"].includes(x.mode)?x.mode:"single";
@@ -147,30 +155,29 @@ export async function POST(request){
      if(x.dueOn>"2099-12-31")return error("Recorrência só é permitida até 2099.");
      const end=x.endsOn?String(x.endsOn):null;
      if(end&&(!day(end)||end<x.dueOn||end>"2099-12-31"))return error("Data final da recorrência inválida.");
-     const rule=await sql`INSERT INTO public.kc_recurring_rules(user_id,wallet_id,direction,description,category,subcategory,amount_cents,starts_on,ends_on)
-      VALUES(${owner.id},${x.walletId}::uuid,${x.direction},${description},${category},${subcategory},${base},${x.dueOn}::date,${end}::date)
+     const rule=await sql`INSERT INTO public.kc_recurring_rules(user_id,wallet_id,direction,description,category,subcategory,category_id,subcategory_id,amount_cents,starts_on,ends_on)
+      VALUES(${owner.id},${x.walletId}::uuid,${x.direction},${description},${category},${subcategory},${categoryId}::uuid,${subcategoryId}::uuid,${base},${x.dueOn}::date,${end}::date)
       RETURNING id`;
      return send({saved:true,recurringRuleId:rule[0]?.id,createdOccurrences:0},201);
    }
+   const occurredOn=x.occurredOn?String(x.occurredOn):x.dueOn;
+   if(!day(occurredOn))return error("Data da compra/competência inválida.");
+   const settlementState=x.settlementState==="paid"?"paid":"pending";
+   const settledOn=settlementState==="paid"?String(x.settledOn||occurredOn):null;
+   if(settlementState==="paid"&&!validSettlementDay(settledOn,brDay()))return error("A baixa realizada não pode ter uma data futura.");
    const count=mode==="single"?1:Number(x.count);
    if(!Number.isInteger(count)||count<1||count>60)return error("Quantidade de parcelas inválida.");
    const start=mode==="installments"?Number(x.startIndex||1):1;
    if(!Number.isInteger(start)||start<1||start>count)return error("Parcela inicial inválida.");
    const perMode=x.valueMode==="installment"?"installment":"total";
-   if(mode==="installments"&&perMode==="total"&&base<count)return error("Total insuficiente para esse número de parcelas.");
-   const seriesId=mode==="single"?null:crypto.randomUUID();
-   const floor=Math.floor(base/count),remainder=base%count;
-   const rows=[];
-   for(let i=start;i<=count;i++){
-    const amountCents=mode==="installments"?(perMode==="total"?floor+(i<=remainder?1:0):base):base;
-    const due=monthOffset(x.dueOn,i-start);
-    rows.push({description:mode==="installments"?description+" ("+i+"/"+count+")":description,direction:x.direction,category,subcategory,amount_cents:amountCents,due_on:due,recurrence:mode,series_id:seriesId,installment_index:i,installment_total:count,wallet_id:x.walletId});
-   }
-   // Atomic insert for a whole series; no partially created installment contracts.
-   await sql`INSERT INTO public.kc_titles(user_id,wallet_id,description,direction,category,subcategory,amount_cents,due_on,recurrence,series_id,installment_index,installment_total)
-   SELECT ${owner.id},r.wallet_id,r.description,r.direction,r.category,r.subcategory,r.amount_cents,r.due_on,r.recurrence,r.series_id,r.installment_index,r.installment_total
-   FROM jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) AS r(wallet_id uuid,description text,direction text,category text,subcategory text,amount_cents bigint,due_on date,recurrence text,series_id uuid,installment_index int,installment_total int)`;
-   return send({saved:true,count:rows.length},201);
+   const idempotencyKey=uuid(x.idempotencyKey)?x.idempotencyKey:crypto.randomUUID();
+   const rows=await sql`SELECT public.kc_create_financial_event(
+    ${owner.id},${x.walletId}::uuid,${x.direction},${description},
+    ${categoryId}::uuid,${subcategoryId}::uuid,${category},${subcategory},
+    ${base},${occurredOn}::date,${x.dueOn}::date,${mode},${count},${start},${perMode},
+    ${settlementState},${settledOn}::date,${idempotencyKey}::uuid
+   ) AS info`;
+   return send({saved:true,...rows[0]?.info},201);
   }
   if(x.action==="asset"||x.action==="liability"){
    const label=textValue(x.label,120),value=amount(x.amount,true);
