@@ -14,27 +14,25 @@ export const inRange=(day,start,end)=>isoDate(day)>=start&&isoDate(day)<=end;
 export function computeRange(data,start,end,today=brDay()){
  const from=start<=end?start:end,to=end>=start?end:start;
  const full=compute(data,to,today);
- const titles=data?.titles||[],settlements=data?.settlements||[];
+ const titles=data?.titles||[],settlements=(data?.settlements||[]).filter(s=>!s.reversed_at);
+ // Due-date plan: each title counts once in its period, regardless of payment date.
+ // Settlements affect actual cash and paid/open status, not the planned month's size.
  const total=direction=>{
-   const pending=titles.filter(t=>t.direction===direction&&inRange(t.due_on,from,to)).reduce((n,t)=>n+Math.max(0,cents(t.amount_cents)-cents(t.settled_cents)),0);
-   const settled=settlements.filter(s=>s.direction===direction&&inRange(s.settled_on,from,to)).reduce((n,s)=>n+cents(s.amount_cents),0);
-   return {open:pending,paid:settled,total:pending+settled};
+   const relevant=titles.filter(t=>t.direction===direction&&inRange(t.due_on,from,to));
+   return {open:relevant.reduce((n,t)=>n+Math.max(0,cents(t.amount_cents)-cents(t.settled_cents)),0),
+    paid:relevant.reduce((n,t)=>n+cents(t.settled_cents),0),
+    total:relevant.reduce((n,t)=>n+cents(t.amount_cents),0)};
  };
  const recv=total("income"),pay=total("expense");
  const categoryTotals={};
  for(const t of titles.filter(t=>t.direction==="expense"&&inRange(t.due_on,from,to))){
-   const c=t.category||"Outros";
-   categoryTotals[c]=(categoryTotals[c]||0)+Math.max(0,cents(t.amount_cents)-cents(t.settled_cents));
- }
- for(const s of settlements.filter(s=>s.direction==="expense"&&inRange(s.settled_on,from,to))){
-   const c=s.category||"Outros";
-   categoryTotals[c]=(categoryTotals[c]||0)+cents(s.amount_cents);
+   const category=t.category||"Outros";
+   categoryTotals[category]=(categoryTotals[category]||0)+cents(t.amount_cents);
  }
  const months=full.months.filter(m=>m.month>=monthOf(from)&&m.month<=monthOf(to)).map(m=>{
-   const inMonthTitles=titles.filter(t=>monthOf(t.due_on)===m.month&&inRange(t.due_on,from,to));
-   const inMonthPaid=settlements.filter(t=>monthOf(t.settled_on)===m.month&&inRange(t.settled_on,from,to));
-   const sum=direction=>inMonthTitles.filter(t=>t.direction===direction).reduce((n,t)=>n+Math.max(0,cents(t.amount_cents)-cents(t.settled_cents)),0)+inMonthPaid.filter(t=>t.direction===direction).reduce((n,t)=>n+cents(t.amount_cents),0);
-   const income=sum("income"),expense=sum("expense");
+   const tx=titles.filter(t=>monthOf(t.due_on)===m.month&&inRange(t.due_on,from,to));
+   const amount=kind=>tx.filter(t=>t.direction===kind).reduce((n,t)=>n+cents(t.amount_cents),0);
+   const income=amount("income"),expense=amount("expense");
    return {...m,income,expense,result:income-expense};
  });
  const overdue=titles.filter(t=>isoDate(t.due_on)<from&&cents(t.amount_cents)>cents(t.settled_cents));

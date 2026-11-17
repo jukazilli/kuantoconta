@@ -25,3 +25,19 @@ test("monthly bar respects the exact date range, not the complete calendar month
  assert.equal(r.payable.total,0);
  assert.equal(r.months[0].expense,0);
 });
+
+test("fully settled title remains in the due period exactly once",()=>{
+ const withSettlement={...data,titles:[{...data.titles[0],settled_cents:"240000"}],settlements:[{title_id:"0",direction:"income",amount_cents:"240000",settled_on:"2026-11-17"}]};
+ const r=computeRange(withSettlement,"2026-11-01","2026-11-30","2026-11-17");
+ assert.equal(r.receivable.total,240000);
+ assert.equal(r.receivable.paid,240000);
+ assert.equal(r.receivable.open,0);
+});
+test("reversed settlement is absent from actuals, pending amount restored",()=>{
+ const withReversal={...data,titles:[{...data.titles[0],settled_cents:"0"}],settlements:[{title_id:"0",direction:"income",amount_cents:"240000",settled_on:"2026-11-17",reversed_at:"2026-11-18T12:00:00Z"}]};
+ const r=computeRange(withReversal,"2026-11-01","2026-11-30","2026-11-17");
+ assert.equal(r.receivable.total,240000);
+ assert.equal(r.receivable.paid,0);
+ assert.equal(r.receivable.open,240000);
+ assert.equal(r.liveCash,0);
+});

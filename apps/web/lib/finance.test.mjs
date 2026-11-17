@@ -23,3 +23,8 @@ test("future settlements cannot be classified as completed now",()=>{
  assert.equal(validSettlementDay("2026-02-30","2026-11-16"),false);
  assert.equal(validSettlementDay("2026-99-99","2026-11-16"),false);
 });
+
+test("monthly recurring expenses do not become lifetime contractual debt",()=>{
+ const x=compute({...base,titles:[{...base.titles[1],recurrence:"monthly",virtual:true,amount_cents:"100000"}]},"2026-12-31","2026-11-16");
+ assert.equal(x.allPayable,0);
+});

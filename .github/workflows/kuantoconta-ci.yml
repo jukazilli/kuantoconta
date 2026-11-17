@@ -4,6 +4,7 @@ on:
     branches:
       - feat/foundation-desktop-v1
       - feat/ux-money-range-movements
+      - fix/finance-display-settlement-undo-recurring
   pull_request:
     branches:
       - main
