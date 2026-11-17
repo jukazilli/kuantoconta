@@ -29,9 +29,11 @@ Browser → Next Route Handlers/Server Components → Neon Postgres. URL/senha P
 ## Entidades nucleares
 - `user_consents`: user_id, versions, accepted_at, user_agent (mínimo).
 - `wallets`: titular, nome, saldo inicial em centavos, data de referência, moeda.
-- `categories`: titular, nome, direction, parent_id opcional.
+- `categories`: titular, nome, direction, parent_id opcional, `canonical_key`, `active`.
+- `budget_rules` / `budget_periods`: limites mensais opcionais por categoria principal de despesa com versionamento otimista.
+- `economic_events`: fato econômico (`occurred_on`, `amount_cents`, `event_kind`, `competence_source`) separado da agenda de títulos.
 - `title_series`: titular, direção, descrição, total, tipo recorrência, frequência, data de início, limite opcional.
-- `titles`: titular, série opcional, ID ocorrência, valor, vencimento, categoria, conta, estado.
+- `titles`: titular, série opcional, `economic_event_id` opcional, ID ocorrência, valor, vencimento, categoria, conta, estado.
 - `settlements`: baixa individual e imutável, vinculada a título/conta, valor e data; lançamento de caixa derivado.
 - `assets`: patrimônio adicional não duplicado no saldo de conta.
 - `liabilities`: dívidas contratadas separadas de despesas recorrentes futuras.

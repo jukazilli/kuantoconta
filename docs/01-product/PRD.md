@@ -16,6 +16,8 @@
 - **Dívida contratada:** obrigação de capital já assumida, distinta da soma de despesas recorrentes futuras.
 - **Planejamento:** ocorrências geradas de regras + títulos avulsos; uma regra não pode recriar a mesma ocorrência.
 - **Cenário:** overlay de mudanças hipotéticas, sem alterar dados confirmados.
+- **Orçamento por categoria:** limite mensal virtual e opcional no nível da categoria principal de despesa (sem rollover automático e sem criar conta bancária fictícia).
+- **Evento econômico (`occurred_on`):** fato de consumo/receita distinto do vencimento (`due_on`) e da baixa (`settled_on`); baixar ou reverter pagamento nunca duplica consumo no orçamento.
 
 ## Cálculos obrigatórios
 - `resultado_periodo = recebimentos_por_data_prevista - pagamentos_por_data_prevista` (ou realizado, conforme modo).
