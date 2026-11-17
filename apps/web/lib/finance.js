@@ -19,7 +19,7 @@ export function compute(data, date, today=brDay()){
  const unknownCash=wallets.length===0||wallets.some(w=>w.opening_balance_cents===null||w.opening_balance_cents===undefined||!w.opening_at);
  const opening=wallets.reduce((sum,w)=>sum+cents(w.opening_balance_cents),0);
  const posted=settlements.reduce((sum,s)=>{
-   const wallet=wallets.find(w=>sameUserWallet(s,wallet));
+   const wallet=wallets.find(w=>sameUserWallet(s,w));
    if(!wallet||!wallet.opening_at||new Date(s.created_at).getTime()<=new Date(wallet.opening_at).getTime())return sum;
    return sum+(s.direction==="income"?1:-1)*cents(s.amount_cents);
  },0);
