@@ -1,0 +1,114 @@
+{
+  "schema_version": "1.0",
+  "title": "kuantoconta — extração estruturada da referência visual desktop",
+  "source": {
+    "kind": "user-provided screenshot in product discussion",
+    "file_name": "image(7).png",
+    "pixel_dimensions": {
+      "width": 2048,
+      "height": 1536
+    },
+    "context": "imagem de laptop com interface Finexy; referência criativa não é licença de reprodução",
+    "confidence": "qualitativa; dimensões internas estimadas em relação à screenshot"
+  },
+  "reference_identity": {
+    "brand_in_image": "Finexy",
+    "usage": "inspiração de composição, não usar logo/brand/copiar ativos no kuantoconta"
+  },
+  "composition": {
+    "viewport": "desktop laptop",
+    "shell": "canvas off-white em tela ampla",
+    "header": "logo pill branca à esquerda; navegação central horizontal em pill branca com aba ativa preta; conta/ícones à direita",
+    "rail": "barra vertical estreita com ícones à esquerda, alguns ícones em círculos ativos",
+    "intro": "saudação em tipografia grande + subtítulo baixo contraste",
+    "dashboard_grid": "cards assimétricos com lacunas compactas; card principal à esquerda, quatro KPIs no centro, gráfico à direita; tabela de movimentos abaixo; cards laterais para limites/cartões",
+    "surface": "cards brancos e cinza gelo, bordas discretas, raios grandes",
+    "cta": "gradiente coral-laranja em card KPI; botões escuros e pills brancas",
+    "data_visualization": "gráfico de barras com valores empilhados/profit loss; tipografia monetária forte; tabelas compactas com status coloridos",
+    "negative_space": "respiro moderado, muitos dados sem excesso de linhas"
+  },
+  "design_tokens_proposed": {
+    "colors": {
+      "canvas": "#F6F6F5",
+      "pageSurround": "#EAEAEA",
+      "card": "#FFFFFF",
+      "mutedCard": "#F2F2F1",
+      "ink": "#1B1C18",
+      "secondaryText": "#7B7E79",
+      "subtleText": "#9A9D98",
+      "line": "#E8E9E6",
+      "coral": "#FA6A43",
+      "coralLight": "#FF9265",
+      "success": "#169966",
+      "danger": "#D65A50",
+      "darkPill": "#20211D"
+    },
+    "radius": {
+      "pill": "999px",
+      "card": "24px",
+      "control": "12px",
+      "subcard": "16px"
+    },
+    "shadow": "low elevation soft shadow",
+    "typography": {
+      "style": "neutral grotesk/sans-serif",
+      "headings": "large dark medium weight",
+      "money": "high weight tabular numerals",
+      "labels": "small neutral"
+    },
+    "spacing": {
+      "base": 4,
+      "cardGap": 16,
+      "cardPadding": 24,
+      "sectionGap": 28
+    },
+    "icons": "outline neutral, 18–22 px; prefer lucide-react",
+    "charts": {
+      "preferred": "Apache ECharts",
+      "alternative": "Plotly for archived HTML",
+      "style": "highly custom, restrained axes, native HTML tooltip, rounded bars, explicit positive/negative"
+    },
+    "breakpoints": {
+      "desktop": "1280+ pixels",
+      "laptop": "1024–1279",
+      "tablet": "768–1023",
+      "mobile": "320–767 planned after desktop acceptance"
+    }
+  },
+  "product_adaptation": {
+    "navigation": [
+      "Visão geral",
+      "Movimentos",
+      "Planejamento",
+      "Cadastros",
+      "Conta"
+    ],
+    "hero": "Saldo atual + projeção no dia selecionado; sem botões bancários fictícios (Transfer/Request)",
+    "orangeKpi": "Resultado do mês ou total a receber, não retornos financeiros ilusórios",
+    "charts": [
+      "saldo acumulado até dezembro",
+      "entradas x saídas por mês",
+      "destino dos gastos por categoria"
+    ],
+    "cards": [
+      "A pagar",
+      "A receber",
+      "Saldo",
+      "Sobra mensal",
+      "Patrimônio projetado",
+      "Endividamento contratado"
+    ],
+    "table": "títulos reais, vencimento, status, categoria, ação de baixa",
+    "out_of_scope_visual_elements": [
+      "logo Finexy",
+      "bandeiras de moedas sem suporte",
+      "cartão fictício com operação bancária",
+      "transferir dinheiro"
+    ]
+  },
+  "caveats": [
+    "Screenshot é composta num mockup físico; não permite reconstruir CSS pixel-perfect",
+    "Não inferir fonte exata, componentes internos ou tokens proprietários",
+    "Os tokens acima são os APROVÁVEIS para o nosso produto, não cores oficiais do Finexy"
+  ]
+}
