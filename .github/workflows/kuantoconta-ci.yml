@@ -6,6 +6,8 @@ on:
       - feat/ux-money-range-movements
       - fix/finance-display-settlement-undo-recurring
       - feat/scoped-cancel-financial-series
+      - feat/bud-*
+      - test/bud-*
   pull_request:
     branches:
       - main

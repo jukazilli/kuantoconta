@@ -1,6 +1,7 @@
 import {sql} from "../../../lib/db";
 import {brDay,validSettlementDay} from "../../../lib/finance";
-import {DEFAULT_CATEGORIES,allowedRoot} from "../../../lib/taxonomy";
+import {DEFAULT_CATEGORIES,allowedRoot,canonicalCategoryKey,normalizeCategoryName} from "../../../lib/taxonomy";
+import {isValidMonth} from "../../../lib/budgets";
 import {decodeOccurrenceId,occurrenceForMonth} from "../../../lib/recurring";
 import {validScope} from "../../../lib/cancel-scope";
 import {getIdentity,legalAccepted,sameOrigin,PRIVATE_HEADERS} from "../../../lib/authorization";
@@ -35,22 +36,33 @@ async function authenticate(){
  return {id:user.id};
 }
 async function jsonBody(r){const txt=await r.text();if(txt.length>12000)throw new Error("Solicitação muito grande.");return JSON.parse(txt);}
+async function seedDefaultCategories(userId){
+ const defaults=Object.entries(DEFAULT_CATEGORIES).flatMap(([direction,names])=>
+  names.map(name=>({name,direction,canonical_key:canonicalCategoryKey(direction,name)}))
+ );
+ await sql`INSERT INTO public.kc_categories(user_id,name,direction,canonical_key)
+  SELECT ${userId},r.name,r.direction,r.canonical_key
+  FROM jsonb_to_recordset(${JSON.stringify(defaults)}::jsonb) AS r(name text,direction text,canonical_key text)
+  ON CONFLICT DO NOTHING`;
+}
 export async function GET(){
  const owner=await authenticate();if(!owner.id)return error(owner.error,owner.status);
  try{
-  const [wallets,titles,settlements,assets,liabilities,savedCategories,recurringRules,cancelledRecurring,cancellations]=await Promise.all([
+  await seedDefaultCategories(owner.id);
+  const [wallets,titles,settlements,assets,liabilities,savedCategories,recurringRules,cancelledRecurring,cancellations,budgetRules,budgetPeriods]=await Promise.all([
    sql`SELECT id,name,opening_balance_cents::text,opening_at,created_at FROM public.kc_wallets WHERE user_id=${owner.id} ORDER BY created_at LIMIT 100`,
    sql`SELECT id,wallet_id,description,direction,category,subcategory,amount_cents::text,settled_cents::text,due_on::text,recurrence,installment_index,installment_total,series_id,created_at FROM public.kc_titles WHERE user_id=${owner.id} AND cancelled_at IS NULL ORDER BY due_on,id LIMIT 4000`,
    sql`SELECT s.id,s.title_id,s.wallet_id,s.amount_cents::text,s.settled_on::text,s.created_at,s.reversed_at,s.reversal_reason,t.direction,t.category FROM public.kc_settlements s JOIN public.kc_titles t ON t.id=s.title_id AND t.user_id=s.user_id WHERE s.user_id=${owner.id} ORDER BY s.settled_on,s.created_at LIMIT 7000`,
    sql`SELECT id,label,value_cents::text,valued_on::text FROM public.kc_assets WHERE user_id=${owner.id} ORDER BY label LIMIT 200`,
    sql`SELECT id,label,principal_cents::text,valued_on::text FROM public.kc_liabilities WHERE user_id=${owner.id} ORDER BY label LIMIT 200`,
-   sql`SELECT id,name,direction,parent_id FROM public.kc_categories WHERE user_id=${owner.id} ORDER BY name LIMIT 300`,
+   sql`SELECT id,name,direction,parent_id,canonical_key,active FROM public.kc_categories WHERE user_id=${owner.id} ORDER BY name LIMIT 300`,
    sql`SELECT id,wallet_id,direction,description,category,subcategory,amount_cents::text,starts_on::text,ends_on::text,paused_at::text,created_at FROM public.kc_recurring_rules WHERE user_id=${owner.id} ORDER BY starts_on LIMIT 300`,
    sql`SELECT series_id,installment_index FROM public.kc_titles WHERE user_id=${owner.id} AND cancelled_at IS NOT NULL AND series_id IS NOT NULL LIMIT 4000`,
-   sql`SELECT title_id,SUM(cancelled_pending_cents)::text AS cancelled_pending_cents,MAX(original_amount_cents)::text AS original_amount_cents FROM public.kc_title_cancellation_events WHERE user_id=${owner.id} GROUP BY title_id LIMIT 4000`
+   sql`SELECT title_id,SUM(cancelled_pending_cents)::text AS cancelled_pending_cents,MAX(original_amount_cents)::text AS original_amount_cents FROM public.kc_title_cancellation_events WHERE user_id=${owner.id} GROUP BY title_id LIMIT 4000`,
+   sql`SELECT id,category_id,limit_cents::text,starts_month,ends_month,active,created_at FROM public.kc_budget_rules WHERE user_id=${owner.id} ORDER BY created_at LIMIT 300`,
+   sql`SELECT id,category_id,month,limit_cents::text,source_rule_id,version,updated_at FROM public.kc_budget_periods WHERE user_id=${owner.id} ORDER BY month DESC LIMIT 1200`
   ]);
-  const mappedDefaults=Object.entries(DEFAULT_CATEGORIES).flatMap(([direction,names])=>names.filter(name=>!savedCategories.some(c=>c.direction===direction&&c.parent_id===null&&c.name.toLocaleLowerCase("pt-BR")===name.toLocaleLowerCase("pt-BR"))).map(name=>({id:"builtin:"+direction+":"+name,name,direction,parent_id:null,builtin:true})));
-  return send({wallets,titles,settlements,assets,liabilities,recurringRules,cancelledRecurring,cancellations,categories:[...mappedDefaults,...savedCategories],as_of:new Date().toISOString()});
+  return send({wallets,titles,settlements,assets,liabilities,recurringRules,cancelledRecurring,cancellations,categories:savedCategories,budgetRules,budgetPeriods,as_of:new Date().toISOString()});
  }catch(e){console.error("portfolio-get",e?.name);return error("Falha ao consultar as finanças.",500);}
 }
 export async function POST(request){
@@ -67,12 +79,19 @@ export async function POST(request){
   if(x.action==="category"){
    const name=textValue(x.name,80),direction=x.direction;
    if(!name||!["income","expense"].includes(direction))return error("Nome ou tipo de categoria inválido.");
+   const normalized=normalizeCategoryName(name);
+   const existingCats=await sql`SELECT id,name,parent_id FROM public.kc_categories WHERE user_id=${owner.id} AND direction=${direction} LIMIT 300`;
    if(!x.parentName){
-     if(allowedRoot(direction,name))return error("Esta categoria já existe.",409);
-     const present=await sql`SELECT id FROM public.kc_categories WHERE user_id=${owner.id} AND direction=${direction} AND parent_id IS NULL AND lower(name)=lower(${name}) LIMIT 1`;
-     if(present.length)return error("Categoria já cadastrada.",409);
-     await sql`INSERT INTO public.kc_categories(user_id,name,direction) VALUES(${owner.id},${name},${direction})`;
-     return send({saved:true},201);
+     if(allowedRoot(direction,name)||existingCats.some(c=>!c.parent_id&&normalizeCategoryName(c.name)===normalized))return error("Categoria já cadastrada.",409);
+     const key=canonicalCategoryKey(direction,name);
+     const inserted=await sql`INSERT INTO public.kc_categories(user_id,name,direction,canonical_key) VALUES(${owner.id},${name},${direction},${key}) RETURNING id`;
+     const catId=inserted[0]?.id;
+     if(catId&&direction==="expense"&&x.limit!==undefined&&x.limit!==null&&x.limit!==""){
+      const limitCents=amount(x.limit,true,false);
+      const targetMonth=isValidMonth(x.month)?x.month:brDay().slice(0,7);
+      await sql`SELECT public.kc_upsert_budget_rule(${owner.id},${catId}::uuid,${limitCents},${targetMonth},true,NULL)`;
+     }
+     return send({saved:true,id:catId},201);
    }
    const parentName=textValue(x.parentName,80);
    if(!parentName)return error("Selecione uma categoria antes de adicionar subcategoria.");
@@ -80,14 +99,22 @@ export async function POST(request){
    if(!parent.length && !allowedRoot(direction,parentName))return error("Categoria não encontrada.",404);
    let parentId=parent[0]?.id;
    if(!parentId){
-    await sql`INSERT INTO public.kc_categories(user_id,name,direction) VALUES(${owner.id},${parentName},${direction}) ON CONFLICT DO NOTHING`;
+    await sql`INSERT INTO public.kc_categories(user_id,name,direction,canonical_key) VALUES(${owner.id},${parentName},${direction},${canonicalCategoryKey(direction,parentName)}) ON CONFLICT DO NOTHING`;
     const row=await sql`SELECT id FROM public.kc_categories WHERE user_id=${owner.id} AND direction=${direction} AND parent_id IS NULL AND name=${parentName} LIMIT 1`;
     parentId=row[0]?.id;
    }
-   const present=await sql`SELECT id FROM public.kc_categories WHERE user_id=${owner.id} AND direction=${direction} AND lower(name)=lower(${name}) LIMIT 1`;
-   if(present.length)return error("Essa subcategoria já está cadastrada.",409);
-   await sql`INSERT INTO public.kc_categories(user_id,name,direction,parent_id) VALUES(${owner.id},${name},${direction},${parentId}::uuid)`;
-   return send({saved:true},201);
+   if(existingCats.some(c=>normalizeCategoryName(c.name)===normalized))return error("Essa subcategoria já está cadastrada.",409);
+   const insertedSub=await sql`INSERT INTO public.kc_categories(user_id,name,direction,parent_id) VALUES(${owner.id},${name},${direction},${parentId}::uuid) RETURNING id`;
+   return send({saved:true,id:insertedSub[0]?.id},201);
+  }
+  if(x.action==="budget"){
+   if(!uuid(x.categoryId))return error("Categoria inválida.");
+   const targetMonth=isValidMonth(x.month)?x.month:brDay().slice(0,7);
+   const active=x.active!==false;
+   const limitCents=active?amount(x.limit,true,false):0;
+   const expectedVersion=Number.isInteger(x.expectedVersion)?x.expectedVersion:null;
+   const rows=await sql`SELECT public.kc_upsert_budget_rule(${owner.id},${x.categoryId}::uuid,${limitCents},${targetMonth},${active},${expectedVersion}) AS info`;
+   return send({saved:true,...rows[0]?.info},201);
   }
   if(x.action==="materialize"){
    const occ=decodeOccurrenceId(x.occurrenceId);
@@ -228,6 +255,17 @@ export async function PATCH(request){
    }
    const result=await sql`SELECT public.kc_cancel_title_scope(${owner.id},${x.titleId}::uuid,${x.scope}) AS info`;
    return send({saved:true,...result[0]?.info});
+  }
+  if(x.action==="rename_category"){
+   if(!uuid(x.categoryId))return error("Categoria inválida.");
+   const name=textValue(x.name,80);
+   if(!name)return error("Informe o novo nome da categoria.");
+   const cat=await sql`SELECT id,direction,parent_id FROM public.kc_categories WHERE id=${x.categoryId}::uuid AND user_id=${owner.id} LIMIT 1`;
+   if(!cat.length)return error("Categoria não encontrada.",404);
+   const siblings=await sql`SELECT id,name FROM public.kc_categories WHERE user_id=${owner.id} AND direction=${cat[0].direction} AND id<>${x.categoryId}::uuid LIMIT 300`;
+   if(siblings.some(s=>normalizeCategoryName(s.name)===normalizeCategoryName(name)))return error("Já existe uma categoria com esse nome.",409);
+   await sql`UPDATE public.kc_categories SET name=${name} WHERE id=${x.categoryId}::uuid AND user_id=${owner.id}`;
+   return send({saved:true});
   }
   if(x.action==="cancel"){
    if(!uuid(x.titleId))return error("Título inválido.");
