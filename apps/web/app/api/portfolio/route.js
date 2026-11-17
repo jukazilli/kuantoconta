@@ -90,18 +90,16 @@ export async function POST(request){
    return send({saved:true},201);
   }
   if(x.action==="materialize"){
-    const occ=decodeOccurrenceId(x.occurrenceId);
-    if(!occ)return error("Ocorrência mensal inválida.");
-    const list=await sql`SELECT id,wallet_id,direction,description,category,subcategory,amount_cents::text,starts_on::text,ends_on::text,paused_at::text,created_at FROM public.kc_recurring_rules WHERE user_id=${owner.id} AND id=${occ.ruleId}::uuid LIMIT 1`;
-    if(!list.length)return error("Recorrência não encontrada.",404);
-    const item=occurrenceForMonth(list[0],occ.ym);
-    if(!item)return error("Ocorrência fora da vigência.",404);
-    await sql`INSERT INTO public.kc_titles(user_id,wallet_id,direction,description,category,subcategory,amount_cents,due_on,recurrence,series_id,installment_index,installment_total)
-    VALUES(${owner.id},${item.wallet_id}::uuid,${item.direction},${item.description},${item.category},${item.subcategory||null},${Number(item.amount_cents)},${item.due_on}::date,'monthly',${occ.ruleId}::uuid,${item.installment_index},1)
-    ON CONFLICT (series_id,installment_index) DO NOTHING`;
-    const titles=await sql`SELECT id,cancelled_at FROM public.kc_titles WHERE user_id=${owner.id} AND series_id=${occ.ruleId}::uuid AND installment_index=${item.installment_index} LIMIT 1`;
-    if(!titles.length||titles[0].cancelled_at)return error("Ocorrência cancelada ou indisponível.",409);
-    return send({saved:true,id:titles[0].id});
+   const occ=decodeOccurrenceId(x.occurrenceId);
+   if(!occ)return error("Ocorrência mensal inválida.");
+   const rule=await sql`SELECT starts_on::text FROM public.kc_recurring_rules WHERE user_id=${owner.id} AND id=${occ.ruleId}::uuid LIMIT 1`;
+   if(!rule.length)return error("Recorrência não encontrada.",404);
+   const start=rule[0].starts_on;
+   const index=(Number(occ.ym.slice(0,4))-Number(start.slice(0,4)))*12+
+               Number(occ.ym.slice(5,7))-Number(start.slice(5,7))+1;
+   if(!Number.isInteger(index)||index<1)return error("Ocorrência inválida.");
+   const result=await sql`SELECT public.kc_materialize_recurring_occurrence(${owner.id},${occ.ruleId}::uuid,${index}) AS id`;
+   return send({saved:true,id:result[0]?.id});
   }
   if(x.action==="title"){
    const description=textValue(x.description,140),category=textValue(x.category||"Outros",70);
