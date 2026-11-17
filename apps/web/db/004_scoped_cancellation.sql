@@ -229,3 +229,47 @@ BEGIN
  RETURN p_settlement_id;
 END; $$;
 REVOKE ALL ON FUNCTION public.kc_reverse_settlement(TEXT,UUID,TEXT) FROM PUBLIC;
+
+-- Materialization shares the same row lock as cancellation. A request started
+-- before cancellation cannot revive a cancelled future occurrence afterward.
+CREATE OR REPLACE FUNCTION public.kc_materialize_recurring_occurrence(
+ p_user_id TEXT,p_rule_id UUID,p_occurrence_index INTEGER
+) RETURNS UUID LANGUAGE plpgsql AS $$
+DECLARE
+ v_rule public.kc_recurring_rules%ROWTYPE;
+ v_month DATE;
+ v_due DATE;
+ v_title_id UUID;
+ v_cancelled_at TIMESTAMPTZ;
+BEGIN
+ IF p_occurrence_index IS NULL OR p_occurrence_index<1 THEN
+  RAISE EXCEPTION 'Ocorrência inválida' USING ERRCODE='22023';
+ END IF;
+ SELECT * INTO v_rule FROM public.kc_recurring_rules
+ WHERE id=p_rule_id AND user_id=p_user_id FOR UPDATE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'Regra não encontrada' USING ERRCODE='P0002'; END IF;
+ PERFORM pg_advisory_xact_lock(hashtextextended(p_user_id||':'||p_rule_id::text,0));
+ v_month:=(date_trunc('month',v_rule.starts_on)::date+
+            ((p_occurrence_index-1)||' months')::interval)::date;
+ v_due:=least((v_month+(extract(day from v_rule.starts_on)::int-1)*interval '1 day')::date,
+              (v_month+interval '1 month'-interval '1 day')::date);
+ IF v_due<v_rule.starts_on OR v_due>date '2099-12-31'
+ OR v_rule.ends_on IS NOT NULL AND v_due>v_rule.ends_on
+ OR v_rule.paused_at IS NOT NULL AND v_due>=v_rule.paused_at THEN
+  RAISE EXCEPTION 'Esta ocorrência foi encerrada ou está fora da vigência' USING ERRCODE='22023';
+ END IF;
+ INSERT INTO public.kc_titles
+   (user_id,wallet_id,direction,description,category,subcategory,
+    amount_cents,due_on,recurrence,series_id,installment_index,installment_total)
+ VALUES (p_user_id,v_rule.wallet_id,v_rule.direction,v_rule.description,
+         v_rule.category,v_rule.subcategory,v_rule.amount_cents,v_due,'monthly',
+         p_rule_id,p_occurrence_index,1)
+ ON CONFLICT (series_id,installment_index) DO NOTHING;
+ SELECT id,cancelled_at INTO v_title_id,v_cancelled_at FROM public.kc_titles
+ WHERE user_id=p_user_id AND series_id=p_rule_id AND installment_index=p_occurrence_index;
+ IF NOT FOUND OR v_cancelled_at IS NOT NULL THEN
+  RAISE EXCEPTION 'Ocorrência já cancelada ou indisponível' USING ERRCODE='22023';
+ END IF;
+ RETURN v_title_id;
+END;$$;
+REVOKE ALL ON FUNCTION public.kc_materialize_recurring_occurrence(TEXT,UUID,INTEGER) FROM PUBLIC;
