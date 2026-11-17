@@ -1,4 +1,5 @@
 import {sql} from "../../../lib/db";
+import {brDay,validSettlementDay} from "../../../lib/finance";
 import {getIdentity,legalAccepted,sameOrigin,PRIVATE_HEADERS} from "../../../lib/authorization";
 export const runtime="nodejs";
 export const dynamic="force-dynamic";
@@ -7,11 +8,14 @@ const error=(msg,s=400)=>send({error:msg},s);
 const day=s=>typeof s==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(s)&&!Number.isNaN(new Date(s+"T12:00:00Z").getTime())&&new Date(s+"T12:00:00Z").toISOString().slice(0,10)===s;
 const textValue=(x,n)=>typeof x==="string"&&x.trim().length>0&&x.trim().length<=n?x.trim():null;
 const uuid=x=>typeof x==="string"&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(x);
-function amount(x,allowZero=false){
+function amount(x,allowZero=false,allowNegative=false){
  const s=String(x??"").trim().replace(",",".");
- if(!/^\d{1,10}(?:\.\d{1,2})?$/.test(s))throw new Error("Informe um valor válido em reais.");
- const [a,b=""]=s.split(".");const n=Number(a)*100+Number(b.padEnd(2,"0"));
- if(!Number.isSafeInteger(n)||n<0||(!allowZero&&n===0))throw new Error("Valor deve ser positivo.");
+ const re=allowNegative?/^-?\d{1,10}(?:\.\d{1,2})?$/:/^\d{1,10}(?:\.\d{1,2})?$/;
+ if(!re.test(s))throw new Error("Informe um valor válido em reais.");
+ const negative=s.startsWith("-");
+ const [a,b=""]=(negative?s.slice(1):s).split(".");
+ const n=(negative?-1:1)*(Number(a)*100+Number(b.padEnd(2,"0")));
+ if(!Number.isSafeInteger(n)||(!allowNegative&&n<0)||(!allowZero&&n===0))throw new Error("Valor inválido.");
  return n;
 }
 function monthOffset(d,delta){
@@ -48,7 +52,7 @@ export async function POST(request){
   const x=await jsonBody(request);
   if(x.action==="wallet"){
    const name=textValue(x.name,90);if(!name)return error("Informe o nome da conta.");
-   const initial=amount(x.balance??"0",true);
+   const initial=amount(x.balance??"0",true,true);
    await sql`INSERT INTO public.kc_wallets(user_id,name,opening_balance_cents,opening_at) VALUES(${owner.id},${name},${initial},now())`;
    return send({saved:true},201);
   }
@@ -96,6 +100,7 @@ export async function PATCH(request){
   const x=await jsonBody(request);
   if(x.action==="settle"){
    if(!uuid(x.titleId)||!uuid(x.idempotency)||!day(x.settledOn))return error("Dados de baixa inválidos.");
+   if(!validSettlementDay(x.settledOn,brDay()))return error("A baixa realizada não pode ter uma data futura.");
    const value=amount(x.amount);
    const rows=await sql`SELECT public.kc_settle_title(${owner.id},${x.titleId}::uuid,${value},${x.settledOn}::date,${x.idempotency}::uuid) AS id`;
    return send({saved:true,id:rows[0]?.id});

@@ -10,7 +10,8 @@ export const isoDate = x=>String(x||"").slice(0,10);
 export const monthOf = x=>isoDate(x).slice(0,7);
 const dateValue=x=>new Date(x+"T12:00:00Z");
 export function dayAdd(day,offset){const d=dateValue(day);d.setUTCDate(d.getUTCDate()+offset);return d.toISOString().slice(0,10);}
-function checkDate(day){return /^\d{4}-\d{2}-\d{2}$/.test(day)&&dateValue(day).toISOString().slice(0,10)===day;}
+function checkDate(day){if(typeof day!=="string"||!/^\d{4}-\d{2}-\d{2}$/.test(day))return false;const d=dateValue(day);return Number.isFinite(d.getTime())&&d.toISOString().slice(0,10)===day;}
+export function validSettlementDay(day,today=brDay()){return checkDate(day)&&day<=today;}
 function sameUserWallet(settlement,wallet){return String(settlement.wallet_id)===String(wallet.id);}
 export function compute(data, date, today=brDay()){
  const selected=checkDate(date)?date:today;
