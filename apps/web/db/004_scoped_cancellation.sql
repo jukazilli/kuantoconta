@@ -40,8 +40,10 @@ BEGIN
  IF p_scope NOT IN ('only','future','all') OR p_scope IS NULL THEN
   RAISE EXCEPTION 'Escopo de exclusão inválido' USING ERRCODE='22023';
  END IF;
+ -- Obtain series identity first, then acquire series lock before any row lock.
+ -- This prevents two concurrent scope deletions on different installments deadlocking.
  SELECT * INTO v_anchor FROM public.kc_titles
- WHERE user_id=p_user_id AND id=p_title_id AND cancelled_at IS NULL FOR UPDATE;
+ WHERE user_id=p_user_id AND id=p_title_id AND cancelled_at IS NULL;
  IF NOT FOUND THEN RAISE EXCEPTION 'Título não encontrado' USING ERRCODE='P0002'; END IF;
  IF v_anchor.series_id IS NULL AND p_scope<>'only' THEN
   RAISE EXCEPTION 'Este título não possui série' USING ERRCODE='22023';
@@ -49,6 +51,9 @@ BEGIN
  IF v_anchor.series_id IS NOT NULL THEN
   PERFORM pg_advisory_xact_lock(hashtextextended(p_user_id||':'||v_anchor.series_id::text,0));
  END IF;
+ SELECT * INTO v_anchor FROM public.kc_titles
+ WHERE user_id=p_user_id AND id=p_title_id AND cancelled_at IS NULL FOR UPDATE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'Título já cancelado' USING ERRCODE='P0002'; END IF;
  -- Lock all affected rows to coordinate atomically with settlements and edits.
  PERFORM id FROM public.kc_titles WHERE user_id=p_user_id AND cancelled_at IS NULL
  AND (CASE WHEN p_scope='only' OR v_anchor.series_id IS NULL THEN id=p_title_id
