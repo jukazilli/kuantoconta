@@ -6,8 +6,10 @@ import {money,cents,brDay,monthOf,isoDate} from "../../lib/finance";
 import {computeRange,lastDayOfMonth,firstDayOfMonth,moveMonth,inRange} from "../../lib/period";
 import {maskToDecimal,centsToMask} from "../../lib/money-input";
 import {expandRecurring} from "../../lib/recurring";
+import {isSeries} from "../../lib/cancel-scope";
 import EntryDrawer from "./EntryDrawer";
 import MovementList from "./MovementList";
+import CancelScopeDialog from "./CancelScopeDialog";
 import FinanceChart from "./FinanceChart";
 const TABS=[["overview","Visão geral",LayoutDashboard],["movements","Movimentos",ArrowLeftRight],["planning","Planejamento",CalendarRange],["registers","Cadastros",Wallet],["account","Conta",Settings2]];
 const CATS={expense:["Moradia","Alimentação","Transporte","Saúde","Lazer","Educação","Assinaturas","Empréstimos","Outros"],income:["Salário","Renda extra","Benefícios","Rendimentos","Reembolsos","Outros"]};
@@ -30,7 +32,7 @@ function Empty({children}){return <div className="empty"><Info size={19}/><span>
 function Status({title}){const left=cents(title.amount_cents)-cents(title.settled_cents);return <span className={"status "+(left===0?"done":cents(title.settled_cents)>0?"partial":isoDate(title.due_on)<TODAY?"late":"pending")}>{left===0?"Quitado":cents(title.settled_cents)>0?"Parcial":isoDate(title.due_on)<TODAY?"Vencido":"Pendente"}</span>;}
 export default function Dashboard({user}){
  const [data,setData]=useState(null),[busy,setBusy]=useState(false),[loading,setLoading]=useState(true),[error,setError]=useState(""),[notice,setNotice]=useState("");
- const [active,setActive]=useState("overview"),[rangeStart,setRangeStart]=useState(TODAY),[date,setDate]=useState(lastDayOfMonth(TODAY)),[drawer,setDrawer]=useState(null),[form,setForm]=useState(defaultForm()),[filter,setFilter]=useState("all"),[query,setQuery]=useState(""),[selectedTitle,setSelectedTitle]=useState(null);
+ const [active,setActive]=useState("overview"),[rangeStart,setRangeStart]=useState(TODAY),[date,setDate]=useState(lastDayOfMonth(TODAY)),[drawer,setDrawer]=useState(null),[form,setForm]=useState(defaultForm()),[filter,setFilter]=useState("all"),[query,setQuery]=useState(""),[selectedTitle,setSelectedTitle]=useState(null),[cancelTarget,setCancelTarget]=useState(null),[cancelError,setCancelError]=useState("");
  async function refresh(){try{const x=await request();setData(x);setError("");}catch(e){setError(e.message);}finally{setLoading(false);}}
  useEffect(()=>{refresh();},[]);
  const expanded=useMemo(()=>expandRecurring(data||{},rangeStart<TODAY?rangeStart:TODAY,date<TODAY?TODAY:date),[data,rangeStart,date]);
@@ -84,11 +86,22 @@ export default function Dashboard({user}){
      else setForm(old=>({...old,description:"",amount:""}));
    }catch(e){setError(e.message);}finally{setBusy(false);}
  }
- async function cancelTitle(t){
-   if(!window.confirm("Excluir este lançamento sem baixa?"))return;
-   setBusy(true);setError("");
-   try{const titleId=await materializeIfVirtual(t.id);await request("PATCH",{action:"cancel",titleId});setNotice("Lançamento excluído.");await refresh();setDrawer(null);}
-   catch(e){setError(e.message);}finally{setBusy(false);}
+
+ function cancelTitle(title){
+  if(!title)return;
+  setCancelTarget(title);setCancelError("");setError("");
+ }
+ async function confirmCancel(scope){
+  if(!cancelTarget||busy)return;
+  setBusy(true);setCancelError("");
+  try{
+   const result=await request("PATCH",{action:"cancel_scope",titleId:cancelTarget.id,scope});
+   await refresh();
+   setCancelTarget(null);setDrawer(null);
+   const suffix=result.preserved_paid>0?" Pagamentos já realizados foram preservados.":"";
+   setNotice("Exclusão confirmada. Obrigações pendentes canceladas: "+(result.affected||0)+"."+suffix);
+  }catch(e){setCancelError(e.message);}
+  finally{setBusy(false);}
  }
  async function reverseSettlement(id){
    if(!window.confirm("Desfazer esta baixa? O histórico será preservado e o valor voltará a ficar pendente."))return;
@@ -150,6 +163,7 @@ export default function Dashboard({user}){
  {active==="registers"&&<div className="workspace"><LineHeading title="Suas contas e patrimônio"><button className="dark-button" onClick={()=>open("wallet")}><Plus size={16}/> Nova conta</button></LineHeading><div className="wallet-list">{wallets.length?wallets.map(w=><article className="panel account-panel" key={w.id}><div className="account-icon"><Wallet size={22}/></div><div><h3>{w.name}</h3><p>Saldo registrado em {w.opening_at?fmtDate(w.opening_at):"data não informada"}</p></div><strong>{display(w.opening_balance_cents)}</strong></article>):<section className="panel"><Empty>Nenhuma conta cadastrada.</Empty></section>}</div><div className="register-grid"><section className="panel"><LineHeading title="Bens e investimentos"><button className="tiny-btn" onClick={()=>open("asset")}><Plus size={16}/> Adicionar</button></LineHeading><div className="large-line">{money(summary.assets)}</div><p>Ativos fora dos saldos de conta.</p></section><section className="panel"><LineHeading title="Dívidas declaradas"><button className="tiny-btn" onClick={()=>open("liability")}><Plus size={16}/> Adicionar</button></LineHeading><div className="large-line">{money(summary.liabilities)}</div><p>Passivos declarados. Evolução automática de contratos financeiros será uma etapa própria.</p></section></div></div>}
  {active==="account"&&<div className="workspace"><section className="panel profile-panel"><div className="account-icon large">{(user.name||user.email||"U")[0].toUpperCase()}</div><div><h2>{user.name}</h2><p>{user.email}</p><div className="profile-links"><a href="/legal/terms">Termos de Uso</a><a href="/legal/privacy">Aviso de Privacidade</a></div><p>Prévia restrita. Dados financeiros protegidos por autenticação. Não informe dados reais até a homologação legal.</p><button className="dark-button" onClick={async()=>{await authClient.signOut();window.location.replace("/auth/sign-in");}}><LogOut size={17}/> Sair da conta</button></div></section></div>}
  </main>
- {drawer&&<EntryDrawer key={drawer+":"+String(selectedTitle||"new")} drawer={drawer} form={form} setForm={setForm} selectedTitleObj={selectedTitleObj} settlements={data?.settlements||[]} wallets={wallets} categories={data?.categories||[]} rules={data?.recurringRules||[]} busy={busy} error={error} onSave={submit} onClose={()=>setDrawer(null)} onAction={handleAction} onAddCategory={addCategory}/>}
+ {drawer&&<EntryDrawer key={drawer+":"+String(selectedTitle||"new")} drawer={drawer} form={form} setForm={setForm} selectedTitleObj={selectedTitleObj} settlements={data?.settlements||[]} wallets={wallets} categories={data?.categories||[]} rules={data?.recurringRules||[]} busy={busy} error={error} onSave={submit} onClose={()=>setDrawer(null)} onAction={handleAction} onAddCategory={addCategory} cancellations={data?.cancellations||[]}/>}
+ {cancelTarget&&<CancelScopeDialog key={cancelTarget.id} title={cancelTarget} busy={busy} error={cancelError} onCancel={()=>setCancelTarget(null)} onConfirm={confirmCancel}/>}
  </div>;
 }

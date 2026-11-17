@@ -5,6 +5,7 @@ on:
       - feat/foundation-desktop-v1
       - feat/ux-money-range-movements
       - fix/finance-display-settlement-undo-recurring
+      - feat/scoped-cancel-financial-series
   pull_request:
     branches:
       - main

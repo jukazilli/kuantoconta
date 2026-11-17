@@ -2,6 +2,7 @@ import {sql} from "../../../lib/db";
 import {brDay,validSettlementDay} from "../../../lib/finance";
 import {DEFAULT_CATEGORIES,allowedRoot} from "../../../lib/taxonomy";
 import {decodeOccurrenceId,occurrenceForMonth} from "../../../lib/recurring";
+import {validScope} from "../../../lib/cancel-scope";
 import {getIdentity,legalAccepted,sameOrigin,PRIVATE_HEADERS} from "../../../lib/authorization";
 export const runtime="nodejs";
 export const dynamic="force-dynamic";
@@ -37,7 +38,7 @@ async function jsonBody(r){const txt=await r.text();if(txt.length>12000)throw ne
 export async function GET(){
  const owner=await authenticate();if(!owner.id)return error(owner.error,owner.status);
  try{
-  const [wallets,titles,settlements,assets,liabilities,savedCategories,recurringRules,cancelledRecurring]=await Promise.all([
+  const [wallets,titles,settlements,assets,liabilities,savedCategories,recurringRules,cancelledRecurring,cancellations]=await Promise.all([
    sql`SELECT id,name,opening_balance_cents::text,opening_at,created_at FROM public.kc_wallets WHERE user_id=${owner.id} ORDER BY created_at LIMIT 100`,
    sql`SELECT id,wallet_id,description,direction,category,subcategory,amount_cents::text,settled_cents::text,due_on::text,recurrence,installment_index,installment_total,series_id,created_at FROM public.kc_titles WHERE user_id=${owner.id} AND cancelled_at IS NULL ORDER BY due_on,id LIMIT 4000`,
    sql`SELECT s.id,s.title_id,s.wallet_id,s.amount_cents::text,s.settled_on::text,s.created_at,s.reversed_at,s.reversal_reason,t.direction,t.category FROM public.kc_settlements s JOIN public.kc_titles t ON t.id=s.title_id AND t.user_id=s.user_id WHERE s.user_id=${owner.id} ORDER BY s.settled_on,s.created_at LIMIT 7000`,
@@ -45,10 +46,11 @@ export async function GET(){
    sql`SELECT id,label,principal_cents::text,valued_on::text FROM public.kc_liabilities WHERE user_id=${owner.id} ORDER BY label LIMIT 200`,
    sql`SELECT id,name,direction,parent_id FROM public.kc_categories WHERE user_id=${owner.id} ORDER BY name LIMIT 300`,
    sql`SELECT id,wallet_id,direction,description,category,subcategory,amount_cents::text,starts_on::text,ends_on::text,paused_at::text,created_at FROM public.kc_recurring_rules WHERE user_id=${owner.id} ORDER BY starts_on LIMIT 300`,
-   sql`SELECT series_id,installment_index FROM public.kc_titles WHERE user_id=${owner.id} AND cancelled_at IS NOT NULL AND series_id IS NOT NULL LIMIT 4000`
+   sql`SELECT series_id,installment_index FROM public.kc_titles WHERE user_id=${owner.id} AND cancelled_at IS NOT NULL AND series_id IS NOT NULL LIMIT 4000`,
+   sql`SELECT title_id,SUM(cancelled_pending_cents)::text AS cancelled_pending_cents,MAX(original_amount_cents)::text AS original_amount_cents FROM public.kc_title_cancellation_events WHERE user_id=${owner.id} GROUP BY title_id LIMIT 4000`
   ]);
   const mappedDefaults=Object.entries(DEFAULT_CATEGORIES).flatMap(([direction,names])=>names.filter(name=>!savedCategories.some(c=>c.direction===direction&&c.parent_id===null&&c.name.toLocaleLowerCase("pt-BR")===name.toLocaleLowerCase("pt-BR"))).map(name=>({id:"builtin:"+direction+":"+name,name,direction,parent_id:null,builtin:true})));
-  return send({wallets,titles,settlements,assets,liabilities,recurringRules,cancelledRecurring,categories:[...mappedDefaults,...savedCategories],as_of:new Date().toISOString()});
+  return send({wallets,titles,settlements,assets,liabilities,recurringRules,cancelledRecurring,cancellations,categories:[...mappedDefaults,...savedCategories],as_of:new Date().toISOString()});
  }catch(e){console.error("portfolio-get",e?.name);return error("Falha ao consultar as finanças.",500);}
 }
 export async function POST(request){
@@ -173,11 +175,15 @@ export async function PATCH(request){
     return send({saved:true,reversedId:reversal[0]?.id});
   }
   if(x.action==="stop_recurring"){
-    if(!uuid(x.ruleId)||!day(x.startsOn))return error("Regra ou data inválida.");
-    const result=await sql`UPDATE public.kc_recurring_rules SET paused_at=${x.startsOn}::date
-    WHERE user_id=${owner.id} AND id=${x.ruleId}::uuid AND starts_on<=${x.startsOn}::date
-    AND (paused_at IS NULL OR paused_at>${x.startsOn}::date) RETURNING id`;
-    return result.length?send({saved:true}):error("Recorrência não encontrada ou já encerrada.",409);
+   if(!uuid(x.ruleId)||!day(x.startsOn))return error("Regra ou data inválida.");
+   const rule=await sql`SELECT starts_on::text FROM public.kc_recurring_rules WHERE user_id=${owner.id} AND id=${x.ruleId}::uuid LIMIT 1`;
+   if(!rule.length)return error("Regra não encontrada.",404);
+   const start=rule[0].starts_on;
+   const index=(Number(x.startsOn.slice(0,4))-Number(start.slice(0,4)))*12+
+                Number(x.startsOn.slice(5,7))-Number(start.slice(5,7))+1;
+   if(index<1)return error("Data anterior à recorrência.");
+   const result=await sql`SELECT public.kc_cancel_recurring_scope(${owner.id},${x.ruleId}::uuid,${index},'future') AS info`;
+   return send({saved:true,...result[0]?.info});
   }
   if(x.action==="edit"){
    if(!uuid(x.titleId)||!uuid(x.walletId)||!day(x.dueOn)||!["income","expense"].includes(x.direction))return error("Título ou dados inválidos.");
@@ -200,11 +206,36 @@ export async function PATCH(request){
     AND (settled_cents=0 OR wallet_id=${x.walletId}::uuid) RETURNING id`;
    return edited.length?send({saved:true,scope:"this-occurrence"}):error("O valor não pode ficar abaixo do que já foi baixado.",409);
   }
+  if(x.action==="cancel_scope"){
+   if(!validScope(x.scope))return error("Escolha uma opção de exclusão válida.");
+   const virtual=decodeOccurrenceId(x.titleId);
+   if(virtual){
+    const rule=await sql`SELECT starts_on::text FROM public.kc_recurring_rules WHERE user_id=${owner.id} AND id=${virtual.ruleId}::uuid LIMIT 1`;
+    if(!rule.length)return error("Recorrência não encontrada.",404);
+    const index=(Number(virtual.ym.slice(0,4))-Number(rule[0].starts_on.slice(0,4)))*12+
+      Number(virtual.ym.slice(5,7))-Number(rule[0].starts_on.slice(5,7))+1;
+    if(!Number.isInteger(index)||index<1)return error("Ocorrência inválida.");
+    const result=await sql`SELECT public.kc_cancel_recurring_scope(${owner.id},${virtual.ruleId}::uuid,${index},${x.scope}) AS info`;
+    return send({saved:true,...result[0]?.info});
+   }
+   if(!uuid(x.titleId))return error("Lançamento inválido.");
+   const title=await sql`SELECT id,series_id,recurrence,installment_index FROM public.kc_titles WHERE id=${x.titleId}::uuid AND user_id=${owner.id} AND cancelled_at IS NULL LIMIT 1`;
+   if(!title.length)return error("Lançamento não encontrado.",404);
+   if(title[0].series_id&&title[0].recurrence==="monthly"){
+    const rule=await sql`SELECT id FROM public.kc_recurring_rules WHERE id=${title[0].series_id}::uuid AND user_id=${owner.id} LIMIT 1`;
+    if(rule.length){
+     const result=await sql`SELECT public.kc_cancel_recurring_scope(${owner.id},${rule[0].id}::uuid,${title[0].installment_index},${x.scope}) AS info`;
+     return send({saved:true,...result[0]?.info});
+    }
+   }
+   const result=await sql`SELECT public.kc_cancel_title_scope(${owner.id},${x.titleId}::uuid,${x.scope}) AS info`;
+   return send({saved:true,...result[0]?.info});
+  }
   if(x.action==="cancel"){
-   if(!uuid(x.titleId))return error("Identificador inválido.");
-   const rows=await sql`UPDATE public.kc_titles SET cancelled_at=now() WHERE id=${x.titleId}::uuid AND user_id=${owner.id} AND settled_cents=0 AND cancelled_at IS NULL RETURNING id`;
-   return rows.length?send({saved:true}):error("Não é possível excluir um título já baixado ou inexistente.",409);
+   if(!uuid(x.titleId))return error("Título inválido.");
+   const result=await sql`SELECT public.kc_cancel_title_scope(${owner.id},${x.titleId}::uuid,'only') AS info`;
+   return send({saved:true,...result[0]?.info});
   }
   return error("Ação não reconhecida.");
- }catch(e){if(e?.message?.includes("Informe")||e?.message?.includes("Valor")||e?.message?.includes("exceeds"))return error("Valor maior que o saldo pendente.",409);if(e?.code==="22023"||e?.code==="P0002")return error("A reversão não pôde ser concluída: baixa inexistente, já revertida ou incompatível com o saldo de abertura.",409);console.error("portfolio-patch",e?.name);return error("Falha na operação.",500);}
+ }catch(e){if(e?.message?.includes("Informe")||e?.message?.includes("Valor")||e?.message?.includes("exceeds"))return error("Valor maior que o saldo pendente.",409);if(e?.code==="22023"||e?.code==="P0002")return error(e?.message?.slice(0,180)||"Operação indisponível.",409);console.error("portfolio-patch",e?.name);return error("Falha na operação.",500);}
 }
