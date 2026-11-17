@@ -1,3 +1,3 @@
 "use client";
-import { createAuthClient } from "@neon/auth/next";
+import { createAuthClient } from "@neondatabase/auth/next";
 export const authClient = createAuthClient();
