@@ -49,7 +49,7 @@ export async function GET(){
  const owner=await authenticate();if(!owner.id)return error(owner.error,owner.status);
  try{
   await seedDefaultCategories(owner.id);
-  const [wallets,titles,settlements,assets,liabilities,savedCategories,recurringRules,cancelledRecurring,cancellations,budgetRules,budgetPeriods,economicEvents,debtPayments,goals,healthSnapshots]=await Promise.all([
+  const [wallets,titles,settlements,assets,liabilities,savedCategories,recurringRules,cancelledRecurring,cancellations,budgetRules,budgetPeriods,economicEvents,debtPayments,goals,healthSnapshots,spendingPlans,spendingPlanApplications]=await Promise.all([
    sql`SELECT id,name,opening_balance_cents::text,opening_at,wallet_kind,liquidity_kind,is_reserved,created_at FROM public.kc_wallets WHERE user_id=${owner.id} ORDER BY created_at LIMIT 100`,
    sql`SELECT id,wallet_id,description,direction,category,subcategory,category_id,subcategory_id,economic_event_id,amount_cents::text,settled_cents::text,due_on::text,recurrence,installment_index,installment_total,series_id,is_essential,income_confidence,entry_kind,liability_id,created_at FROM public.kc_titles WHERE user_id=${owner.id} AND cancelled_at IS NULL ORDER BY due_on,id LIMIT 4000`,
    sql`SELECT s.id,s.title_id,s.wallet_id,s.amount_cents::text,s.settled_on::text,s.created_at,s.reversed_at,s.reversal_reason,t.direction,t.category FROM public.kc_settlements s JOIN public.kc_titles t ON t.id=s.title_id AND t.user_id=s.user_id WHERE s.user_id=${owner.id} ORDER BY s.settled_on,s.created_at LIMIT 7000`,
@@ -64,9 +64,11 @@ export async function GET(){
    sql`SELECT id,direction,description,amount_cents::text,occurred_on::text,category_id,subcategory_id,event_kind,competence_source,status,recurring_rule_id,parent_event_id,created_at FROM public.kc_economic_events WHERE user_id=${owner.id} AND cancelled_at IS NULL ORDER BY occurred_on DESC,created_at DESC LIMIT 4000`,
    sql`SELECT id,liability_id,wallet_id,settlement_id,principal_cents::text,interest_fee_cents::text,paid_on::text,created_at FROM public.kc_debt_payments WHERE user_id=${owner.id} ORDER BY paid_on DESC LIMIT 1000`,
    sql`SELECT id,title,category,target_cents::text,down_payment_cents::text,installment_count,installment_cents::text,interest_bps,desired_on::text,priority,status,created_at FROM public.kc_financial_goals WHERE user_id=${owner.id} AND status<>'cancelled' ORDER BY priority,created_at DESC LIMIT 100`,
-   sql`SELECT as_of::text,state,policy_version,reason_codes,stable_streak_months,updated_at FROM public.kc_health_snapshots WHERE user_id=${owner.id} ORDER BY as_of DESC LIMIT 1`
+   sql`SELECT as_of::text,state,policy_version,reason_codes,stable_streak_months,updated_at FROM public.kc_health_snapshots WHERE user_id=${owner.id} ORDER BY as_of DESC LIMIT 1`,
+   sql`SELECT id,description,category_id,subcategory_id,estimated_amount_cents::text,planned_for::text,planned_month,expected_payment_on::text,status,source,created_at,updated_at,cancelled_at FROM public.kc_spending_plans WHERE user_id=${owner.id} AND status<>'cancelled' ORDER BY planned_month,planned_for NULLS LAST,created_at DESC LIMIT 500`,
+   sql`SELECT id,plan_id,economic_event_id,allocated_cents::text,created_at FROM public.kc_spending_plan_applications WHERE user_id=${owner.id} ORDER BY created_at DESC LIMIT 2000`
   ]);
-  return send({wallets,titles,settlements,assets,liabilities,recurringRules,cancelledRecurring,cancellations,categories:savedCategories,budgetRules,budgetPeriods,economicEvents,debtPayments,goals,latestHealthSnapshot:healthSnapshots[0]||null,as_of:new Date().toISOString()});
+  return send({wallets,titles,settlements,assets,liabilities,recurringRules,cancelledRecurring,cancellations,categories:savedCategories,budgetRules,budgetPeriods,economicEvents,debtPayments,goals,latestHealthSnapshot:healthSnapshots[0]||null,spendingPlans,spendingPlanApplications,as_of:new Date().toISOString()});
  }catch(e){console.error("portfolio-get",e?.name);return error("Falha ao consultar as finanças.",500);}
 }
 export async function POST(request){
@@ -183,6 +185,44 @@ export async function POST(request){
     ${base},${occurredOn}::date,${x.dueOn}::date,${mode},${count},${start},${perMode},
     ${settlementState},${settledOn}::date,${idempotencyKey}::uuid
    ) AS info`;
+   const info=rows[0]?.info||{};
+   let reconciliation=null;
+   if(x.direction==="expense"&&uuid(x.spendingPlanId)&&uuid(info.economic_event_id)){
+    const recKey=uuid(x.reconcileIdempotencyKey)?x.reconcileIdempotencyKey:crypto.randomUUID();
+    const recRows=await sql`SELECT public.kc_apply_event_to_spending_plan(${owner.id},${x.spendingPlanId}::uuid,${info.economic_event_id}::uuid,NULL,${x.closeSpendingPlan!==false},${recKey}::uuid) AS info`;
+    reconciliation=recRows[0]?.info||null;
+   }
+   return send({saved:true,...info,reconciliation},201);
+  }
+  if(x.action==="spending_plan"){
+   const description=textValue(x.description,140),category=textValue(x.category,70);
+   if(!description||!category)return error("Informe descrição e categoria para a previsão.");
+   const estimatedCents=amount(x.amount);
+   let root=await sql`SELECT id FROM public.kc_categories WHERE user_id=${owner.id} AND direction='expense' AND parent_id IS NULL AND name=${category} LIMIT 1`;
+   if(!root.length && allowedRoot("expense",category)){
+    await seedDefaultCategories(owner.id);
+    root=await sql`SELECT id FROM public.kc_categories WHERE user_id=${owner.id} AND direction='expense' AND parent_id IS NULL AND name=${category} LIMIT 1`;
+   }
+   if(!root.length)return error("Selecione uma categoria de despesa cadastrada.");
+   const categoryId=root[0].id;
+   let subcategoryId=null;
+   if(x.subcategory){
+    const subName=textValue(x.subcategory,70);
+    const sub=await sql`SELECT id FROM public.kc_categories WHERE user_id=${owner.id} AND direction='expense' AND name=${subName} AND parent_id=${categoryId}::uuid LIMIT 1`;
+    if(sub.length)subcategoryId=sub[0].id;
+   }
+   const plannedFor=x.plannedFor&&day(x.plannedFor)?x.plannedFor:null;
+   const plannedMonth=plannedFor?plannedFor.slice(0,7):(isValidMonth(x.plannedMonth)?x.plannedMonth:brDay().slice(0,7));
+   const expectedPaymentOn=x.expectedPaymentOn&&day(x.expectedPaymentOn)?x.expectedPaymentOn:null;
+   const idempotencyKey=uuid(x.idempotencyKey)?x.idempotencyKey:crypto.randomUUID();
+   const rows=await sql`SELECT public.kc_create_spending_plan(${owner.id},${description},${categoryId}::uuid,${subcategoryId}::uuid,${estimatedCents},${plannedFor}::date,${plannedMonth},${expectedPaymentOn}::date,${idempotencyKey}::uuid) AS info`;
+   return send({saved:true,...rows[0]?.info},201);
+  }
+  if(x.action==="reconcile_plan"){
+   if(!uuid(x.planId)||!uuid(x.economicEventId))return error("Plano ou despesa inválidos para conciliação.");
+   const allocatedCents=x.allocatedAmount!==undefined&&x.allocatedAmount!==null&&x.allocatedAmount!==""?amount(x.allocatedAmount):null;
+   const idempotencyKey=uuid(x.idempotencyKey)?x.idempotencyKey:crypto.randomUUID();
+   const rows=await sql`SELECT public.kc_apply_event_to_spending_plan(${owner.id},${x.planId}::uuid,${x.economicEventId}::uuid,${allocatedCents},${x.closePlan!==false},${idempotencyKey}::uuid) AS info`;
    return send({saved:true,...rows[0]?.info},201);
   }
   if(x.action==="asset"||x.action==="liability"){
@@ -321,6 +361,26 @@ export async function PATCH(request){
    const siblings=await sql`SELECT id,name FROM public.kc_categories WHERE user_id=${owner.id} AND direction=${cat[0].direction} AND id<>${x.categoryId}::uuid LIMIT 300`;
    if(siblings.some(s=>normalizeCategoryName(s.name)===normalizeCategoryName(name)))return error("Já existe uma categoria com esse nome.",409);
    await sql`UPDATE public.kc_categories SET name=${name} WHERE id=${x.categoryId}::uuid AND user_id=${owner.id}`;
+   return send({saved:true});
+  }
+  if(x.action==="update_spending_plan"){
+   if(!uuid(x.planId))return error("Plano inválido.");
+   const existing=await sql`SELECT id,description,estimated_amount_cents,planned_for::text,planned_month,status FROM public.kc_spending_plans WHERE id=${x.planId}::uuid AND user_id=${owner.id} AND status<>'cancelled' LIMIT 1`;
+   if(!existing.length)return error("Plano não encontrado.",404);
+   const nextDesc=x.description!==undefined?textValue(x.description,140):existing[0].description;
+   if(!nextDesc)return error("Descrição inválida.");
+   const nextAmount=x.amount!==undefined&&x.amount!==null&&x.amount!==""?amount(x.amount):Number(existing[0].estimated_amount_cents);
+   const nextPlannedFor=x.plannedFor===null||x.plannedFor===""?null:(x.plannedFor&&day(x.plannedFor)?x.plannedFor:existing[0].planned_for);
+   const nextMonth=nextPlannedFor?nextPlannedFor.slice(0,7):(isValidMonth(x.plannedMonth)?x.plannedMonth:existing[0].planned_month);
+   const alloc=await sql`SELECT COALESCE(SUM(a.allocated_cents),0)::text AS total FROM public.kc_spending_plan_applications a JOIN public.kc_economic_events e ON e.id=a.economic_event_id AND e.user_id=a.user_id WHERE a.user_id=${owner.id} AND a.plan_id=${x.planId}::uuid AND e.cancelled_at IS NULL`;
+   const allocated=Number(alloc[0]?.total||0);
+   const nextStatus=allocated>=nextAmount?"fulfilled":allocated>0?"partially_fulfilled":"planned";
+   await sql`UPDATE public.kc_spending_plans SET description=${nextDesc},estimated_amount_cents=${nextAmount},planned_for=${nextPlannedFor}::date,planned_month=${nextMonth},status=${nextStatus},updated_at=now() WHERE id=${x.planId}::uuid AND user_id=${owner.id}`;
+   return send({saved:true,status:nextStatus});
+  }
+  if(x.action==="cancel_spending_plan"){
+   if(!uuid(x.planId))return error("Plano inválido.");
+   await sql`UPDATE public.kc_spending_plans SET status='cancelled',cancelled_at=now(),updated_at=now() WHERE id=${x.planId}::uuid AND user_id=${owner.id}`;
    return send({saved:true});
   }
   if(x.action==="cancel_goal"){

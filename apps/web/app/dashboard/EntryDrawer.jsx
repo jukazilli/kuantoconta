@@ -1,20 +1,70 @@
 "use client";
-import {useState} from "react";
-import {X,Plus,CalendarDays,ReceiptText,CircleDollarSign,Repeat2,CheckCircle2,Clock3,Wallet} from "lucide-react";
+import {useMemo,useState} from "react";
+import {X,Plus,CalendarDays,ReceiptText,CircleDollarSign,Repeat2,CheckCircle2,Clock3,ChevronDown,ChevronRight,Sparkles} from "lucide-react";
 import MoneyInput from "./MoneyInput";
 import {cents,money,isoDate,brDay} from "../../lib/finance";
 import {maskToCents,maskToDecimal} from "../../lib/money-input";
 import {isSeries} from "../../lib/cancel-scope";
+import {findMatchingSpendingPlans} from "../../lib/spending-plans";
+
 const fdate=d=>{const s=isoDate(d).split("-");return s.length===3?s[2]+"/"+s[1]+"/"+s[0]:"—";};
-export default function EntryDrawer({drawer,form,setForm,selectedTitleObj,settlements=[],wallets=[],categories=[],rules=[],cancellations=[],busy,error,onSave,onClose,onAction,onAddCategory}){
- const [quick,setQuick]=useState(null),[newName,setNewName]=useState(""),[trackBudget,setTrackBudget]=useState(false),[quickLimit,setQuickLimit]=useState(""),[quickError,setQuickError]=useState(""),[quickBusy,setQuickBusy]=useState(false);
+
+export default function EntryDrawer({
+  drawer,
+  form,
+  setForm,
+  selectedTitleObj,
+  settlements=[],
+  wallets=[],
+  categories=[],
+  rules=[],
+  cancellations=[],
+  spendingPlans=[],
+  spendingPlanApplications=[],
+  busy,
+  error,
+  onSave,
+  onClose,
+  onAction,
+  onAddCategory
+}){
+ const [quick,setQuick]=useState(null),[newName,setNewName]=useState(""),[trackBudget,setTrackBudget]=useState(false),[quickLimit,setQuickLimit]=useState(""),[quickError,setQuickError]=useState(""),[quickBusy,setQuickBusy]=useState(false),[showMore,setShowMore]=useState(false);
  const field=(name,value)=>setForm(old=>({...old,[name]:value}));
- const edit=drawer==="edit",newTitle=drawer==="title",titleEntry=newTitle||edit;
+ const edit=drawer==="edit",newTitle=drawer==="title",editPlan=drawer==="edit_plan",titleEntry=newTitle||edit;
+ const isExpenseNew=newTitle&&form.direction==="expense";
+ const intent=isExpenseNew?(form.intent||"spent"):"bill";
  const roots=categories.filter(c=>c.direction===form.direction&&c.parent_id===null);
  const activeRoot=roots.find(c=>c.name===form.category);
  const subs=categories.filter(c=>c.direction===form.direction&&c.parent_id&&String(c.parent_id)===String(activeRoot?.id));
  const balanceDue=selectedTitleObj?Math.max(0,cents(selectedTitleObj.amount_cents)-cents(selectedTitleObj.settled_cents)):0;
  const amountValue=()=>{try{return maskToCents(form.amount);}catch{return 0;}};
+
+ // Discrete reconciliation suggestion when recording a real expense ("Gastei") matching an active spending plan (LC-21)
+ const matchingPlans=useMemo(()=>{
+  if(!isExpenseNew||intent!=="spent"||!activeRoot?.id)return [];
+  return findMatchingSpendingPlans({
+    plans:spendingPlans,
+    applications:spendingPlanApplications,
+    categoryId:activeRoot.id,
+    occurredOn:form.occurredOn||brDay(),
+    today:brDay()
+  });
+ },[isExpenseNew,intent,activeRoot,spendingPlans,spendingPlanApplications,form.occurredOn]);
+
+ const suggestedPlan=matchingPlans[0]||null;
+ const linkedPlan=form.spendingPlanId?spendingPlans.find(p=>String(p.id)===String(form.spendingPlanId)):null;
+
+ function selectIntent(next){
+  setShowMore(false);
+  if(next==="spent"){
+   setForm(old=>({...old,intent:"spent",mode:"single",settlementState:"paid",occurredOn:old.occurredOn||brDay(),settledOn:old.settledOn||brDay(),dueOn:old.dueOn||brDay()}));
+  }else if(next==="plan"){
+   setForm(old=>({...old,intent:"plan",mode:"single",plannedMonth:old.plannedMonth||brDay().slice(0,7),plannedFor:old.plannedFor||"",spendingPlanId:""}));
+  }else{
+   setForm(old=>({...old,intent:"bill",settlementState:"pending",mode:old.mode==="single"?"single":old.mode,spendingPlanId:""}));
+  }
+ }
+
  async function createCategory(e){
   e.preventDefault();setQuickError("");
   if(!newName.trim()){setQuickError("Informe um nome.");return;}
@@ -29,8 +79,20 @@ export default function EntryDrawer({drawer,form,setForm,selectedTitleObj,settle
   }catch(e){setQuickError(e.message||"Não foi possível cadastrar.");}
   finally{setQuickBusy(false);}
  }
- const formTitle=drawer==="title"?(form.direction==="income"?"Nova receita":"Nova despesa"):drawer==="edit"?"Editar lançamento":drawer==="wallet"?"Nova conta":drawer==="settle"?"Baixar título":drawer==="detail"?"Detalhes do título":drawer==="budget"?"Limite da categoria":drawer==="asset"?"Novo ativo":"Nova dívida";
+
+ const formTitle=
+  isExpenseNew?(intent==="spent"?"Gastei":intent==="plan"?"Vou gastar":"Tenho uma conta"):
+  drawer==="title"?"Nova receita":
+  drawer==="edit"?"Editar lançamento":
+  drawer==="edit_plan"?"Ajustar previsão de gasto":
+  drawer==="wallet"?"Nova conta":
+  drawer==="settle"?"Confirmar pagamento":
+  drawer==="detail"?"Detalhes do lançamento":
+  drawer==="budget"?"Limite da categoria":
+  drawer==="asset"?"Novo ativo":"Nova dívida";
+
  const canSubmit=drawer!=="detail";
+
  return <div className="overlay" onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}><section className="drawer" role="dialog" aria-modal="true" aria-label={formTitle}>
    <header className="drawer-head"><button type="button" className="plain-icon" onClick={onClose} aria-label="Fechar"><X size={23}/></button><h2>{formTitle}</h2>{canSubmit?<button className="save-pill" form="entry-form" type="submit" disabled={busy}>{busy?"Salvando...":"Salvar"}</button>:<span className="drawer-head-spacer"/>}</header>
    {error&&<div className="notice error" role="alert" style={{margin:"14px 20px"}}>{error}</div>}
@@ -46,7 +108,7 @@ export default function EntryDrawer({drawer,form,setForm,selectedTitleObj,settle
       <div><dt>Já efetivado</dt><dd>{money(cents(selectedTitleObj?.settled_cents))}</dd></div>
       <div className="strong"><dt>Saldo pendente</dt><dd>{money(balanceDue)}</dd></div>
     </dl>
-    <div className="detail-actions"><button className="dark-button" disabled={balanceDue===0} onClick={()=>onAction("settle",selectedTitleObj.id)}>Baixa total ou parcial</button><button className="light-button" onClick={()=>onAction("edit",selectedTitleObj.id)}>Editar esta ocorrência</button></div>
+    <div className="detail-actions"><button className="dark-button" disabled={balanceDue===0} onClick={()=>onAction("settle",selectedTitleObj.id)}>Confirmar pagamento</button><button className="light-button" onClick={()=>onAction("edit",selectedTitleObj.id)}>Editar esta ocorrência</button></div>
     {cancellations.some(c=>c.title_id===selectedTitleObj?.id)&&<div className="editing-scope-note">
       <strong>Cancelamento parcial registrado</strong>
       <p>Valor original antes do cancelamento: {money(cents(cancellations.find(c=>c.title_id===selectedTitleObj?.id)?.original_amount_cents))}</p>
@@ -54,27 +116,86 @@ export default function EntryDrawer({drawer,form,setForm,selectedTitleObj,settle
       <p>Pagamentos e recebimentos efetuados foram preservados no histórico.</p>
     </div>}
     {(balanceDue>0||isSeries(selectedTitleObj))&&<button type="button" className="text-button" onClick={()=>onAction("cancel",selectedTitleObj.id)}>Excluir este lançamento ou sua série</button>}
-    <div className="detail-history"><h3>Histórico de baixas</h3>{settlements.filter(s=>s.title_id===selectedTitleObj?.id).length?settlements.filter(s=>s.title_id===selectedTitleObj?.id).map(s=><div className={"history-row"+(s.reversed_at?" reversed":"")} key={s.id}><p><CheckCircle2 size={15}/>{fdate(s.settled_on)} — {money(cents(s.amount_cents))} {s.reversed_at&&<span>• Revertida</span>}</p>{!s.reversed_at&&<button type="button" disabled={busy} onClick={()=>onAction("reverse",s.id)}>Desfazer baixa</button>}</div>):<p><Clock3 size={15}/> Nenhuma baixa registrada.</p>}</div>
-
+    <div className="detail-history"><h3>Histórico de pagamentos</h3>{settlements.filter(s=>s.title_id===selectedTitleObj?.id).length?settlements.filter(s=>s.title_id===selectedTitleObj?.id).map(s=><div className={"history-row"+(s.reversed_at?" reversed":"")} key={s.id}><p><CheckCircle2 size={15}/>{fdate(s.settled_on)} — {money(cents(s.amount_cents))} {s.reversed_at&&<span>• Revertido</span>}</p>{!s.reversed_at&&<button type="button" disabled={busy} onClick={()=>onAction("reverse",s.id)}>Desfazer pagamento</button>}</div>):<p><Clock3 size={15}/> Nenhum pagamento registrado.</p>}</div>
     <p className="hint">Ao editar esta ocorrência, as demais parcelas da série não serão alteradas.</p>
    </div>:<form id="entry-form" className="entry-form" onSubmit={onSave}>
-    {titleEntry&&<><div className="field-row major"><ReceiptText/><input aria-label="Descrição do lançamento" placeholder="Descrição" required value={form.description} maxLength={120} onChange={e=>field("description",e.target.value)}/></div>
+    {isExpenseNew&&<div className="intent-tabs" role="tablist" aria-label="Tipo de registro">
+      <button type="button" role="tab" aria-selected={intent==="spent"} className={intent==="spent"?"active":""} onClick={()=>selectIntent("spent")}>Gastei</button>
+      <button type="button" role="tab" aria-selected={intent==="plan"} className={intent==="plan"?"active":""} onClick={()=>selectIntent("plan")}>Vou gastar</button>
+      <button type="button" role="tab" aria-selected={intent==="bill"} className={intent==="bill"?"active":""} onClick={()=>selectIntent("bill")}>Tenho uma conta</button>
+    </div>}
+
+    {/* ACTION 2: VOU GASTAR (spending plan) */}
+    {isExpenseNew&&intent==="plan"&&<>
+      <p className="hint">Apenas uma previsão de gasto. Não cria conta a pagar nem reduz seu saldo.</p>
+      <div className="field-row money-input"><CircleDollarSign/><span>R$</span><MoneyInput ariaLabel="Valor estimado em reais" value={form.amount} onChange={v=>field("amount",v)}/></div>
+      <div className="field-row major"><ReceiptText/><input aria-label="O que pretende gastar" placeholder="Ex.: Mercado, Presente" required value={form.description} maxLength={120} onChange={e=>field("description",e.target.value)}/></div>
+      <div className="form-group">
+        <div className="controlled-classification"><label>Categoria<select required value={form.category} onChange={e=>setForm(old=>({...old,category:e.target.value,subcategory:""}))}><option value="">Selecione</option>{roots.map(c=><option key={c.id} value={c.name}>{c.name}</option>)}</select></label><button type="button" className="inline-plus" aria-label="Criar categoria" onClick={()=>{setQuick("category");setNewName("");setQuickError("");}}><Plus size={20}/></button></div>
+        <div className="form-grid">
+          <label>Mês previsto<input required type="month" value={form.plannedMonth||brDay().slice(0,7)} onChange={e=>setForm(old=>({...old,plannedMonth:e.target.value,plannedFor:""}))}/></label>
+          <label>Dia previsto (opcional)<input type="date" value={form.plannedFor||""} onChange={e=>setForm(old=>({...old,plannedFor:e.target.value,plannedMonth:e.target.value?e.target.value.slice(0,7):old.plannedMonth}))}/></label>
+        </div>
+      </div>
+    </>}
+
+    {/* ACTION 1: GASTEI (minimal daily expense entry, LC-23) */}
+    {isExpenseNew&&intent==="spent"&&<>
+      <div className="field-row money-input"><CircleDollarSign/><span>R$</span><MoneyInput ariaLabel="Valor em reais" value={form.amount} onChange={v=>field("amount",v)}/></div>
+      <div className="field-row major"><ReceiptText/><input aria-label="Onde ou com o quê" placeholder="Onde ou com o quê? (ex.: Padaria)" required value={form.description} maxLength={120} onChange={e=>field("description",e.target.value)}/></div>
+      <div className="form-group">
+        <div className="controlled-classification"><label>Categoria<select required value={form.category} onChange={e=>setForm(old=>({...old,category:e.target.value,subcategory:"",spendingPlanId:""}))}><option value="">Selecione</option>{roots.map(c=><option key={c.id} value={c.name}>{c.name}</option>)}</select></label><button type="button" className="inline-plus" aria-label="Criar categoria" onClick={()=>{setQuick("category");setNewName("");setQuickError("");}}><Plus size={20}/></button></div>
+        <div className="form-grid" role="group" aria-label="Como vai pagar">
+          <label className="tick"><input type="radio" name="settlementState" checked={form.settlementState==="paid"} onChange={()=>field("settlementState","paid")}/> Já paguei</label>
+          <label className="tick"><input type="radio" name="settlementState" checked={form.settlementState!=="paid"} onChange={()=>field("settlementState","pending")}/> Vou pagar depois</label>
+        </div>
+        {form.settlementState!=="paid"&&<div className="field-row"><CalendarDays/><label><small>Data do pagamento</small><input required type="date" value={form.dueOn} onChange={e=>field("dueOn",e.target.value)}/></label></div>}
+        <label>Conta<select required value={form.walletId} onChange={e=>field("walletId",e.target.value)}><option value="">Selecione uma conta</option>{wallets.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}</select></label>
+      </div>
+
+      {/* Discrete reconciliation suggestion (LC-21 / LC-03 / LC-04) */}
+      {(linkedPlan||suggestedPlan)&&<div className="plan-suggest-box">
+        <div className="plan-suggest-head"><Sparkles size={15}/><strong>Essa compra corresponde a "{(linkedPlan||suggestedPlan).description}" ({money(cents((linkedPlan||suggestedPlan).estimated_amount_cents))})?</strong></div>
+        <div className="plan-suggest-actions">
+          <button type="button" className={form.spendingPlanId?"active":""} onClick={()=>setForm(old=>({...old,spendingPlanId:(linkedPlan||suggestedPlan).id,closeSpendingPlan:true}))}>Sim, usar previsão</button>
+          <button type="button" className={!form.spendingPlanId?"active":""} onClick={()=>field("spendingPlanId","")}>Não, é outra compra</button>
+        </div>
+        {form.spendingPlanId&&<div className="form-grid" style={{marginTop:8}}>
+          <label className="tick"><input type="radio" name="closePlan" checked={form.closeSpendingPlan!==false} onChange={()=>field("closeSpendingPlan",true)}/> Encerrar previsão</label>
+          <label className="tick"><input type="radio" name="closePlan" checked={form.closeSpendingPlan===false} onChange={()=>field("closeSpendingPlan",false)}/> Ainda vou gastar o restante</label>
+        </div>}
+      </div>}
+
+      <button type="button" className="text-button" onClick={()=>setShowMore(v=>!v)}>
+        {showMore?<ChevronDown size={15}/>:<ChevronRight size={15}/>} Mais opções (data, subcategoria, parcelas)
+      </button>
+      {showMore&&<div className="repeat-config">
+        <div className="field-row"><CalendarDays/><label><small>Data da compra</small><input type="date" value={form.occurredOn||brDay()} onChange={e=>field("occurredOn",e.target.value)}/></label></div>
+        {form.settlementState==="paid"&&<div className="field-row"><CalendarDays/><label><small>Data do pagamento</small><input type="date" max={brDay()} value={form.settledOn||brDay()} onChange={e=>field("settledOn",e.target.value)}/></label></div>}
+        <div className="controlled-classification"><label>Subcategoria<select value={form.subcategory||""} onChange={e=>field("subcategory",e.target.value)}><option value="">Sem subcategoria</option>{subs.map(c=><option key={c.id} value={c.name}>{c.name}</option>)}</select></label><button type="button" className="inline-plus" aria-label="Criar subcategoria" disabled={!form.category} onClick={()=>{setQuick("subcategory");setNewName("");setQuickError("");}}><Plus size={20}/></button></div>
+        {form.settlementState!=="paid"&&<div className="form-grid"><label>Total de parcelas<input type="number" min="1" max="60" value={form.mode==="installments"?form.count:"1"} onChange={e=>{const n=Number(e.target.value);setForm(old=>({...old,mode:n>1?"installments":"single",count:String(n)}));}}/></label><label>Valor informado<select value={form.valueMode} onChange={e=>field("valueMode",e.target.value)}><option value="total">Valor total</option><option value="installment">Por parcela</option></select></label></div>}
+      </div>}
+      {!wallets.length&&<p className="hint">Cadastre uma conta antes de registrar gastos.</p>}
+    </>}
+
+    {/* ACTION 3: TENHO UMA CONTA (or income / edit) */}
+    {titleEntry&&(!isExpenseNew||intent==="bill")&&<>
+      <div className="field-row major"><ReceiptText/><input aria-label="Descrição do lançamento" placeholder={isExpenseNew?"Ex.: Aluguel, Energia":"Descrição"} required value={form.description} maxLength={120} onChange={e=>field("description",e.target.value)}/></div>
       <div className="field-row money-input"><CircleDollarSign/><span>R$</span><MoneyInput ariaLabel="Valor em reais" value={form.amount} onChange={v=>field("amount",v)}/></div>
       {edit?<div className="editing-scope-note">A alteração será aplicada <strong>somente a este lançamento</strong>. Outras parcelas permanecem como estão.</div>:
-      <><div className="field-row"><Repeat2/><label><small>Repetição</small><select value={form.mode} onChange={e=>field("mode",e.target.value)}><option value="single">Não recorrente</option><option value="installments">Parcelar ou repetir</option><option value="monthly">Fixa mensal (até 2099)</option></select></label></div>
-      {form.mode==="installments"&&<div className="repeat-config"><div className="section-header"><h3>Configurar repetição</h3><span>Parcelas mensais</span></div>
+      <><div className="field-row"><Repeat2/><label><small>Repetição</small><select value={form.mode} onChange={e=>field("mode",e.target.value)}><option value="single">Conta única</option><option value="monthly">Repete todo mês</option><option value="installments">Parcelada</option></select></label></div>
+      {form.mode==="installments"&&<div className="repeat-config"><div className="section-header"><h3>Configurar parcelas</h3><span>Mensais</span></div>
       <div className="form-grid"><label>Começar na parcela<input type="number" min="1" max={form.count} value={form.startIndex} onChange={e=>field("startIndex",e.target.value)}/></label><label>Total de parcelas<input type="number" min="2" max="60" value={form.count} onChange={e=>field("count",e.target.value)}/></label></div>
       <label>O valor informado representa<select value={form.valueMode} onChange={e=>field("valueMode",e.target.value)}><option value="total">Valor total da operação</option><option value="installment">Valor de cada parcela</option></select></label>
-      <div className="repeat-preview"><strong>{Math.max(0,Number(form.count)-Number(form.startIndex)+1)||0} parcelas futuras</strong><span>{form.valueMode==="installment"?"Valor mensal: "+money(amountValue()):"Valor do contrato: "+money(amountValue())}</span></div></div>}
-      {form.mode==="monthly"&&<div className="repeat-config"><strong>Recorrência sem prazo de término</strong><p>Uma única regra será salva. As próximas parcelas são calculadas sob demanda até 2099.</p><label>Encerrar em (opcional)<input type="date" min={form.dueOn} max="2099-12-31" value={form.endsOn||""} onChange={ev=>field("endsOn",ev.target.value)}/></label></div>}
+      <div className="repeat-preview"><strong>{Math.max(0,Number(form.count)-Number(form.startIndex)+1)||0} parcelas futuras</strong><span>{form.valueMode==="installment"?"Valor mensal: "+money(amountValue()):"Valor total: "+money(amountValue())}</span></div></div>}
+      {form.mode==="monthly"&&<div className="repeat-config"><strong>Conta recorrente</strong><p>As próximas ocorrências são projetadas automaticamente sem precisar recadastrar.</p><label>Encerrar em (opcional)<input type="date" min={form.dueOn} max="2099-12-31" value={form.endsOn||""} onChange={ev=>field("endsOn",ev.target.value)}/></label></div>}
       </>}
-      {newTitle&&form.mode==="single"&&<div className="form-grid" role="group" aria-label="Situação do lançamento">
-        <label className="tick"><input type="radio" name="settlementState" checked={form.settlementState!=="paid"} onChange={()=>field("settlementState","pending")}/> {form.direction==="income"?"A receber":"A pagar"}</label>
-        <label className="tick"><input type="radio" name="settlementState" checked={form.settlementState==="paid"} onChange={()=>field("settlementState","paid")}/> {form.direction==="income"?"Recebido":"Pago"}</label>
+      {newTitle&&form.direction==="income"&&form.mode==="single"&&<div className="form-grid" role="group" aria-label="Situação da receita">
+        <label className="tick"><input type="radio" name="settlementState" checked={form.settlementState!=="paid"} onChange={()=>field("settlementState","pending")}/> A receber</label>
+        <label className="tick"><input type="radio" name="settlementState" checked={form.settlementState==="paid"} onChange={()=>field("settlementState","paid")}/> Já recebido</label>
       </div>}
-      {newTitle&&<div className="field-row"><CalendarDays/><label><small>{form.direction==="income"?"Data de competência":"Data da compra"}</small><input required type="date" value={form.occurredOn||form.dueOn} onChange={e=>field("occurredOn",e.target.value)}/></label></div>}
-      {newTitle&&form.mode==="single"&&form.settlementState==="paid"?
-        <div className="field-row"><CalendarDays/><label><small>{form.direction==="income"?"Data do recebimento":"Data do pagamento"}</small><input required type="date" max={brDay()} value={form.settledOn||brDay()} onChange={e=>field("settledOn",e.target.value)}/></label></div>:
+      {newTitle&&form.direction==="income"&&form.mode==="single"&&form.settlementState==="paid"?
+        <div className="field-row"><CalendarDays/><label><small>Data do recebimento</small><input required type="date" max={brDay()} value={form.settledOn||brDay()} onChange={e=>field("settledOn",e.target.value)}/></label></div>:
         <div className="field-row"><CalendarDays/><label><small>Data de vencimento</small><input required type="date" value={form.dueOn} onChange={e=>field("dueOn",e.target.value)}/></label></div>
       }
       <div className="form-group">
@@ -82,9 +203,20 @@ export default function EntryDrawer({drawer,form,setForm,selectedTitleObj,settle
         <div className="controlled-classification"><label>Subcategoria<select value={form.subcategory||""} onChange={e=>field("subcategory",e.target.value)}><option value="">Sem subcategoria</option>{subs.map(c=><option key={c.id} value={c.name}>{c.name}</option>)}{form.subcategory&&!subs.some(c=>c.name===form.subcategory)&&<option value={form.subcategory} disabled>{form.subcategory} (legado)</option>}</select></label><button type="button" className="inline-plus" aria-label="Criar subcategoria" disabled={!form.category} onClick={()=>{setQuick("subcategory");setNewName("");setQuickError("");}}><Plus size={20}/></button></div>
         <label>Conta<select required value={form.walletId} onChange={e=>field("walletId",e.target.value)}><option value="">Selecione uma conta</option>{wallets.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}</select></label>
       </div>
-      {!wallets.length&&<p className="hint">Cadastre uma conta antes de registrar receitas ou despesas.</p>}
+      {!wallets.length&&<p className="hint">Cadastre uma conta antes de registrar receitas ou contas.</p>}
       {newTitle&&<label className="tick"><input type="checkbox" checked={form.keepOpen} onChange={e=>field("keepOpen",e.target.checked)}/> Salvar e continuar</label>}
     </>}
+
+    {editPlan&&<>
+      <p className="hint">Ajustar esta previsão não altera compras já realizadas.</p>
+      <div className="field-row major"><ReceiptText/><input aria-label="Descrição da previsão" required value={form.description} maxLength={120} onChange={e=>field("description",e.target.value)}/></div>
+      <div className="field-row money-input"><CircleDollarSign/><span>R$</span><MoneyInput ariaLabel="Valor estimado em reais" value={form.amount} onChange={v=>field("amount",v)}/></div>
+      <div className="form-grid">
+        <label>Mês previsto<input required type="month" value={form.plannedMonth||brDay().slice(0,7)} onChange={e=>setForm(old=>({...old,plannedMonth:e.target.value,plannedFor:""}))}/></label>
+        <label>Dia previsto (opcional)<input type="date" value={form.plannedFor||""} onChange={e=>setForm(old=>({...old,plannedFor:e.target.value,plannedMonth:e.target.value?e.target.value.slice(0,7):old.plannedMonth}))}/></label>
+      </div>
+    </>}
+
     {drawer==="wallet"&&<><p className="hint">O saldo de abertura representa a posição real da conta na data do cadastro.</p><label>Nome da conta<input required maxLength={90} value={form.name} onChange={e=>field("name",e.target.value)} placeholder="Ex.: Conta principal"/></label><label>Saldo de abertura (R$)<MoneyInput value={form.balance} allowNegative onChange={v=>field("balance",v)} ariaLabel="Saldo de abertura"/></label><label className="tick"><input type="checkbox" checked={String(form.balance).startsWith("-")} onChange={e=>field("balance",e.target.checked?"-"+(form.balance||"0,00").replace("-",""):(form.balance||"0,00").replace("-",""))}/> Saldo negativo (devedor)</label></>}
     {drawer==="settle"&&<><p className="hint">Confirmar o valor pago ou recebido. A parte restante permanece pendente.</p><div className="settle-title">{selectedTitleObj?.description}<small>Saldo em aberto: {money(balanceDue)}</small></div><label>Valor efetivado (R$)<MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Valor efetivado em reais"/></label><label>Data da efetivação<input required type="date" max={brDay()} value={form.settledOn} onChange={e=>field("settledOn",e.target.value)}/></label></>}
     {drawer==="budget"&&<>
