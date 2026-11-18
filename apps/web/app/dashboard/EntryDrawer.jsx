@@ -3,11 +3,11 @@ import {useState} from "react";
 import {X,Plus,CalendarDays,ReceiptText,CircleDollarSign,Repeat2,CheckCircle2,Clock3,Wallet} from "lucide-react";
 import MoneyInput from "./MoneyInput";
 import {cents,money,isoDate,brDay} from "../../lib/finance";
-import {maskToCents} from "../../lib/money-input";
+import {maskToCents,maskToDecimal} from "../../lib/money-input";
 import {isSeries} from "../../lib/cancel-scope";
 const fdate=d=>{const s=isoDate(d).split("-");return s.length===3?s[2]+"/"+s[1]+"/"+s[0]:"—";};
 export default function EntryDrawer({drawer,form,setForm,selectedTitleObj,settlements=[],wallets=[],categories=[],rules=[],cancellations=[],busy,error,onSave,onClose,onAction,onAddCategory}){
- const [quick,setQuick]=useState(null),[newName,setNewName]=useState(""),[quickError,setQuickError]=useState(""),[quickBusy,setQuickBusy]=useState(false);
+ const [quick,setQuick]=useState(null),[newName,setNewName]=useState(""),[trackBudget,setTrackBudget]=useState(false),[quickLimit,setQuickLimit]=useState(""),[quickError,setQuickError]=useState(""),[quickBusy,setQuickBusy]=useState(false);
  const field=(name,value)=>setForm(old=>({...old,[name]:value}));
  const edit=drawer==="edit",newTitle=drawer==="title",titleEntry=newTitle||edit;
  const roots=categories.filter(c=>c.direction===form.direction&&c.parent_id===null);
@@ -18,16 +18,18 @@ export default function EntryDrawer({drawer,form,setForm,selectedTitleObj,settle
  async function createCategory(e){
   e.preventDefault();setQuickError("");
   if(!newName.trim()){setQuickError("Informe um nome.");return;}
+  if(quick==="category"&&form.direction==="expense"&&trackBudget&&!quickLimit){setQuickError("Informe o limite mensal.");return;}
   setQuickBusy(true);
   try{
-    await onAddCategory({name:newName.trim(),direction:form.direction,parentName:quick==="subcategory"?form.category:null});
+    const extra=quick==="category"&&form.direction==="expense"&&trackBudget?{limit:maskToDecimal(quickLimit),month:(form.occurredOn||brDay()).slice(0,7)}:{};
+    await onAddCategory({name:newName.trim(),direction:form.direction,parentName:quick==="subcategory"?form.category:null,...extra});
     if(quick==="category")setForm(old=>({...old,category:newName.trim(),subcategory:""}));
     else field("subcategory",newName.trim());
-    setQuick(null);setNewName("");
+    setQuick(null);setNewName("");setTrackBudget(false);setQuickLimit("");
   }catch(e){setQuickError(e.message||"Não foi possível cadastrar.");}
   finally{setQuickBusy(false);}
  }
- const formTitle=drawer==="title"?(form.direction==="income"?"Nova receita":"Nova despesa"):drawer==="edit"?"Editar lançamento":drawer==="wallet"?"Nova conta":drawer==="settle"?"Baixar título":drawer==="detail"?"Detalhes do título":drawer==="asset"?"Novo ativo":"Nova dívida";
+ const formTitle=drawer==="title"?(form.direction==="income"?"Nova receita":"Nova despesa"):drawer==="edit"?"Editar lançamento":drawer==="wallet"?"Nova conta":drawer==="settle"?"Baixar título":drawer==="detail"?"Detalhes do título":drawer==="budget"?"Limite da categoria":drawer==="asset"?"Novo ativo":"Nova dívida";
  const canSubmit=drawer!=="detail";
  return <div className="overlay" onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}><section className="drawer" role="dialog" aria-modal="true" aria-label={formTitle}>
    <header className="drawer-head"><button type="button" className="plain-icon" onClick={onClose} aria-label="Fechar"><X size={23}/></button><h2>{formTitle}</h2>{canSubmit?<button className="save-pill" form="entry-form" type="submit" disabled={busy}>{busy?"Salvando...":"Salvar"}</button>:<span className="drawer-head-spacer"/>}</header>
@@ -85,8 +87,13 @@ export default function EntryDrawer({drawer,form,setForm,selectedTitleObj,settle
     </>}
     {drawer==="wallet"&&<><p className="hint">O saldo de abertura representa a posição real da conta na data do cadastro.</p><label>Nome da conta<input required maxLength={90} value={form.name} onChange={e=>field("name",e.target.value)} placeholder="Ex.: Conta principal"/></label><label>Saldo de abertura (R$)<MoneyInput value={form.balance} allowNegative onChange={v=>field("balance",v)} ariaLabel="Saldo de abertura"/></label><label className="tick"><input type="checkbox" checked={String(form.balance).startsWith("-")} onChange={e=>field("balance",e.target.checked?"-"+(form.balance||"0,00").replace("-",""):(form.balance||"0,00").replace("-",""))}/> Saldo negativo (devedor)</label></>}
     {drawer==="settle"&&<><p className="hint">Confirmar o valor pago ou recebido. A parte restante permanece pendente.</p><div className="settle-title">{selectedTitleObj?.description}<small>Saldo em aberto: {money(balanceDue)}</small></div><label>Valor efetivado (R$)<MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Valor efetivado em reais"/></label><label>Data da efetivação<input required type="date" max={brDay()} value={form.settledOn} onChange={e=>field("settledOn",e.target.value)}/></label></>}
+    {drawer==="budget"&&<>
+      <div className="settle-title">{form.category}<small>Competência: {form.budgetMonth}</small></div>
+      <label className="tick"><input type="checkbox" checked={form.budgetActive!==false} onChange={e=>field("budgetActive",e.target.checked)}/> Controlar gastos nesta categoria</label>
+      {form.budgetActive!==false&&<label>Limite mensal (R$)<MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Limite mensal em reais"/></label>}
+    </>}
     {(drawer==="asset"||drawer==="liability")&&<><label>Descrição<input required maxLength={120} placeholder={drawer==="asset"?"Ex.: veículo":"Ex.: empréstimo"} value={form.label} onChange={e=>field("label",e.target.value)}/></label><label>Valor atual (R$)<MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Valor atual"/></label><p className="hint">Não inclua novamente o dinheiro já registrado em uma conta.</p></>}
    </form>}
-   {quick&&<div className="nested-overlay"><form className="quick-category" onSubmit={createCategory}><div className="quick-head"><h3>{quick==="category"?"Nova categoria":"Nova subcategoria"}</h3><button type="button" aria-label="Fechar" onClick={()=>setQuick(null)}><X size={20}/></button></div>{quick==="subcategory"&&<p>Dentro de {form.category}</p>}<label>Nome<input required maxLength={80} autoFocus value={newName} onChange={e=>setNewName(e.target.value)} placeholder={quick==="subcategory"?"Ex.: Mercado":"Ex.: Educação"}/></label>{quickError&&<div className="notice error" role="alert">{quickError}</div>}<button type="submit" className="dark-button" disabled={quickBusy}>{quickBusy?"Salvando...":"Adicionar"}</button></form></div>}
+   {quick&&<div className="nested-overlay"><form className="quick-category" onSubmit={createCategory}><div className="quick-head"><h3>{quick==="category"?"Nova categoria":"Nova subcategoria"}</h3><button type="button" aria-label="Fechar" onClick={()=>{setQuick(null);setTrackBudget(false);setQuickLimit("");}}><X size={20}/></button></div>{quick==="subcategory"&&<p>Dentro de {form.category}</p>}<label>Nome<input required maxLength={80} autoFocus value={newName} onChange={e=>setNewName(e.target.value)} placeholder={quick==="subcategory"?"Ex.: Mercado":"Ex.: Educação"}/></label>{quick==="category"&&form.direction==="expense"&&<><label className="tick"><input type="checkbox" checked={trackBudget} onChange={e=>setTrackBudget(e.target.checked)}/> Controlar gastos</label>{trackBudget&&<label>Limite mensal (R$)<MoneyInput value={quickLimit} onChange={setQuickLimit} ariaLabel="Limite mensal em reais"/></label>}</>}{quickError&&<div className="notice error" role="alert">{quickError}</div>}<button type="submit" className="dark-button" disabled={quickBusy}>{quickBusy?"Salvando...":"Adicionar"}</button></form></div>}
  </section></div>;
 }

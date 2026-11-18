@@ -138,3 +138,24 @@ input:not([type=checkbox]):not([type=radio]),select,textarea{font-size:16px!impo
 .cancel-confirm:hover{background:#b63d38}
 .cancel-confirm:disabled{opacity:.5}
 @media(max-width:520px){.cancel-dialog-backdrop{align-items:end;padding:0}.cancel-scope-dialog{border-radius:25px 25px 0 0;width:100%;padding:22px;padding-bottom:max(25px,env(safe-area-inset-bottom));max-height:92dvh}}
+
+/* BUD-05: Category budgets and drill-down */
+.budget-list{display:grid;gap:12px}
+.budget-card{border:1px solid #eceee9;border-radius:16px;padding:14px 16px;background:#fbfcfa;display:grid;gap:10px}
+.budget-card.over{border-color:#f3c8c3;background:#fff8f7}
+.budget-row-top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.budget-expand{display:inline-flex;align-items:center;gap:8px;border:0;background:transparent;padding:0;color:var(--ink);font-size:14px;text-align:left}
+.budget-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.budget-remaining{font-size:12px;color:#575c55}
+.budget-remaining.red,.red{color:var(--red)}
+.green{color:var(--green)}
+.budget-bar{height:8px;border-radius:999px;background:#e8eae5;overflow:hidden}
+.budget-fill{height:100%;background:var(--green);border-radius:999px;transition:width .2s ease}
+.budget-fill.warn{background:var(--coral)}
+.budget-fill.over{background:var(--red)}
+.budget-meta{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}
+.budget-drilldown{border-top:1px solid #eceee9;padding-top:10px;display:grid;gap:8px}
+.budget-subs{display:flex;flex-wrap:wrap;gap:6px}
+.budget-events{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.budget-events li{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:#4a4f48}
+.budget-cash-alert{margin-bottom:4px}
