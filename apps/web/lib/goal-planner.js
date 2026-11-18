@@ -1,8 +1,9 @@
-import { brDay, cents, compute, dayAdd } from "./finance.js";
+import { brDay, cents, compute, dayAdd, isoDate } from "./finance.js";
 import { lastDayOfMonth, moveMonth } from "./period.js";
 import { expandRecurring } from "./recurring.js";
 import { reconcilePortfolio } from "./reconciliation.js";
 import { resolvePolicy } from "./health-policy.js";
+import { enrichSpendingPlans } from "./spending-plans.js";
 
 function addMonthsIso(iso, delta) {
   const [y, m, d] = iso.split("-").map(Number);
@@ -131,7 +132,34 @@ export function simulateGoalPurchase(rawData, goal, options = {}) {
   };
   const expanded = expandRecurring(filteredData, today, simulationEnd);
   const computed = compute(expanded, simulationEnd, today);
-  const daily = computed.daily || [];
+
+  // LC-14, LC-15, LC-25: Include active spending plans in the prudent daily curve
+  // Dated plans hit expected_payment_on || planned_for; undated plans conservatively hit max(today, firstDayOfMonth(planned_month)).
+  const enrichedPlans = enrichSpendingPlans(
+    rawData?.spendingPlans || [],
+    rawData?.spendingPlanApplications || [],
+    today,
+    rawData?.economicEvents || []
+  );
+  const plansByDay = new Map();
+  let activePlansCount = 0;
+  let hasUndatedPlans = false;
+  for (const p of enrichedPlans) {
+    if (!p.active || p.remainingCents <= 0) continue;
+    const rawDay = p.expected_payment_on || p.planned_for || null;
+    if (!rawDay) hasUndatedPlans = true;
+    const targetDay = rawDay ? isoDate(rawDay) : `${p.planned_month}-01`;
+    const effectiveDay = targetDay < today ? today : targetDay;
+    if (effectiveDay <= simulationEnd) {
+      plansByDay.set(effectiveDay, (plansByDay.get(effectiveDay) || 0) + p.remainingCents);
+      activePlansCount++;
+    }
+  }
+  let cumPlans = 0;
+  const daily = (computed.daily || []).map((d) => {
+    cumPlans += plansByDay.get(d.date) || 0;
+    return { date: d.date, balance: d.balance - cumPlans };
+  });
 
   const protectedFloorCents =
     policy.minimumCashFloorCents + (reconciled.walletReserveCents ?? 0);
@@ -165,6 +193,16 @@ export function simulateGoalPurchase(rawData, goal, options = {}) {
   if (simulationEnd > baseHorizonEnd) {
     assumptions.push(
       `Horizonte estendido ate ${simulationEnd} usando premissas atuais para validar todas as ${installmentCount} parcela(s).`
+    );
+  }
+  if (activePlansCount > 0) {
+    assumptions.push(
+      `Simulacao prudente incluiu ${activePlansCount} plano(s) de gasto ativo(s) sem trata-los como divida.`
+    );
+  }
+  if (hasUndatedPlans) {
+    assumptions.push(
+      "Planos sem dia exato foram protegidos de forma conservadora no inicio do mes previsto."
     );
   }
 

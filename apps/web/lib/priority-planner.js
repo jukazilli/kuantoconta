@@ -20,13 +20,18 @@ export function planAllocationPriorities(diagnosisResult) {
 
   const operatingCash = Math.max(0, indicators.operatingCashCents ?? 0);
   const reserveWalletCash = Math.max(0, reconciled.walletReserveCents ?? 0);
-  const minWindowCash = indicators.minWindowCashCents ?? 0;
+  const minWindowContractual = indicators.minWindowCashCents ?? 0;
+  const minWindowPrudent =
+    indicators.minWindowCashWithPlansCents !== null &&
+    indicators.minWindowCashWithPlansCents !== undefined
+      ? Math.min(minWindowContractual, indicators.minWindowCashWithPlansCents)
+      : minWindowContractual;
 
   // Amount above floor + protected reserve wallets across the entire protection window,
-  // capped by confirmed operating cash today (FH-02 & FH-03).
+  // prudently respecting dated/undated spending plans (LC-14, LC-25) and capped by confirmed operating cash today (FH-02 & FH-03).
   const safeWindowSurplus = Math.max(
     0,
-    minWindowCash - policy.minimumCashFloorCents - reserveWalletCash
+    minWindowPrudent - policy.minimumCashFloorCents - reserveWalletCash
   );
   const eligibleTodayCents = Math.max(0, Math.min(operatingCash, safeWindowSurplus));
 

@@ -1,5 +1,6 @@
 import {compute,cents,brDay,monthOf,isoDate} from "./finance.js";
 import {computeBudgetSummary} from "./budgets.js";
+import {enrichSpendingPlans} from "./spending-plans.js";
 
 export function lastDayOfMonth(iso){
  if(!/^\d{4}-\d{2}-\d{2}$/.test(String(iso)))return iso;
@@ -33,8 +34,32 @@ export function computeRange(data,start,end,today=brDay()){
    categoryTotals[category]=(categoryTotals[category]||0)+cents(t.amount_cents);
  }
 
- // Residual budget consumption per month (within_budgets scenario)
- // Only adds max(0, limit - already_committed) on the last day of each month within horizon.
+ // Spending plans (with_plans scenario) + unallocated budget residual (within_budgets scenario)
+ // LC-12/LC-13/LC-14/LC-15:
+ // - Dated spending plans hit expected_payment_on || planned_for (not EOM).
+ // - Undated spending plans conservatively hit max(today, firstDayOfMonth(planned_month)) with hasUndatedPlans=true.
+ // - within_budgets adds ONLY unallocated residual max(0, L - R - C - P) so plans/committed/realized are never double-counted.
+ const enrichedPlans=enrichSpendingPlans(
+   data?.spendingPlans||[],
+   data?.spendingPlanApplications||[],
+   today,
+   data?.economicEvents||[]
+ );
+ const plansByDay=new Map();
+ let totalPlannedRemainingCents=0;
+ let hasUndatedPlans=false;
+ for(const p of enrichedPlans){
+   if(!p.active||p.remainingCents<=0)continue;
+   const rawDay=p.expected_payment_on||p.planned_for||null;
+   if(!rawDay)hasUndatedPlans=true;
+   const targetDay=rawDay?isoDate(rawDay):(p.planned_month+"-01");
+   const effectiveDay=targetDay<today?today:targetDay;
+   if(effectiveDay<=full.date){
+     plansByDay.set(effectiveDay,(plansByDay.get(effectiveDay)||0)+p.remainingCents);
+     totalPlannedRemainingCents+=p.remainingCents;
+   }
+ }
+
  const residualByDay=new Map();
  const budgetByMonth=new Map();
  for(const m of full.months){
@@ -46,32 +71,50 @@ export function computeRange(data,start,end,today=brDay()){
      economicEvents:data?.economicEvents||[],
      titles,
      recurringRules:data?.recurringRules||[],
-     cancelledRecurring:data?.cancelledRecurring||[]
+     cancelledRecurring:data?.cancelledRecurring||[],
+     spendingPlans:data?.spendingPlans||[],
+     spendingPlanApplications:data?.spendingPlanApplications||[],
+     today
    });
    budgetByMonth.set(m.month,summary);
-   const monthResidual=summary.reduce((acc,b)=>acc+(b.limitCents!==null?Math.max(0,b.limitCents-b.usedCents):0),0);
-   if(monthResidual>0){
+   const monthUnallocatedResidual=summary.reduce(
+     (acc,b)=>acc+(b.unallocatedCents!==null?Math.max(0,b.unallocatedCents):0),
+     0
+   );
+   if(monthUnallocatedResidual>0){
      const eom=lastDayOfMonth(m.month+"-01");
      const effectiveDay=eom<today?today:eom;
      if(effectiveDay<=full.date){
-       residualByDay.set(effectiveDay,(residualByDay.get(effectiveDay)||0)+monthResidual);
+       residualByDay.set(effectiveDay,(residualByDay.get(effectiveDay)||0)+monthUnallocatedResidual);
      }
    }
  }
 
+ let cumulativePlans=0;
  let cumulativeResidual=0;
+ let minCashWithPlans=full.knownCash?full.liveCash:null;
+ let firstNegativeWithPlans=null;
  let minCashWithinBudgets=full.knownCash?full.liveCash:null;
  let firstNegativeWithinBudgets=null;
+ const dailyWithPlans=[];
+ const lastWithPlansByMonth=new Map();
  const lastWithinByMonth=new Map();
  for(const d of full.daily){
+   cumulativePlans+=(plansByDay.get(d.date)||0);
    cumulativeResidual+=(residualByDay.get(d.date)||0);
-   const balWithin=d.balance-cumulativeResidual;
+   const balWithPlans=d.balance-cumulativePlans;
+   const balWithin=balWithPlans-cumulativeResidual;
+   dailyWithPlans.push({date:d.date,balance:balWithPlans});
+   if(balWithPlans<0&&!firstNegativeWithPlans)firstNegativeWithPlans=d.date;
+   minCashWithPlans=minCashWithPlans===null?balWithPlans:Math.min(minCashWithPlans,balWithPlans);
    if(balWithin<0&&!firstNegativeWithinBudgets)firstNegativeWithinBudgets=d.date;
    minCashWithinBudgets=minCashWithinBudgets===null?balWithin:Math.min(minCashWithinBudgets,balWithin);
+   lastWithPlansByMonth.set(monthOf(d.date),balWithPlans);
    lastWithinByMonth.set(monthOf(d.date),balWithin);
  }
 
- const projectedCashWithinBudgets=to<today||full.projectedCash===null?null:full.projectedCash-cumulativeResidual;
+ const projectedCashWithPlans=to<today||full.projectedCash===null?null:full.projectedCash-cumulativePlans;
+ const projectedCashWithinBudgets=to<today||full.projectedCash===null?null:full.projectedCash-cumulativePlans-cumulativeResidual;
  const netWorthWithinBudgets=projectedCashWithinBudgets===null?null:projectedCashWithinBudgets+full.assets-full.liabilities;
  const safeToSpendCents=!full.knownCash?null:Math.max(0,full.minCash??0);
 
@@ -79,7 +122,7 @@ export function computeRange(data,start,end,today=brDay()){
    const tx=titles.filter(t=>monthOf(t.due_on)===m.month&&inRange(t.due_on,from,to));
    const amount=kind=>tx.filter(t=>t.direction===kind).reduce((n,t)=>n+cents(t.amount_cents),0);
    const income=amount("income"),expense=amount("expense");
-   return {...m,income,expense,result:income-expense,balanceWithinBudgets:lastWithinByMonth.get(m.month)??null};
+   return {...m,income,expense,result:income-expense,balanceWithPlans:lastWithPlansByMonth.get(m.month)??null,balanceWithinBudgets:lastWithinByMonth.get(m.month)??null};
  });
  const overdue=titles.filter(t=>isoDate(t.due_on)<from&&cents(t.amount_cents)>cents(t.settled_cents));
  const targetMonth=monthOf(to);
@@ -91,7 +134,10 @@ export function computeRange(data,start,end,today=brDay()){
    economicEvents:data?.economicEvents||[],
    titles,
    recurringRules:data?.recurringRules||[],
-   cancelledRecurring:data?.cancelledRecurring||[]
+   cancelledRecurring:data?.cancelledRecurring||[],
+   spendingPlans:data?.spendingPlans||[],
+   spendingPlanApplications:data?.spendingPlanApplications||[],
+   today
  });
 
  return {
@@ -106,6 +152,12 @@ export function computeRange(data,start,end,today=brDay()){
    overdueCount:overdue.length,
    projectedCash:to<today?null:full.projectedCash,
    netWorthPartial:to<today?null:full.netWorthPartial,
+   dailyWithPlans,
+   projectedCashWithPlans,
+   minCashWithPlans:to<today?null:minCashWithPlans,
+   firstNegativeWithPlans:to<today?null:firstNegativeWithPlans,
+   totalPlannedRemainingCents,
+   hasUndatedPlans,
    projectedCashWithinBudgets,
    netWorthWithinBudgets,
    minCashWithinBudgets:to<today?null:minCashWithinBudgets,
