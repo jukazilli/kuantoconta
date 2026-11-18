@@ -18,10 +18,11 @@ Fintech editorial clara; canvas `#F6F6F5`, texto `#1B1C18`, coral `#FA6A43` em 1
 
 ### Hierarquia
 1. Saudações e seletor de período: contexto.
-2. Saldo atual/projetado: indicador primário com rótulo inequívoco.
-3. A pagar, a receber, sobra do mês e endividamento: indicadores de decisão.
-4. Gráficos ECharts: saldo acumulado (linha/área), entradas × saídas (barras), categorias (donut/barras).
-5. Tabela de títulos recentes, interativa, com status e ações.
+2. Compromissos a pagar e vencimentos próximos: indicador primário de ação.
+3. Orçamentos e limites mensais por categoria: `Restante do limite`, progresso e estouro.
+4. Evolução patrimonial projetada até 31/12 (`Contratual` e `Com limites`).
+5. Saldos em conta e A receber: posição secundária acessível.
+6. Gráficos ECharts e tabela de títulos recentes.
 
 ### Componentes
 `AppShell`, `TopNavigation` (pills), `IconRail`, `PageHeader`, `PeriodPicker`, `BalanceHero`, `MetricCard`, `ChartPanel`, `PaymentsTable`, `Money`, `StatusChip`, `Drawer`, `BottomSheet` (mobile depois), `EntryForm`, `RepeatPicker`, `InstallmentsConfig`, `EmptyState`, `Dialog`, `Skeleton`, `PrivacyNotice`.
