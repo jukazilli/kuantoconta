@@ -66,6 +66,15 @@ function sha256(text) {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
+function checksumMatches(recordHash, sqlText) {
+  const exact = sha256(sqlText);
+  if (recordHash === exact) return true;
+  const lf = sha256(sqlText.replace(/\r\n/g, "\n"));
+  if (recordHash === lf) return true;
+  const crlf = sha256(sqlText.replace(/\r?\n/g, "\r\n"));
+  return recordHash === crlf;
+}
+
 async function main() {
   const client = await pool.connect();
   try {
@@ -83,7 +92,7 @@ async function main() {
         const record = applied.get(file);
         if (!record) {
           console.log(`  [PENDENTE] ${file}`);
-        } else if (record.sha256 !== hash) {
+        } else if (!checksumMatches(record.sha256, sqlText)) {
           console.log(`  [MODIFICADA] ${file} (checksum diferente do aplicado)`);
         } else {
           console.log(`  [APLICADA] ${file}`);
@@ -98,7 +107,7 @@ async function main() {
       const hash = sha256(sqlText);
       const record = applied.get(file);
       if (record) {
-        if (record.sha256 !== hash) {
+        if (!checksumMatches(record.sha256, sqlText)) {
           throw new Error(
             `Migration ${file} ja foi aplicada com outro checksum. Nao edite migrations aplicadas; crie uma nova.`
           );
