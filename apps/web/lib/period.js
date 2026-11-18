@@ -1,4 +1,6 @@
 import {compute,cents,brDay,monthOf,isoDate} from "./finance.js";
+import {computeBudgetSummary} from "./budgets.js";
+
 export function lastDayOfMonth(iso){
  if(!/^\d{4}-\d{2}-\d{2}$/.test(String(iso)))return iso;
  const [y,m]=iso.split("-").map(Number);
@@ -11,10 +13,11 @@ export function moveMonth(iso,delta){
  return day.toISOString().slice(0,7);
 }
 export const inRange=(day,start,end)=>isoDate(day)>=start&&isoDate(day)<=end;
+
 export function computeRange(data,start,end,today=brDay()){
  const from=start<=end?start:end,to=end>=start?end:start;
  const full=compute(data,to,today);
- const titles=data?.titles||[],settlements=(data?.settlements||[]).filter(s=>!s.reversed_at);
+ const titles=data?.titles||[];
  // Due-date plan: each title counts once in its period, regardless of payment date.
  // Settlements affect actual cash and paid/open status, not the planned month's size.
  const total=direction=>{
@@ -29,12 +32,86 @@ export function computeRange(data,start,end,today=brDay()){
    const category=t.category||"Outros";
    categoryTotals[category]=(categoryTotals[category]||0)+cents(t.amount_cents);
  }
+
+ // Residual budget consumption per month (within_budgets scenario)
+ // Only adds max(0, limit - already_committed) on the last day of each month within horizon.
+ const residualByDay=new Map();
+ const budgetByMonth=new Map();
+ for(const m of full.months){
+   const summary=computeBudgetSummary({
+     month:m.month,
+     categories:data?.categories||[],
+     budgetRules:data?.budgetRules||[],
+     budgetPeriods:data?.budgetPeriods||[],
+     economicEvents:data?.economicEvents||[],
+     titles,
+     recurringRules:data?.recurringRules||[],
+     cancelledRecurring:data?.cancelledRecurring||[]
+   });
+   budgetByMonth.set(m.month,summary);
+   const monthResidual=summary.reduce((acc,b)=>acc+(b.limitCents!==null?Math.max(0,b.limitCents-b.usedCents):0),0);
+   if(monthResidual>0){
+     const eom=lastDayOfMonth(m.month+"-01");
+     const effectiveDay=eom<today?today:eom;
+     if(effectiveDay<=full.date){
+       residualByDay.set(effectiveDay,(residualByDay.get(effectiveDay)||0)+monthResidual);
+     }
+   }
+ }
+
+ let cumulativeResidual=0;
+ let minCashWithinBudgets=full.knownCash?full.liveCash:null;
+ let firstNegativeWithinBudgets=null;
+ const lastWithinByMonth=new Map();
+ for(const d of full.daily){
+   cumulativeResidual+=(residualByDay.get(d.date)||0);
+   const balWithin=d.balance-cumulativeResidual;
+   if(balWithin<0&&!firstNegativeWithinBudgets)firstNegativeWithinBudgets=d.date;
+   minCashWithinBudgets=minCashWithinBudgets===null?balWithin:Math.min(minCashWithinBudgets,balWithin);
+   lastWithinByMonth.set(monthOf(d.date),balWithin);
+ }
+
+ const projectedCashWithinBudgets=to<today||full.projectedCash===null?null:full.projectedCash-cumulativeResidual;
+ const netWorthWithinBudgets=projectedCashWithinBudgets===null?null:projectedCashWithinBudgets+full.assets-full.liabilities;
+ const safeToSpendCents=!full.knownCash?null:Math.max(0,full.minCash??0);
+
  const months=full.months.filter(m=>m.month>=monthOf(from)&&m.month<=monthOf(to)).map(m=>{
    const tx=titles.filter(t=>monthOf(t.due_on)===m.month&&inRange(t.due_on,from,to));
    const amount=kind=>tx.filter(t=>t.direction===kind).reduce((n,t)=>n+cents(t.amount_cents),0);
    const income=amount("income"),expense=amount("expense");
-   return {...m,income,expense,result:income-expense};
+   return {...m,income,expense,result:income-expense,balanceWithinBudgets:lastWithinByMonth.get(m.month)??null};
  });
  const overdue=titles.filter(t=>isoDate(t.due_on)<from&&cents(t.amount_cents)>cents(t.settled_cents));
- return {...full,periodStart:from,periodEnd:to,receivable:recv,payable:pay,periodResult:recv.total-pay.total,categoryTotals,months,overdueCount:overdue.length,projectedCash:to<today?null:full.projectedCash,netWorthPartial:to<today?null:full.netWorthPartial};
+ const targetMonth=monthOf(to);
+ const budgetSummary=budgetByMonth.get(targetMonth)||computeBudgetSummary({
+   month:targetMonth,
+   categories:data?.categories||[],
+   budgetRules:data?.budgetRules||[],
+   budgetPeriods:data?.budgetPeriods||[],
+   economicEvents:data?.economicEvents||[],
+   titles,
+   recurringRules:data?.recurringRules||[],
+   cancelledRecurring:data?.cancelledRecurring||[]
+ });
+
+ return {
+   ...full,
+   periodStart:from,
+   periodEnd:to,
+   receivable:recv,
+   payable:pay,
+   periodResult:recv.total-pay.total,
+   categoryTotals,
+   months,
+   overdueCount:overdue.length,
+   projectedCash:to<today?null:full.projectedCash,
+   netWorthPartial:to<today?null:full.netWorthPartial,
+   projectedCashWithinBudgets,
+   netWorthWithinBudgets,
+   minCashWithinBudgets:to<today?null:minCashWithinBudgets,
+   firstNegativeWithinBudgets:to<today?null:firstNegativeWithinBudgets,
+   totalResidualBudgetCents:cumulativeResidual,
+   safeToSpendCents,
+   budgetSummary
+ };
 }
