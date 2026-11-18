@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - feat/foundation-desktop-v1
+      - feat/ux-money-range-movements
   pull_request:
     branches:
       - main
