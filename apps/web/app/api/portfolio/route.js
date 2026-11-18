@@ -221,22 +221,25 @@ export async function PATCH(request){
    if(!uuid(x.titleId)||!uuid(x.walletId)||!day(x.dueOn)||!["income","expense"].includes(x.direction))return error("Título ou dados inválidos.");
    const description=textValue(x.description,140),category=textValue(x.category,70),subcategory=x.subcategory?textValue(x.subcategory,70):null;
    if(!description||!category||(x.subcategory&&!subcategory))return error("Descrição ou categoria inválida.");
-   const title=await sql`SELECT id,settled_cents,wallet_id FROM public.kc_titles WHERE user_id=${owner.id} AND id=${x.titleId}::uuid AND direction=${x.direction} AND cancelled_at IS NULL LIMIT 1`;
-   if(!title.length)return error("Título não encontrado.",404);
-   if(Number(title[0].settled_cents)>0 && String(title[0].wallet_id)!==x.walletId)return error("A conta de um título com baixa não pode ser alterada.",409);
    const account=await sql`SELECT id FROM public.kc_wallets WHERE user_id=${owner.id} AND id=${x.walletId}::uuid LIMIT 1`;
    if(!account.length)return error("Conta não encontrada.",404);
-   const root=await sql`SELECT id FROM public.kc_categories WHERE user_id=${owner.id} AND direction=${x.direction} AND name=${category} AND parent_id IS NULL LIMIT 1`;
-   if(!root.length && !allowedRoot(x.direction,category))return error("Categoria inválida.");
+   let root=await sql`SELECT id FROM public.kc_categories WHERE user_id=${owner.id} AND direction=${x.direction} AND name=${category} AND parent_id IS NULL LIMIT 1`;
+   if(!root.length && allowedRoot(x.direction,category)){
+    await seedDefaultCategories(owner.id);
+    root=await sql`SELECT id FROM public.kc_categories WHERE user_id=${owner.id} AND direction=${x.direction} AND name=${category} AND parent_id IS NULL LIMIT 1`;
+   }
+   if(!root.length)return error("Categoria inválida.");
+   const categoryId=root[0].id;
+   let subcategoryId=null;
    if(subcategory){
-    const sub=await sql`SELECT id FROM public.kc_categories WHERE user_id=${owner.id} AND direction=${x.direction} AND name=${subcategory} AND parent_id IN (SELECT id FROM public.kc_categories WHERE user_id=${owner.id} AND direction=${x.direction} AND name=${category} AND parent_id IS NULL) LIMIT 1`;
+    const sub=await sql`SELECT id FROM public.kc_categories WHERE user_id=${owner.id} AND direction=${x.direction} AND name=${subcategory} AND parent_id=${categoryId}::uuid LIMIT 1`;
     if(!sub.length)return error("Subcategoria inválida.");
+    subcategoryId=sub[0].id;
    }
    const value=amount(x.amount);
-   const edited=await sql`UPDATE public.kc_titles SET wallet_id=${x.walletId}::uuid,description=${description},category=${category},subcategory=${subcategory},amount_cents=${value},due_on=${x.dueOn}::date
-    WHERE user_id=${owner.id} AND id=${x.titleId}::uuid AND direction=${x.direction} AND cancelled_at IS NULL AND settled_cents<=${value}
-    AND (settled_cents=0 OR wallet_id=${x.walletId}::uuid) RETURNING id`;
-   return edited.length?send({saved:true,scope:"this-occurrence"}):error("O valor não pode ficar abaixo do que já foi baixado.",409);
+   const occurredOn=x.occurredOn&&day(x.occurredOn)?x.occurredOn:null;
+   await sql`SELECT public.kc_edit_title_and_event(${owner.id},${x.titleId}::uuid,${x.walletId}::uuid,${x.direction},${description},${categoryId}::uuid,${subcategoryId}::uuid,${category},${subcategory},${value},${x.dueOn}::date,${occurredOn}::date)`;
+   return send({saved:true,scope:"this-occurrence"});
   }
   if(x.action==="cancel_scope"){
    if(!validScope(x.scope))return error("Escolha uma opção de exclusão válida.");
@@ -261,6 +264,7 @@ export async function PATCH(request){
     }
    }
    const result=await sql`SELECT public.kc_cancel_title_scope(${owner.id},${x.titleId}::uuid,${x.scope}) AS info`;
+   await sql`SELECT public.kc_sync_cancelled_economic_events(${owner.id},${x.titleId}::uuid)`;
    return send({saved:true,...result[0]?.info});
   }
   if(x.action==="rename_category"){
@@ -277,6 +281,7 @@ export async function PATCH(request){
   if(x.action==="cancel"){
    if(!uuid(x.titleId))return error("Título inválido.");
    const result=await sql`SELECT public.kc_cancel_title_scope(${owner.id},${x.titleId}::uuid,'only') AS info`;
+   await sql`SELECT public.kc_sync_cancelled_economic_events(${owner.id},${x.titleId}::uuid)`;
    return send({saved:true,...result[0]?.info});
   }
   return error("Ação não reconhecida.");

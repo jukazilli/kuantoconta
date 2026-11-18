@@ -1,4 +1,6 @@
-import { cents } from "./finance.js";
+import { cents, monthOf } from "./finance.js";
+import { normalizeCategoryName } from "./taxonomy.js";
+import { expandRecurring } from "./recurring.js";
 
 const VALID_MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 
@@ -71,4 +73,159 @@ export function listConfiguredBudgets({ month, categories = [], budgetRules = []
     }
   }
   return results;
+}
+
+/**
+ * Pure budget consumption engine for a single calendar month (YYYY-MM).
+ * Zero double-counting invariant:
+ * - Reads committed consumption from kc_economic_events by occurred_on month.
+ * - Settlements (kc_settlements) and reversals NEVER alter budget consumption.
+ * - Legacy titles or virtual recurring occurrences without economic_event_id are included
+ *   by due_on month only when economic_event_id is absent.
+ */
+export function computeBudgetSummary({
+  month,
+  categories = [],
+  budgetRules = [],
+  budgetPeriods = [],
+  economicEvents = [],
+  titles = [],
+  recurringRules = [],
+  cancelledRecurring = []
+}) {
+  if (!isValidMonth(month)) return [];
+
+  const expenseRoots = categories.filter(c => c.direction === "expense" && !c.parent_id);
+  const rootById = new Map(expenseRoots.map(c => [String(c.id), c]));
+  const rootByNorm = new Map(expenseRoots.map(c => [normalizeCategoryName(c.name), c]));
+  const subById = new Map(
+    categories.filter(c => c.direction === "expense" && c.parent_id).map(c => [String(c.id), c])
+  );
+
+  const buckets = new Map();
+  const ensureBucket = root => {
+    const key = String(root.id);
+    if (!buckets.has(key)) {
+      const limitInfo = resolveMonthBudgetLimit({
+        categoryId: root.id,
+        month,
+        budgetRules,
+        budgetPeriods
+      });
+      buckets.set(key, {
+        categoryId: key,
+        categoryName: root.name,
+        canonicalKey: root.canonical_key || null,
+        active: root.active !== false,
+        limitCents: limitInfo ? limitInfo.limitCents : null,
+        version: limitInfo ? limitInfo.version : null,
+        ruleId: limitInfo ? limitInfo.ruleId : null,
+        usedCents: 0,
+        subcategories: new Map(),
+        events: []
+      });
+    }
+    return buckets.get(key);
+  };
+
+  for (const root of expenseRoots) {
+    ensureBucket(root);
+  }
+
+  const addConsumption = (root, subName, deltaCents, item) => {
+    const bucket = ensureBucket(root);
+    bucket.usedCents += deltaCents;
+    if (subName) {
+      bucket.subcategories.set(subName, (bucket.subcategories.get(subName) || 0) + deltaCents);
+    }
+    bucket.events.push(item);
+  };
+
+  // 1. Primary source: kc_economic_events (each purchase/event counted once in occurred_on month)
+  for (const ev of economicEvents) {
+    if (ev.direction !== "expense" || ev.cancelled_at || ev.status === "cancelled") continue;
+    if (monthOf(ev.occurred_on) !== month) continue;
+    const root = rootById.get(String(ev.category_id));
+    if (!root) continue;
+    const sub = ev.subcategory_id ? subById.get(String(ev.subcategory_id)) : null;
+    const sign = ev.event_kind === "refund" ? -1 : 1;
+    const delta = sign * cents(ev.amount_cents);
+    addConsumption(root, sub?.name || null, delta, {
+      id: ev.id,
+      description: ev.description,
+      amountCents: delta,
+      occurredOn: ev.occurred_on,
+      eventKind: ev.event_kind || "one_off",
+      subcategoryName: sub?.name || null,
+      source: "economic_event"
+    });
+  }
+
+  // 2. Fallback for legacy titles (no economic_event_id) + virtual monthly recurring occurrences
+  const expanded = expandRecurring(
+    { titles, recurringRules, cancelledRecurring },
+    `${month}-01`,
+    `${month}-31`
+  );
+  for (const t of expanded.titles || []) {
+    if (t.direction !== "expense" || t.cancelled_at || t.economic_event_id) continue;
+    if (monthOf(t.due_on) !== month) continue;
+    const root =
+      (t.category_id && rootById.get(String(t.category_id))) ||
+      rootByNorm.get(normalizeCategoryName(t.category || "Outros"));
+    if (!root) continue;
+    const amountCents = cents(t.amount_cents);
+    addConsumption(root, t.subcategory || null, amountCents, {
+      id: t.id,
+      description: t.description,
+      amountCents,
+      occurredOn: t.due_on,
+      eventKind: t.virtual ? "recurring_occurrence" : "legacy_title",
+      subcategoryName: t.subcategory || null,
+      source: t.virtual ? "recurring_rule" : "legacy_title"
+    });
+  }
+
+  return Array.from(buckets.values())
+    .filter(b => b.limitCents !== null || b.usedCents !== 0)
+    .map(b => {
+      const remainingCents = b.limitCents !== null ? b.limitCents - b.usedCents : null;
+      const overLimitCents = b.limitCents !== null ? Math.max(0, b.usedCents - b.limitCents) : 0;
+      const utilizationPct =
+        b.limitCents !== null && b.limitCents > 0
+          ? Math.round((b.usedCents / b.limitCents) * 100)
+          : b.limitCents === 0 && b.usedCents > 0
+            ? 100
+            : 0;
+      return {
+        categoryId: b.categoryId,
+        categoryName: b.categoryName,
+        canonicalKey: b.canonicalKey,
+        active: b.active,
+        limitCents: b.limitCents,
+        usedCents: b.usedCents,
+        remainingCents,
+        overLimitCents,
+        utilizationPct,
+        version: b.version,
+        ruleId: b.ruleId,
+        subcategories: Array.from(b.subcategories.entries()).map(([name, usedCents]) => ({
+          name,
+          usedCents
+        })),
+        events: b.events
+      };
+    })
+    .sort((a, b) => {
+      if (a.limitCents !== null && b.limitCents === null) return -1;
+      if (a.limitCents === null && b.limitCents !== null) return 1;
+      return b.usedCents - a.usedCents;
+    });
+}
+
+export function computeMultiMonthBudgets({ months = [], ...rest }) {
+  return months.filter(isValidMonth).map(month => ({
+    month,
+    categories: computeBudgetSummary({ month, ...rest })
+  }));
 }
