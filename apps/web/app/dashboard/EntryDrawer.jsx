@@ -31,8 +31,7 @@ export default function EntryDrawer({
  const [quick,setQuick]=useState(null),[newName,setNewName]=useState(""),[trackBudget,setTrackBudget]=useState(false),[quickLimit,setQuickLimit]=useState(""),[quickError,setQuickError]=useState(""),[quickBusy,setQuickBusy]=useState(false),[showMore,setShowMore]=useState(false);
  const field=(name,value)=>setForm(old=>({...old,[name]:value}));
  const edit=drawer==="edit",newTitle=drawer==="title",editPlan=drawer==="edit_plan",titleEntry=newTitle||edit;
- const isExpenseNew=newTitle&&form.direction==="expense";
- const intent=isExpenseNew?(form.intent||"spent"):"bill";
+ const intent=newTitle?(form.intent||"spent"):"bill";
  const roots=categories.filter(c=>c.direction===form.direction&&c.parent_id===null);
  const activeRoot=roots.find(c=>c.name===form.category);
  const subs=categories.filter(c=>c.direction===form.direction&&c.parent_id&&String(c.parent_id)===String(activeRoot?.id));
@@ -41,7 +40,7 @@ export default function EntryDrawer({
 
  // Discrete reconciliation suggestion when recording a real expense ("Gastei") matching an active spending plan (LC-21)
  const matchingPlans=useMemo(()=>{
-  if(!isExpenseNew||intent!=="spent"||!activeRoot?.id)return [];
+  if(!newTitle||intent!=="spent"||!activeRoot?.id)return [];
   return findMatchingSpendingPlans({
     plans:spendingPlans,
     applications:spendingPlanApplications,
@@ -49,7 +48,7 @@ export default function EntryDrawer({
     occurredOn:form.occurredOn||brDay(),
     today:brDay()
   });
- },[isExpenseNew,intent,activeRoot,spendingPlans,spendingPlanApplications,form.occurredOn]);
+ },[newTitle,intent,activeRoot,spendingPlans,spendingPlanApplications,form.occurredOn]);
 
  const suggestedPlan=matchingPlans[0]||null;
  const linkedPlan=form.spendingPlanId?spendingPlans.find(p=>String(p.id)===String(form.spendingPlanId)):null;
@@ -59,12 +58,22 @@ export default function EntryDrawer({
  function selectIntent(next){
   setShowMore(false);
   if(next==="spent"){
-   setForm(old=>({...old,intent:"spent",mode:"single",settlementState:"paid",occurredOn:old.occurredOn||brDay(),settledOn:old.settledOn||brDay(),dueOn:old.dueOn||brDay()}));
+   setForm(old=>({...old,intent:"spent",direction:"expense",category:old.direction==="expense"?old.category:"",subcategory:old.direction==="expense"?old.subcategory:"",mode:"single",settlementState:"paid",occurredOn:old.occurredOn||brDay(),settledOn:old.settledOn||brDay(),dueOn:old.dueOn||brDay()}));
   }else if(next==="plan"){
-   setForm(old=>({...old,intent:"plan",mode:"single",plannedMonth:old.plannedMonth||brDay().slice(0,7),plannedFor:old.plannedFor||"",spendingPlanId:""}));
+   setForm(old=>({...old,intent:"plan",direction:"expense",category:old.direction==="expense"?old.category:"",subcategory:old.direction==="expense"?old.subcategory:"",mode:"single",plannedMonth:old.plannedMonth||brDay().slice(0,7),plannedFor:old.plannedFor||"",spendingPlanId:""}));
   }else{
    setForm(old=>({...old,intent:"bill",settlementState:"pending",mode:old.mode==="single"?"single":old.mode,spendingPlanId:""}));
   }
+ }
+
+ function selectBillDirection(dir){
+  setForm(old=>({
+   ...old,
+   direction:dir,
+   category:"",
+   subcategory:"",
+   settlementState:"pending"
+  }));
  }
 
  async function createCategory(e){
@@ -83,8 +92,7 @@ export default function EntryDrawer({
  }
 
  const formTitle=
-  isExpenseNew?(intent==="spent"?"Gastei":intent==="plan"?"Vou gastar":"Tenho uma conta"):
-  drawer==="title"?"Nova receita":
+  newTitle?(intent==="spent"?"Gastei":intent==="plan"?"Vou gastar":form.direction==="income"?"Tenho uma conta a receber":"Tenho uma conta a pagar"):
   drawer==="edit"?"Editar lançamento":
   drawer==="edit_plan"?"Ajustar previsão de gasto":
   drawer==="wallet"?"Nova conta":
@@ -121,14 +129,14 @@ export default function EntryDrawer({
     <div className="detail-history"><h3>Histórico de pagamentos</h3>{settlements.filter(s=>s.title_id===selectedTitleObj?.id).length?settlements.filter(s=>s.title_id===selectedTitleObj?.id).map(s=><div className={"history-row"+(s.reversed_at?" reversed":"")} key={s.id}><p><CheckCircle2 size={15}/>{fdate(s.settled_on)} — {money(cents(s.amount_cents))} {s.reversed_at&&<span>• Revertido</span>}</p>{!s.reversed_at&&<button type="button" disabled={busy} onClick={()=>onAction("reverse",s.id)}>Desfazer pagamento</button>}</div>):<p><Clock3 size={15}/> Nenhum pagamento registrado.</p>}</div>
     <p className="hint">Ao editar esta ocorrência, as demais parcelas da série não serão alteradas.</p>
    </div>:<form id="entry-form" className="entry-form" onSubmit={onSave}>
-    {isExpenseNew&&<div className="intent-tabs" role="tablist" aria-label="Tipo de registro">
+    {newTitle&&<div className="intent-tabs" role="tablist" aria-label="Tipo de registro">
       <button type="button" role="tab" aria-selected={intent==="spent"} className={intent==="spent"?"active":""} onClick={()=>selectIntent("spent")}>Gastei</button>
       <button type="button" role="tab" aria-selected={intent==="plan"} className={intent==="plan"?"active":""} onClick={()=>selectIntent("plan")}>Vou gastar</button>
       <button type="button" role="tab" aria-selected={intent==="bill"} className={intent==="bill"?"active":""} onClick={()=>selectIntent("bill")}>Tenho uma conta</button>
     </div>}
 
     {/* ACTION 2: VOU GASTAR (spending plan) */}
-    {isExpenseNew&&intent==="plan"&&<>
+    {newTitle&&intent==="plan"&&<>
       <p className="hint">Apenas uma previsão de gasto. Não cria conta a pagar nem reduz seu saldo.</p>
       <div className="field-row money-input"><CircleDollarSign/><span>R$</span><MoneyInput ariaLabel="Valor estimado em reais" value={form.amount} onChange={v=>field("amount",v)}/></div>
       <div className="field-row major"><ReceiptText/><input aria-label="O que pretende gastar" placeholder="Ex.: Mercado, Presente" required value={form.description} maxLength={120} onChange={e=>field("description",e.target.value)}/></div>
@@ -142,7 +150,7 @@ export default function EntryDrawer({
     </>}
 
     {/* ACTION 1: GASTEI (minimal daily expense entry, LC-23) */}
-    {isExpenseNew&&intent==="spent"&&<>
+    {newTitle&&intent==="spent"&&<>
       <div className="field-row money-input"><CircleDollarSign/><span>R$</span><MoneyInput ariaLabel="Valor em reais" value={form.amount} onChange={v=>field("amount",v)}/></div>
       <div className="field-row major"><ReceiptText/><input aria-label="Onde ou com o quê" placeholder="Onde ou com o quê? (ex.: Padaria)" required value={form.description} maxLength={120} onChange={e=>field("description",e.target.value)}/></div>
       <div className="form-group">
@@ -183,9 +191,13 @@ export default function EntryDrawer({
       {!wallets.length&&<p className="hint">Cadastre uma conta antes de registrar gastos.</p>}
     </>}
 
-    {/* ACTION 3: TENHO UMA CONTA (or income / edit) */}
-    {titleEntry&&(!isExpenseNew||intent==="bill")&&<>
-      <div className="field-row major"><ReceiptText/><input aria-label="Descrição do lançamento" placeholder={isExpenseNew?"Ex.: Aluguel, Energia":"Descrição"} required value={form.description} maxLength={120} onChange={e=>field("description",e.target.value)}/></div>
+    {/* ACTION 3: TENHO UMA CONTA (A pagar | A receber) or edit */}
+    {titleEntry&&(!newTitle||intent==="bill")&&<>
+      {newTitle&&<div className="form-grid" role="group" aria-label="Tipo da conta">
+        <label className="tick"><input type="radio" name="billDirection" checked={form.direction!=="income"} onChange={()=>selectBillDirection("expense")}/> A pagar</label>
+        <label className="tick"><input type="radio" name="billDirection" checked={form.direction==="income"} onChange={()=>selectBillDirection("income")}/> A receber</label>
+      </div>}
+      <div className="field-row major"><ReceiptText/><input aria-label="Descrição do lançamento" placeholder={form.direction==="income"?"Ex.: Salário, Reembolso":"Ex.: Aluguel, Energia"} required value={form.description} maxLength={120} onChange={e=>field("description",e.target.value)}/></div>
       <div className="field-row money-input"><CircleDollarSign/><span>R$</span><MoneyInput ariaLabel="Valor em reais" value={form.amount} onChange={v=>field("amount",v)}/></div>
       {edit?<div className="editing-scope-note">A alteração será aplicada <strong>somente a este lançamento</strong>. Outras parcelas permanecem como estão.</div>:
       <><div className="field-row"><Repeat2/><label><small>Repetição</small><select value={form.mode} onChange={e=>field("mode",e.target.value)}><option value="single">Conta única</option><option value="monthly">Repete todo mês</option><option value="installments">Parcelada</option></select></label></div>

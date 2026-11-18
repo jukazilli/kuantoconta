@@ -150,5 +150,11 @@ test("LC-18 & LC-23: API isolates spending plans by owner.id and EntryDrawer avo
   assert.match(drawerSrc, />Gastei</);
   assert.match(drawerSrc, />Vou gastar</);
   assert.match(drawerSrc, />Tenho uma conta</);
+  assert.match(drawerSrc, /selectBillDirection\("expense"\)/);
+  assert.match(drawerSrc, /selectBillDirection\("income"\)/);
   assert.doesNotMatch(drawerSrc, />[A-Za-zÀ-ÿ0-9\s·\-:]*\b(economic_event|competence_source|title_id|ledger|settlement)\b[A-Za-zÀ-ÿ0-9\s·\-:]*</i);
+
+  const dashSrc = readFileSync(path.join(__dirname, "../app/dashboard/Dashboard.jsx"), "utf8");
+  assert.doesNotMatch(dashSrc, />\s*A receber<\/button>/);
+  assert.doesNotMatch(dashSrc, />\s*A pagar<\/button>/);
 });
