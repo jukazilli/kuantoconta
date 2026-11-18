@@ -37,6 +37,7 @@ export function reconcilePortfolio(data) {
 
   let operatingCashCents = 0;
   let walletReserveCents = 0;
+  let walletLiquidReserveCents = 0;
   let walletInvestmentCents = 0;
   let immediateLiquidityCents = 0;
 
@@ -49,6 +50,7 @@ export function reconcilePortfolio(data) {
     if (bal !== null) {
       if (isReserved) {
         walletReserveCents += bal;
+        if (liquidity !== "locked") walletLiquidReserveCents += bal;
       } else if (kind === "investment") {
         walletInvestmentCents += bal;
       } else {
@@ -73,6 +75,7 @@ export function reconcilePortfolio(data) {
   // Deduplicate assets that are already tracked in kc_wallets via linked_wallet_id (FH-08)
   let unlinkedAssetsCents = 0;
   let assetReserveCents = 0;
+  let assetLiquidReserveCents = 0;
   let assetInvestmentCents = 0;
   let duplicatedLinkedAssetsCount = 0;
 
@@ -85,6 +88,7 @@ export function reconcilePortfolio(data) {
     unlinkedAssetsCents += val;
     if (a.asset_kind === "reserve") {
       assetReserveCents += val;
+      if (a.liquidity_kind !== "locked") assetLiquidReserveCents += val;
       if (a.liquidity_kind === "immediate") immediateLiquidityCents += val;
     } else if (a.asset_kind === "investment") {
       assetInvestmentCents += val;
@@ -135,7 +139,7 @@ export function reconcilePortfolio(data) {
 
   const liquidReserveCents = unknownCash
     ? null
-    : Math.max(0, walletReserveCents + assetReserveCents);
+    : Math.max(0, walletLiquidReserveCents + assetLiquidReserveCents);
 
   const netWorthCents =
     totalWalletCashCents === null
