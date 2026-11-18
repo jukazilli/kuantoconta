@@ -40,7 +40,7 @@ test("FH-09: notebook R$ 2.500 (R$ 500 down + 10x R$ 200) checks all 10 installm
   const result = simulateGoalPurchase(
     {
       wallets: [
-        { id: "w1", name: "Conta", opening_balance_cents: 100000, opening_at: "2026-11-01T00:00:00Z" },
+        { id: "w1", name: "Conta", opening_balance_cents: 200000, opening_at: "2026-11-01T00:00:00Z" },
       ],
       // Only a large expense in month 5 breaks installment #5!
       titles: [

@@ -74,9 +74,9 @@ function evaluateCandidate(daily, floorCents, outflows, horizonEnd) {
     const simulated = d.balance - cumulativeExtra;
     if (simulated < floorCents) {
       const shortfall = floorCents - simulated;
+      if (!bottleneckDate) bottleneckDate = d.date;
       if (shortfall > worstShortfall) {
         worstShortfall = shortfall;
-        bottleneckDate = d.date;
       }
     }
   }
