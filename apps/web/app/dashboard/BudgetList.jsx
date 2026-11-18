@@ -132,7 +132,9 @@ export default function BudgetList({
                           <div>
                             <strong>{plan.description}</strong>
                             <span>
-                              {plan.planned_for ? `Previsto para ${fmtDate(plan.planned_for)}` : `Previsto em ${plan.planned_month}`}
+                              {plan.planned_for
+                                ? `Previsto para ${fmtDate(plan.planned_for)}`
+                                : `Previsto em ${plan.planned_month} (sem dia exato · protegido no início do mês)`}
                               {" · "}
                               {money(plan.remainingCents)}
                             </span>

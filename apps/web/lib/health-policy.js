@@ -21,6 +21,10 @@ export const PROPOSED_HEALTH_POLICY_V1 = Object.freeze({
     "expense.saude",
   ],
   essentialCategoryNames: ["Moradia", "Alimentação", "Saúde"],
+  // ADR-010 spending-plan & budget policy defaults (conservative, explicit, configurable)
+  undatedPlanStrategy: "conservative_month_start",
+  partialReconciliationMode: "explicit_when_below_estimate",
+  recurringRecognitionMode: "committed_until_event",
 });
 
 export function resolvePolicy(overrides = {}) {
