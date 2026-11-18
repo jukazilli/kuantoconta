@@ -22,8 +22,13 @@ export default function FinanceChart({type="line",data=[],height=270}){
     const commonAxis={axisTick:{show:false},axisLine:{show:false},axisLabel:{color:"#92958E",fontSize:11},splitLine:{show:false}};
     options={...options,grid:{left:10,right:12,top:28,bottom:28,containLabel:true},xAxis:{type:"category",data:months,boundaryGap:type!=="line",...commonAxis},yAxis:{type:"value",...commonAxis,splitLine:{show:true,lineStyle:{color:"#ECEDE9",type:"dashed"}},axisLabel:{formatter:v=>v>=1000?(v/1000).toFixed(0)+" mil":String(v)}},legend:{show:false}};
     if(type==="line"){
-     options.series=[{name:"Saldo projetado",type:"line",data:data.map(i=>cents(i.balance)/100),smooth:.22,symbol:"circle",symbolSize:5,lineStyle:{width:3.3,color:palette.coral},itemStyle:{color:palette.coral},areaStyle:{color:{type:"linear",x:0,y:0,x2:0,y2:1,colorStops:[{offset:0,color:"rgba(250,106,67,.24)"},{offset:1,color:"rgba(250,106,67,.015)"}]}}}];
-     options.tooltip.formatter=p=>p.map(q=>q.axisValueLabel+"<br/>"+q.marker+" Saldo: <b>"+money(Math.round(Number(q.data)*100))+"</b>").join("");
+     const hasWithin=data.some(i=>i.balanceWithinBudgets!==null&&i.balanceWithinBudgets!==undefined&&i.balanceWithinBudgets!==i.balance);
+     options.series=[{name:"Contratual",type:"line",data:data.map(i=>cents(i.balance)/100),smooth:.22,symbol:"circle",symbolSize:5,lineStyle:{width:3.3,color:palette.coral},itemStyle:{color:palette.coral},areaStyle:{color:{type:"linear",x:0,y:0,x2:0,y2:1,colorStops:[{offset:0,color:"rgba(250,106,67,.24)"},{offset:1,color:"rgba(250,106,67,.015)"}]}}}];
+     if(hasWithin){
+      options.series.push({name:"Com limites",type:"line",data:data.map(i=>cents(i.balanceWithinBudgets)/100),smooth:.22,symbol:"none",lineStyle:{width:2,type:"dashed",color:palette.dark},itemStyle:{color:palette.dark}});
+      options.legend={show:true,top:0,right:8,itemWidth:12,itemHeight:8,textStyle:{fontSize:11,color:"#858985"}};
+     }
+     options.tooltip.formatter=p=>p.axisValueLabel+"<br/>"+p.map(q=>q.marker+" "+q.seriesName+": <b>"+money(Math.round(Number(q.data)*100))+"</b>").join("<br/>");
     }else{
      options.color=[palette.coral,palette.dark];
      options.series=[{name:"Receitas",type:"bar",barMaxWidth:23,itemStyle:{color:palette.coral,borderRadius:[6,6,0,0]},data:data.map(i=>cents(i.income)/100)},{name:"Despesas",type:"bar",barMaxWidth:23,itemStyle:{color:palette.dark,borderRadius:[6,6,0,0]},data:data.map(i=>cents(i.expense)/100)}];

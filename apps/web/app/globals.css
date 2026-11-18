@@ -159,3 +159,8 @@ input:not([type=checkbox]):not([type=radio]),select,textarea{font-size:16px!impo
 .budget-events{list-style:none;margin:0;padding:0;display:grid;gap:6px}
 .budget-events li{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:#4a4f48}
 .budget-cash-alert{margin-bottom:4px}
+
+/* BUD-06: Home hierarchy — secondary bank balance card */
+.balance-card.secondary{min-height:auto}
+.balance-num.secondary{font-size:clamp(18px,1.5vw,24px);color:#42463f;margin-bottom:14px}
+.budget-overview-panel{display:flex;flex-direction:column;gap:10px}
