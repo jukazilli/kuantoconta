@@ -20,7 +20,7 @@ async function request(method="GET",body=null){
  const res=await fetch("/api/portfolio",{method,credentials:"same-origin",cache:"no-store",headers:body?{"Content-Type":"application/json"}:undefined,body:body?JSON.stringify(body):undefined});
  const reply=await res.json().catch(()=>({error:"Resposta inesperada."}));if(!res.ok)throw new Error(reply.error||"Não foi possível concluir.");return reply;
 }
-const defaultForm=(kind="expense")=>({description:"",amount:"",direction:kind,category:CATS[kind][0],subcategory:"",dueOn:TODAY,mode:"single",count:"6",startIndex:"1",valueMode:"total",walletId:"",name:"",balance:"0,00",label:"",settledOn:TODAY,keepOpen:false});
+const defaultForm=(kind="expense")=>({description:"",amount:"",direction:kind,category:"",subcategory:"",occurredOn:TODAY,dueOn:TODAY,settlementState:"pending",settledOn:TODAY,mode:"single",count:"6",startIndex:"1",valueMode:"total",walletId:"",name:"",balance:"0,00",label:"",keepOpen:false,idempotencyKey:""});
 function Kpi({title,value,sub,accent=false,icon:Icon=CircleDollarSign,action}){
  return <section className={"metric "+(accent?"metric-orange":"")+(action?" clickable":"")} onClick={action} tabIndex={action?0:undefined} onKeyDown={e=>{if(action&&(e.key==="Enter"||e.key===" "))action();}}>
   <div className="metric-label"><span>{title}</span><span className="metric-icon"><Icon size={19}/></span></div>
@@ -48,7 +48,7 @@ export default function Dashboard({user}){
 
  function open(kind,id){
    const t=titles.find(t=>t.id===id),dir=kind==="income"?"income":t?.direction||"expense";
-   setForm({...defaultForm(dir),walletId:t?.wallet_id||wallets[0]?.id||"",category:t?.category||CATS[dir][0],amount:kind==="settle"&&t?centsToMask(Math.max(0,cents(t.amount_cents)-cents(t.settled_cents))):"",direction:dir});
+   setForm({...defaultForm(dir),walletId:t?.wallet_id||wallets[0]?.id||"",category:t?.category||"",amount:kind==="settle"&&t?centsToMask(Math.max(0,cents(t.amount_cents)-cents(t.settled_cents))):"",direction:dir,idempotencyKey:crypto.randomUUID()});
    setSelectedTitle(id||null);setError("");setDrawer(kind);
  }
  function editTitle(id,duplicate=false){
@@ -74,16 +74,16 @@ export default function Dashboard({user}){
      else if(drawer==="wallet")await request("POST",{action:"wallet",name:form.name,balance:maskToDecimal(form.balance,{allowNegative:true})});
      else if(drawer==="asset"||drawer==="liability")await request("POST",{action:drawer,label:form.label,amount:maskToDecimal(form.amount)});
      else{
-       const payload={walletId:form.walletId,direction:form.direction,description:form.description,category:form.category,subcategory:form.subcategory||null,amount:maskToDecimal(form.amount),dueOn:form.dueOn};
+       const payload={walletId:form.walletId,direction:form.direction,description:form.description,category:form.category,subcategory:form.subcategory||null,amount:maskToDecimal(form.amount),occurredOn:form.occurredOn||form.dueOn,dueOn:form.dueOn};
        if(drawer==="edit"){
          const titleId=await materializeIfVirtual(selectedTitle);
          await request("PATCH",{action:"edit",titleId,...payload});
        }
-       else await request("POST",{action:"title",...payload,mode:form.mode,valueMode:form.valueMode,count:form.count,startIndex:form.startIndex,endsOn:form.endsOn||null});
+       else await request("POST",{action:"title",...payload,mode:form.mode,valueMode:form.valueMode,count:form.count,startIndex:form.startIndex,endsOn:form.endsOn||null,settlementState:form.mode==="single"?form.settlementState:"pending",settledOn:form.settlementState==="paid"?form.settledOn:null,idempotencyKey:form.idempotencyKey||crypto.randomUUID()});
      }
      setNotice("Operação salva. Os valores e as projeções foram atualizados.");await refresh();
      if(!form.keepOpen||drawer!=="title")setDrawer(null);
-     else setForm(old=>({...old,description:"",amount:""}));
+     else setForm(old=>({...old,description:"",amount:"",idempotencyKey:crypto.randomUUID()}));
    }catch(e){setError(e.message);}finally{setBusy(false);}
  }
 
