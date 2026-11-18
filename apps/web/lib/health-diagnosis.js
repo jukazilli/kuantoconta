@@ -158,6 +158,12 @@ export function diagnoseFinancialHealth(rawData, options = {}) {
   if (reconciled.duplicatedLinkedAssetsCount > 0) {
     assumptions.push("Ativos vinculados a carteiras foram deduplicados para evitar dupla contagem.");
   }
+  if ((range.totalPlannedRemainingCents || 0) > 0) {
+    assumptions.push("Intencoes de gasto ativas foram consideradas no cenario prudente sem gerar divida.");
+  }
+  if (range.hasUndatedPlans) {
+    assumptions.push("Ha planos de gasto sem dia exato; aplicou-se protecao conservadora no inicio do mes previsto.");
+  }
 
   const dataQualityStatus =
     !reconciled.knownCash || missingFields.length >= 2
@@ -247,6 +253,9 @@ export function diagnoseFinancialHealth(rawData, options = {}) {
   const minInWindow = (range.daily || [])
     .filter((d) => d.date >= today && d.date <= windowEnd)
     .reduce((m, d) => Math.min(m, d.balance), reconciled.knownCash ? reconciled.totalWalletCashCents : 0);
+  const minInWindowWithPlans = (range.dailyWithPlans || [])
+    .filter((d) => d.date >= today && d.date <= windowEnd)
+    .reduce((m, d) => Math.min(m, d.balance), reconciled.knownCash ? reconciled.totalWalletCashCents : 0);
 
   return {
     asOf: today,
@@ -281,6 +290,10 @@ export function diagnoseFinancialHealth(rawData, options = {}) {
         },
         minProjectedCashCents,
         minWindowCashCents: reconciled.knownCash ? minInWindow : null,
+        minWindowCashWithPlansCents: reconciled.knownCash ? minInWindowWithPlans : null,
+        totalPlannedRemainingCents: range.totalPlannedRemainingCents || 0,
+        hasUndatedPlans: Boolean(range.hasUndatedPlans),
+        firstNegativeWithPlans: range.firstNegativeWithPlans || null,
         planMarginCents,
         emergencyCoverageMonths,
         capitalFormationCents,
