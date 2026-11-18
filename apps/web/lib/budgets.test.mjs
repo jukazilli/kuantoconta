@@ -138,3 +138,50 @@ test("Case J & over-limit & no-rollover: recurring rules, negative remaining, mu
   assert.equal(multi[1].categories[0].remainingCents, -5000);
   assert.equal(multi[1].categories[0].overLimitCents, 5000);
 });
+
+test("LC-02, LC-12, LC-13, LC-22: budget separates realized, committed unrealized, planned remaining, and unallocated", () => {
+  const categories = [{ id: "c-food", name: "Alimentação", direction: "expense", parent_id: null, active: true }];
+  const budgetRules = [{ id: "r1", category_id: "c-food", limit_cents: 60000, starts_month: "2026-12", active: true }];
+  const spendingPlans = [
+    { id: "p1", category_id: "c-food", description: "Mercado", estimated_amount_cents: 30000, planned_for: "2026-12-01", planned_month: "2026-12", status: "planned" }
+  ];
+
+  // Before purchase: R=0, C=0, P=300, U=300, RemainingLimit=600
+  const before = computeBudgetSummary({ month: "2026-12", categories, budgetRules, spendingPlans, today: "2026-11-17" });
+  assert.equal(before[0].realizedCents, 0);
+  assert.equal(before[0].committedUnrealizedCents, 0);
+  assert.equal(before[0].plannedRemainingCents, 30000);
+  assert.equal(before[0].remainingLimitCents, 60000);
+  assert.equal(before[0].unallocatedCents, 30000);
+
+  // LC-13: Committed recurring title (R$ 200) + Plan (R$ 300) => U = 600 - 0 - 200 - 300 = 100
+  const withCommitted = computeBudgetSummary({
+    month: "2026-12",
+    categories,
+    budgetRules,
+    spendingPlans,
+    titles: [{ id: "t-fix", direction: "expense", description: "Cesta mensal", category: "Alimentação", category_id: "c-food", amount_cents: 20000, settled_cents: 0, due_on: "2026-12-05" }],
+    today: "2026-11-17"
+  });
+  assert.equal(withCommitted[0].realizedCents, 0);
+  assert.equal(withCommitted[0].committedUnrealizedCents, 20000);
+  assert.equal(withCommitted[0].plannedRemainingCents, 30000);
+  assert.equal(withCommitted[0].unallocatedCents, 10000);
+
+  // After R$ 280 purchase reconciled & plan closed: R=280, P=0, RemainingLimit=320, U=320
+  const after = computeBudgetSummary({
+    month: "2026-12",
+    categories,
+    budgetRules,
+    economicEvents: [
+      { id: "e1", direction: "expense", description: "Mercado", amount_cents: 28000, occurred_on: "2026-12-01", category_id: "c-food", event_kind: "one_off", status: "committed" }
+    ],
+    spendingPlans: [{ ...spendingPlans[0], status: "fulfilled" }],
+    spendingPlanApplications: [{ plan_id: "p1", economic_event_id: "e1", allocated_cents: 28000 }],
+    today: "2026-12-01"
+  });
+  assert.equal(after[0].realizedCents, 28000);
+  assert.equal(after[0].plannedRemainingCents, 0);
+  assert.equal(after[0].remainingLimitCents, 32000);
+  assert.equal(after[0].unallocatedCents, 32000);
+});
