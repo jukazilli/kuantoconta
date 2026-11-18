@@ -5,7 +5,7 @@ import MoneyInput from "./MoneyInput";
 import {cents,money,isoDate,brDay} from "../../lib/finance";
 import {maskToCents,maskToDecimal} from "../../lib/money-input";
 import {isSeries} from "../../lib/cancel-scope";
-import {findMatchingSpendingPlans} from "../../lib/spending-plans";
+import {findMatchingSpendingPlans,computePlanRemainingCents} from "../../lib/spending-plans";
 
 const fdate=d=>{const s=isoDate(d).split("-");return s.length===3?s[2]+"/"+s[1]+"/"+s[0]:"—";};
 
@@ -53,6 +53,8 @@ export default function EntryDrawer({
 
  const suggestedPlan=matchingPlans[0]||null;
  const linkedPlan=form.spendingPlanId?spendingPlans.find(p=>String(p.id)===String(form.spendingPlanId)):null;
+ const linkedRemaining=linkedPlan?computePlanRemainingCents(linkedPlan,spendingPlanApplications):0;
+ const partialLeftover=linkedPlan&&amountValue()>0&&amountValue()<linkedRemaining?linkedRemaining-amountValue():0;
 
  function selectIntent(next){
   setShowMore(false);
@@ -160,10 +162,13 @@ export default function EntryDrawer({
           <button type="button" className={form.spendingPlanId?"active":""} onClick={()=>setForm(old=>({...old,spendingPlanId:(linkedPlan||suggestedPlan).id,closeSpendingPlan:true}))}>Sim, usar previsão</button>
           <button type="button" className={!form.spendingPlanId?"active":""} onClick={()=>field("spendingPlanId","")}>Não, é outra compra</button>
         </div>
-        {form.spendingPlanId&&<div className="form-grid" style={{marginTop:8}}>
-          <label className="tick"><input type="radio" name="closePlan" checked={form.closeSpendingPlan!==false} onChange={()=>field("closeSpendingPlan",true)}/> Encerrar previsão</label>
-          <label className="tick"><input type="radio" name="closePlan" checked={form.closeSpendingPlan===false} onChange={()=>field("closeSpendingPlan",false)}/> Ainda vou gastar o restante</label>
-        </div>}
+        {form.spendingPlanId&&<>
+          {partialLeftover>0&&<small style={{fontSize:12,color:"#4a5248"}}>Restariam {money(partialLeftover)} nessa previsão — escolha se deseja encerrar ou manter o restante:</small>}
+          <div className="form-grid" style={{marginTop:8}}>
+            <label className="tick"><input type="radio" name="closePlan" checked={form.closeSpendingPlan!==false} onChange={()=>field("closeSpendingPlan",true)}/> Encerrar previsão</label>
+            <label className="tick"><input type="radio" name="closePlan" checked={form.closeSpendingPlan===false} onChange={()=>field("closeSpendingPlan",false)}/> Ainda vou gastar o restante</label>
+          </div>
+        </>}
       </div>}
 
       <button type="button" className="text-button" onClick={()=>setShowMore(v=>!v)}>

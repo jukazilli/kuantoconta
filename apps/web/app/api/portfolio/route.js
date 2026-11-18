@@ -186,10 +186,11 @@ export async function POST(request){
     ${settlementState},${settledOn}::date,${idempotencyKey}::uuid
    ) AS info`;
    const info=rows[0]?.info||{};
+   const eventId=info.event_id||info.economic_event_id;
    let reconciliation=null;
-   if(x.direction==="expense"&&uuid(x.spendingPlanId)&&uuid(info.economic_event_id)){
+   if(x.direction==="expense"&&uuid(x.spendingPlanId)&&uuid(eventId)){
     const recKey=uuid(x.reconcileIdempotencyKey)?x.reconcileIdempotencyKey:crypto.randomUUID();
-    const recRows=await sql`SELECT public.kc_apply_event_to_spending_plan(${owner.id},${x.spendingPlanId}::uuid,${info.economic_event_id}::uuid,NULL,${x.closeSpendingPlan!==false},${recKey}::uuid) AS info`;
+    const recRows=await sql`SELECT public.kc_apply_event_to_spending_plan(${owner.id},${x.spendingPlanId}::uuid,${eventId}::uuid,NULL,${x.closeSpendingPlan!==false},${recKey}::uuid) AS info`;
     reconciliation=recRows[0]?.info||null;
    }
    return send({saved:true,...info,reconciliation},201);
