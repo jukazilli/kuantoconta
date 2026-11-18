@@ -5,6 +5,7 @@ import {authClient} from "../../lib/auth/client";
 import {money,cents,brDay,monthOf,isoDate} from "../../lib/finance";
 import {computeRange,lastDayOfMonth,firstDayOfMonth,moveMonth,inRange} from "../../lib/period";
 import {maskToDecimal,centsToMask} from "../../lib/money-input";
+import {expandRecurring} from "../../lib/recurring";
 import EntryDrawer from "./EntryDrawer";
 import MovementList from "./MovementList";
 import FinanceChart from "./FinanceChart";
@@ -32,15 +33,16 @@ export default function Dashboard({user}){
  const [active,setActive]=useState("overview"),[rangeStart,setRangeStart]=useState(TODAY),[date,setDate]=useState(lastDayOfMonth(TODAY)),[drawer,setDrawer]=useState(null),[form,setForm]=useState(defaultForm()),[filter,setFilter]=useState("all"),[query,setQuery]=useState(""),[selectedTitle,setSelectedTitle]=useState(null);
  async function refresh(){try{const x=await request();setData(x);setError("");}catch(e){setError(e.message);}finally{setLoading(false);}}
  useEffect(()=>{refresh();},[]);
- const summary=useMemo(()=>computeRange(data||{},rangeStart,date,TODAY),[data,rangeStart,date]);
- const wallets=data?.wallets||[],titles=data?.titles||[];
+ const expanded=useMemo(()=>expandRecurring(data||{},rangeStart<TODAY?rangeStart:TODAY,date<TODAY?TODAY:date),[data,rangeStart,date]);
+ const summary=useMemo(()=>computeRange(expanded,rangeStart,date,TODAY),[expanded,rangeStart,date]);
+ const wallets=data?.wallets||[],titles=expanded?.titles||[];
  const selectedTitleObj=titles.find(x=>x.id===selectedTitle);
  const months=summary.months.map(m=>({...m,label:ymLabel(m.month)}));
  const charts=months.length?months:[];
  const expenses=Object.entries(summary.categoryTotals).map(([name,value])=>({name,value})).sort((a,b)=>b.value-a.value);
  const rows=titles.filter(t=>inRange(t.due_on,rangeStart,date)&&(filter==="all"||t.direction===filter)&&(!query||t.description.toLowerCase().includes(query.toLowerCase())||t.category.toLowerCase().includes(query.toLowerCase()))).sort((a,b)=>isoDate(a.due_on).localeCompare(isoDate(b.due_on)));
  const walletName=id=>wallets.find(w=>w.id===id)?.name||"Conta";
- const walletBalance=w=>w.opening_balance_cents===null?null:cents(w.opening_balance_cents)+(data?.settlements||[]).filter(x=>x.wallet_id===w.id&&w.opening_at&&new Date(x.created_at)>new Date(w.opening_at)).reduce((a,x)=>a+(x.direction==="income"?1:-1)*cents(x.amount_cents),0);
+ const walletBalance=w=>w.opening_balance_cents===null?null:cents(w.opening_balance_cents)+(data?.settlements||[]).filter(x=>!x.reversed_at&&x.wallet_id===w.id&&w.opening_at&&new Date(x.created_at)>new Date(w.opening_at)).reduce((a,x)=>a+(x.direction==="income"?1:-1)*cents(x.amount_cents),0);
 
  function open(kind,id){
    const t=titles.find(t=>t.id===id),dir=kind==="income"?"income":t?.direction||"expense";
@@ -54,16 +56,28 @@ export default function Dashboard({user}){
  }
  const field=(name,val)=>setForm(old=>({...old,[name]:val}));
  async function addCategory(payload){await request("POST",{action:"category",...payload});await refresh();}
+ async function materializeIfVirtual(id){
+   if(!String(id||"").startsWith("rec:"))return id;
+   const response=await request("POST",{action:"materialize",occurrenceId:id});
+   if(!response.id)throw new Error("Não foi possível registrar esta ocorrência.");
+   return response.id;
+ }
  async function submit(e){
    e.preventDefault();if(busy)return;setBusy(true);setError("");
    try{
-     if(drawer==="settle")await request("PATCH",{action:"settle",titleId:selectedTitle,amount:maskToDecimal(form.amount),settledOn:form.settledOn,idempotency:crypto.randomUUID()});
+     if(drawer==="settle"){
+       const titleId=await materializeIfVirtual(selectedTitle);
+       await request("PATCH",{action:"settle",titleId,amount:maskToDecimal(form.amount),settledOn:form.settledOn,idempotency:crypto.randomUUID()});
+     }
      else if(drawer==="wallet")await request("POST",{action:"wallet",name:form.name,balance:maskToDecimal(form.balance,{allowNegative:true})});
      else if(drawer==="asset"||drawer==="liability")await request("POST",{action:drawer,label:form.label,amount:maskToDecimal(form.amount)});
      else{
        const payload={walletId:form.walletId,direction:form.direction,description:form.description,category:form.category,subcategory:form.subcategory||null,amount:maskToDecimal(form.amount),dueOn:form.dueOn};
-       if(drawer==="edit")await request("PATCH",{action:"edit",titleId:selectedTitle,...payload});
-       else await request("POST",{action:"title",...payload,mode:form.mode,valueMode:form.valueMode,count:form.count,startIndex:form.startIndex});
+       if(drawer==="edit"){
+         const titleId=await materializeIfVirtual(selectedTitle);
+         await request("PATCH",{action:"edit",titleId,...payload});
+       }
+       else await request("POST",{action:"title",...payload,mode:form.mode,valueMode:form.valueMode,count:form.count,startIndex:form.startIndex,endsOn:form.endsOn||null});
      }
      setNotice("Operação salva. Os valores e as projeções foram atualizados.");await refresh();
      if(!form.keepOpen||drawer!=="title")setDrawer(null);
@@ -73,10 +87,27 @@ export default function Dashboard({user}){
  async function cancelTitle(t){
    if(!window.confirm("Excluir este lançamento sem baixa?"))return;
    setBusy(true);setError("");
-   try{await request("PATCH",{action:"cancel",titleId:t.id});setNotice("Lançamento excluído.");await refresh();setDrawer(null);}
+   try{const titleId=await materializeIfVirtual(t.id);await request("PATCH",{action:"cancel",titleId});setNotice("Lançamento excluído.");await refresh();setDrawer(null);}
    catch(e){setError(e.message);}finally{setBusy(false);}
  }
+ async function reverseSettlement(id){
+   if(!window.confirm("Desfazer esta baixa? O histórico será preservado e o valor voltará a ficar pendente."))return;
+   setBusy(true);setError("");
+   try{await request("PATCH",{action:"reverse",settlementId:id});await refresh();setNotice("Baixa revertida. O histórico foi preservado.");}
+   catch(e){setError(e.message);}
+   finally{setBusy(false);}
+ }
+ async function stopRecurring(id){
+   const t=titles.find(t=>t.id===id);
+   if(!t?.series_id||!window.confirm("Encerrar a repetição a partir desta ocorrência? Meses anteriores serão mantidos."))return;
+   setBusy(true);setError("");
+   try{await request("PATCH",{action:"stop_recurring",ruleId:t.series_id,startsOn:isoDate(t.due_on)});await refresh();setNotice("Recorrência encerrada a partir da data escolhida.");setDrawer(null);}
+   catch(e){setError(e.message);}
+   finally{setBusy(false);}
+ }
  function handleAction(action,id){
+   if(action==="reverse"){reverseSettlement(id);return;}
+   if(action==="stop_recurring"){stopRecurring(id);return;}
    const t=titles.find(t=>t.id===id);if(!t)return;
    if(action==="detail")open("detail",id);
    if(action==="edit")editTitle(id);
@@ -103,12 +134,12 @@ export default function Dashboard({user}){
  if(loading)return <main className="loading"><span className="brand-logo">k</span> Preparando seu painel...</main>;
  return <div className="shell"><header className="topbar"><button className="brand" onClick={()=>setTab("overview")}><span className="brand-logo">k</span><strong>kuantoconta</strong></button><nav className="top-nav" aria-label="Principal">{TABS.map(([key,label])=><button key={key} onClick={()=>setTab(key)} className={active===key?"active":""}>{label}</button>)}</nav><div className="top-right"><span className="top-tag">V1 · Preview</span><button className="avatar" title={user.email} onClick={()=>setTab("account")}>{(user.name||user.email||"U").slice(0,1).toUpperCase()}</button></div></header>
  <aside className="rail" aria-label="Atalhos">{TABS.map(([key,label,Icon])=><button title={label} aria-label={label} className={active===key?"active":""} key={key} onClick={()=>setTab(key)}><Icon size={20}/></button>)}<span className="rail-space"/><button title="Sair" onClick={async()=>{await authClient.signOut();window.location.replace("/auth/sign-in");}}><LogOut size={20}/></button></aside>
- <main className="content"><div className="page-header"><div><span className="eyebrow">SEU FUTURO FINANCEIRO</span><h1>{active==="overview"?"Seu dinheiro, com clareza.":TABS.find(t=>t[0]===active)?.[1]}</h1><p>{active==="overview"?"Acompanhe suas contas, entenda os gastos e veja onde seu planejamento pode chegar.":"Números reais do seu cadastro, sem dados de demonstração."}</p></div><div className="period-picker range-picker"><label><span>Início</span><input aria-label="Início do período" type="date" value={rangeStart} max={date} onChange={e=>{const v=e.target.value||TODAY;setRangeStart(v);if(v>date)setDate(v);}}/></label><span className="range-dash">—</span><label><span>Fim</span><input aria-label="Fim do período" type="date" min={rangeStart} max={String(+TODAY.slice(0,4)+3)+"-12-31"} value={date} onChange={e=>setDate(e.target.value>=rangeStart?e.target.value:rangeStart)}/></label><button className="range-shortcut" type="button" onClick={()=>{setRangeStart(TODAY);setDate(END);}}>Fim do ano</button></div></div>
+ <main className="content"><div className="page-header"><div><span className="eyebrow">SEU FUTURO FINANCEIRO</span><h1>{active==="overview"?"Seu dinheiro, com clareza.":TABS.find(t=>t[0]===active)?.[1]}</h1><p>{active==="overview"?"Acompanhe suas contas, entenda os gastos e veja onde seu planejamento pode chegar.":"Números reais do seu cadastro, sem dados de demonstração."}</p></div><div className="period-picker range-picker"><label><span>Início</span><input aria-label="Início do período" type="date" value={rangeStart} max={date} onChange={e=>{const v=e.target.value||TODAY;setRangeStart(v);if(v>date)setDate(v);}}/></label><span className="range-dash">—</span><label><span>Fim</span><input aria-label="Fim do período" type="date" min={rangeStart} max="2099-12-31" value={date} onChange={e=>setDate(e.target.value>=rangeStart?e.target.value:rangeStart)}/></label><button className="range-shortcut" type="button" onClick={()=>{setRangeStart(TODAY);setDate(END);}}>Fim do ano</button></div></div>
  {error&&<div className="notice error" role="alert">{error}<button onClick={()=>setError("")} aria-label="Fechar"><X size={16}/></button></div>}
  {notice&&<div className="notice success" role="status">{notice}<button onClick={()=>setNotice("")} aria-label="Fechar"><X size={16}/></button></div>}
  {active==="overview"&&<div className="overview-grid">
  <section className="balance-card panel"><div className="section-header"><div><div className="eyebrow">CARTEIRAS</div><h2>Saldo disponível hoje</h2></div><span className="badge">BRL</span></div><div className="balance-num">{display(summary.liveCash)}</div><p>Saldo de abertura mais baixas registradas após a referência.</p><div className="balance-actions"><button className="dark-button" onClick={()=>open("wallet")}><Plus size={17}/> Nova conta</button><button className="light-button" onClick={()=>open("title")}><Plus size={17}/> Nova despesa</button></div><div className="wallet-strip"><div className="wallet-strip-head"><strong>Suas contas</strong><span>{wallets.length} cadastradas</span></div><div className="wallet-cards">{wallets.length?wallets.slice(0,4).map(w=><div className="mini-wallet" key={w.id}><Wallet size={18}/><strong>{w.name}</strong><b>{display(walletBalance(w))}</b><small>Saldo realizado estimado</small></div>):<Empty>Comece cadastrando uma conta e seu saldo inicial.</Empty>}</div></div></section>
- <div className="metric-grid">{totalCards.map(([title,value,sub,Icon],i)=><Kpi key={title} title={title} value={value} sub={sub} icon={Icon} accent={i===0} action={()=>setTab("movements")}/>)}<Kpi title="Patrimônio parcial projetado" value={summary.netWorthPartial} sub={"Em "+fmtDate(date)+" · bens informados menos dívidas"} icon={Landmark}/></div>
+ <div className="metric-grid">{totalCards.map(([title,value,sub,Icon],i)=><Kpi key={title} title={title} value={value} sub={sub} icon={Icon} accent={i===0} action={()=>setTab("movements")}/>)}<Kpi title="Patrimônio parcial projetado" value={summary.netWorthPartial} sub={"Em "+fmtDate(date)+" · saldo projetado + ativos − passivos"} icon={Landmark}/></div>
  <section className="panel chart-panel"><LineHeading small="EVOLUÇÃO FINANCEIRA" title="Saldo projetado"/>{summary.knownCash&&charts.length?<FinanceChart type="line" data={charts}/>:<Empty>Informe o saldo de uma conta para visualizar a evolução do dinheiro até a data escolhida.</Empty>}{summary.firstNegative&&<div className="alert"><AlertTriangle size={16}/> Possível déficit em {fmtDate(summary.firstNegative)}.</div>}</section>
  <section className="panel category-panel"><LineHeading small="PARA ONDE VAI" title="Despesas por categoria"/>{expenses.length?<FinanceChart type="donut" data={expenses}/>:<Empty>Cadastre despesas para descobrir seus maiores gastos.</Empty>}</section>
  <section className="panel monthly-panel"><LineHeading small="PERÍODO SELECIONADO" title="Receitas e despesas"/>{months.length&&months.some(m=>m.income||m.expense)?<FinanceChart type="bar" data={months}/>:<Empty>Seus próximos meses aparecerão aqui conforme você cadastrar os movimentos.</Empty>}</section>
@@ -119,6 +150,6 @@ export default function Dashboard({user}){
  {active==="registers"&&<div className="workspace"><LineHeading title="Suas contas e patrimônio"><button className="dark-button" onClick={()=>open("wallet")}><Plus size={16}/> Nova conta</button></LineHeading><div className="wallet-list">{wallets.length?wallets.map(w=><article className="panel account-panel" key={w.id}><div className="account-icon"><Wallet size={22}/></div><div><h3>{w.name}</h3><p>Saldo registrado em {w.opening_at?fmtDate(w.opening_at):"data não informada"}</p></div><strong>{display(w.opening_balance_cents)}</strong></article>):<section className="panel"><Empty>Nenhuma conta cadastrada.</Empty></section>}</div><div className="register-grid"><section className="panel"><LineHeading title="Bens e investimentos"><button className="tiny-btn" onClick={()=>open("asset")}><Plus size={16}/> Adicionar</button></LineHeading><div className="large-line">{money(summary.assets)}</div><p>Ativos fora dos saldos de conta.</p></section><section className="panel"><LineHeading title="Dívidas declaradas"><button className="tiny-btn" onClick={()=>open("liability")}><Plus size={16}/> Adicionar</button></LineHeading><div className="large-line">{money(summary.liabilities)}</div><p>Passivos declarados. Evolução automática de contratos financeiros será uma etapa própria.</p></section></div></div>}
  {active==="account"&&<div className="workspace"><section className="panel profile-panel"><div className="account-icon large">{(user.name||user.email||"U")[0].toUpperCase()}</div><div><h2>{user.name}</h2><p>{user.email}</p><div className="profile-links"><a href="/legal/terms">Termos de Uso</a><a href="/legal/privacy">Aviso de Privacidade</a></div><p>Prévia restrita. Dados financeiros protegidos por autenticação. Não informe dados reais até a homologação legal.</p><button className="dark-button" onClick={async()=>{await authClient.signOut();window.location.replace("/auth/sign-in");}}><LogOut size={17}/> Sair da conta</button></div></section></div>}
  </main>
- {drawer&&<EntryDrawer key={drawer+":"+String(selectedTitle||"new")} drawer={drawer} form={form} setForm={setForm} selectedTitleObj={selectedTitleObj} settlements={data?.settlements||[]} wallets={wallets} categories={data?.categories||[]} busy={busy} error={error} onSave={submit} onClose={()=>setDrawer(null)} onAction={handleAction} onAddCategory={addCategory}/>}
+ {drawer&&<EntryDrawer key={drawer+":"+String(selectedTitle||"new")} drawer={drawer} form={form} setForm={setForm} selectedTitleObj={selectedTitleObj} settlements={data?.settlements||[]} wallets={wallets} categories={data?.categories||[]} rules={data?.recurringRules||[]} busy={busy} error={error} onSave={submit} onClose={()=>setDrawer(null)} onAction={handleAction} onAddCategory={addCategory}/>}
  </div>;
 }

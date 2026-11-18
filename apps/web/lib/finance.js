@@ -1,6 +1,6 @@
 // kuantoconta finance core. Monetary amounts are integer centavos.
 export function cents(x){ const n=Number(x);return Number.isSafeInteger(n)?n:0; }
-export function money(x){return cents(x).toLocaleString("pt-BR",{style:"currency",currency:"BRL",minimumFractionDigits:2});}
+export function money(x){return (cents(x)/100).toLocaleString("pt-BR",{style:"currency",currency:"BRL",minimumFractionDigits:2});}
 export function brDay(now=new Date()){
  const parts=new Intl.DateTimeFormat("en-US",{timeZone:"America/Sao_Paulo",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(now);
  const p=Object.fromEntries(parts.map(x=>[x.type,x.value]));
@@ -16,7 +16,7 @@ function sameUserWallet(settlement,wallet){return String(settlement.wallet_id)==
 export function compute(data, date, today=brDay()){
  const selected=checkDate(date)?date:today;
  const horizon=selected<today?today:selected;
- const wallets=data?.wallets||[], titles=data?.titles||[],settlements=data?.settlements||[];
+ const wallets=data?.wallets||[], titles=data?.titles||[],settlements=(data?.settlements||[]).filter(s=>!s.reversed_at);
  const unknownCash=wallets.length===0||wallets.some(w=>w.opening_balance_cents===null||w.opening_balance_cents===undefined||!w.opening_at);
  const opening=wallets.reduce((sum,w)=>sum+cents(w.opening_balance_cents),0);
  const posted=settlements.reduce((sum,s)=>{
@@ -36,7 +36,7 @@ export function compute(data, date, today=brDay()){
  }
  const daily=[];let running=liveCash;let firstNegative=null;let minCash=liveCash;
  if(liveCash!==null){
-   for(let d=today,i=0;d<=horizon&&i<=1100;d=dayAdd(d,1),i++){
+   for(let d=today,i=0;d<=horizon&&i<=27000;d=dayAdd(d,1),i++){
      running+=(future.get(d)||0);
      if(running<0&&!firstNegative)firstNegative=d;
      minCash=Math.min(minCash,running);
@@ -59,20 +59,27 @@ export function compute(data, date, today=brDay()){
  for(const s of periodSettlements.filter(s=>s.direction==="expense")){
    categoryTotals[s.category||"Outros"]=(categoryTotals[s.category||"Outros"]||0)+cents(s.amount_cents);
  }
+ const monthAmounts=new Map();
+ for(const t of titles){
+  const ym=monthOf(t.due_on);
+  if(!monthAmounts.has(ym))monthAmounts.set(ym,{income:0,expense:0});
+  const dir=t.direction==="income"?"income":"expense";
+  monthAmounts.get(ym)[dir]+=cents(t.amount_cents);
+ }
+ const lastDailyByMonth=new Map();
+ for(const d of daily)lastDailyByMonth.set(monthOf(d.date),d.balance);
  const months=[];
- for(let y=+today.slice(0,4),m=+today.slice(5,7),n=0;n<36;n++){
-   const ym=String(y)+"-"+String(m).padStart(2,"0");
-   if(ym>monthOf(horizon))break;
-   const tt=titles.filter(t=>monthOf(t.due_on)===ym);
-   const ss=settlements.filter(s=>monthOf(s.settled_on)===ym);
-   const amount=(kind)=>tt.filter(t=>t.direction===kind).reduce((v,t)=>v+Math.max(0,cents(t.amount_cents)-cents(t.settled_cents)),0)+ss.filter(s=>s.direction===kind).reduce((v,s)=>v+cents(s.amount_cents),0);
-   const lastDaily=daily.filter(d=>monthOf(d.date)===ym).at(-1);
-   months.push({month:ym,income:amount("income"),expense:amount("expense"),result:amount("income")-amount("expense"),balance:lastDaily?.balance??null});
-   m++;if(m>12){m=1;y++;}
+ for(let y=+today.slice(0,4),m=+today.slice(5,7),n=0;n<900;n++){
+  const ym=String(y)+"-"+String(m).padStart(2,"0");
+  if(ym>monthOf(horizon))break;
+  const totals=monthAmounts.get(ym)||{income:0,expense:0};
+  const lastDaily=lastDailyByMonth.get(ym);
+  months.push({month:ym,income:totals.income,expense:totals.expense,result:totals.income-totals.expense,balance:lastDaily??null});
+  m++;if(m>12){m=1;y++;}
  }
  const assets=(data?.assets||[]).reduce((v,a)=>v+cents(a.value_cents),0);
  const liabilities=(data?.liabilities||[]).reduce((v,a)=>v+cents(a.principal_cents),0);
- const allPayable=titles.filter(t=>t.direction==="expense").reduce((v,t)=>v+Math.max(0,cents(t.amount_cents)-cents(t.settled_cents)),0);
- const allReceivable=titles.filter(t=>t.direction==="income").reduce((v,t)=>v+Math.max(0,cents(t.amount_cents)-cents(t.settled_cents)),0);
+ const allPayable=titles.filter(t=>t.direction==="expense"&&t.recurrence!=="monthly").reduce((v,t)=>v+Math.max(0,cents(t.amount_cents)-cents(t.settled_cents)),0);
+ const allReceivable=titles.filter(t=>t.direction==="income"&&t.recurrence!=="monthly").reduce((v,t)=>v+Math.max(0,cents(t.amount_cents)-cents(t.settled_cents)),0);
  return {today,date:horizon,targetMonth,knownCash:!unknownCash,liveCash,projectedCash:running,netWorthPartial:running===null?null:running+assets-liabilities,assets,liabilities,allPayable,allReceivable,receivable:recv,payable:pay,periodResult:recv.total-pay.total,categoryTotals,months,daily,firstNegative,minCash};
 }

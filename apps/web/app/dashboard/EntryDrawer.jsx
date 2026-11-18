@@ -5,7 +5,7 @@ import MoneyInput from "./MoneyInput";
 import {cents,money,isoDate,brDay} from "../../lib/finance";
 import {maskToCents} from "../../lib/money-input";
 const fdate=d=>{const s=isoDate(d).split("-");return s.length===3?s[2]+"/"+s[1]+"/"+s[0]:"—";};
-export default function EntryDrawer({drawer,form,setForm,selectedTitleObj,settlements=[],wallets=[],categories=[],busy,error,onSave,onClose,onAction,onAddCategory}){
+export default function EntryDrawer({drawer,form,setForm,selectedTitleObj,settlements=[],wallets=[],categories=[],rules=[],busy,error,onSave,onClose,onAction,onAddCategory}){
  const [quick,setQuick]=useState(null),[newName,setNewName]=useState(""),[quickError,setQuickError]=useState(""),[quickBusy,setQuickBusy]=useState(false);
  const field=(name,value)=>setForm(old=>({...old,[name]:value}));
  const edit=drawer==="edit",newTitle=drawer==="title",titleEntry=newTitle||edit;
@@ -44,17 +44,19 @@ export default function EntryDrawer({drawer,form,setForm,selectedTitleObj,settle
       <div className="strong"><dt>Saldo pendente</dt><dd>{money(balanceDue)}</dd></div>
     </dl>
     <div className="detail-actions"><button className="dark-button" disabled={balanceDue===0} onClick={()=>onAction("settle",selectedTitleObj.id)}>Baixa total ou parcial</button><button className="light-button" onClick={()=>onAction("edit",selectedTitleObj.id)}>Editar esta ocorrência</button></div>
-    <div className="detail-history"><h3>Histórico de baixas</h3>{settlements.filter(s=>s.title_id===selectedTitleObj?.id).length?settlements.filter(s=>s.title_id===selectedTitleObj?.id).map(s=><p key={s.id}><CheckCircle2 size={15}/>{fdate(s.settled_on)} — {money(cents(s.amount_cents))}</p>):<p><Clock3 size={15}/> Nenhuma baixa registrada.</p>}</div>
+    <div className="detail-history"><h3>Histórico de baixas</h3>{settlements.filter(s=>s.title_id===selectedTitleObj?.id).length?settlements.filter(s=>s.title_id===selectedTitleObj?.id).map(s=><div className={"history-row"+(s.reversed_at?" reversed":"")} key={s.id}><p><CheckCircle2 size={15}/>{fdate(s.settled_on)} — {money(cents(s.amount_cents))} {s.reversed_at&&<span>• Revertida</span>}</p>{!s.reversed_at&&<button type="button" disabled={busy} onClick={()=>onAction("reverse",s.id)}>Desfazer baixa</button>}</div>):<p><Clock3 size={15}/> Nenhuma baixa registrada.</p>}</div>
+    {rules.some(r=>r.id===selectedTitleObj?.series_id)&&<button type="button" className="text-button" onClick={()=>onAction("stop_recurring",selectedTitleObj.id)}>Encerrar recorrência a partir desta ocorrência</button>}
     <p className="hint">Ao editar esta ocorrência, as demais parcelas da série não serão alteradas.</p>
    </div>:<form id="entry-form" className="entry-form" onSubmit={onSave}>
     {titleEntry&&<><div className="field-row major"><ReceiptText/><input aria-label="Descrição do lançamento" placeholder="Descrição" required value={form.description} maxLength={120} onChange={e=>field("description",e.target.value)}/></div>
       <div className="field-row money-input"><CircleDollarSign/><span>R$</span><MoneyInput ariaLabel="Valor em reais" value={form.amount} onChange={v=>field("amount",v)}/></div>
       {edit?<div className="editing-scope-note">A alteração será aplicada <strong>somente a este lançamento</strong>. Outras parcelas permanecem como estão.</div>:
-      <><div className="field-row"><Repeat2/><label><small>Repetição</small><select value={form.mode} onChange={e=>field("mode",e.target.value)}><option value="single">Não recorrente</option><option value="installments">Parcelar ou repetir</option><option value="monthly">Fixa mensal (24 ocorrências de previsão)</option></select></label></div>
+      <><div className="field-row"><Repeat2/><label><small>Repetição</small><select value={form.mode} onChange={e=>field("mode",e.target.value)}><option value="single">Não recorrente</option><option value="installments">Parcelar ou repetir</option><option value="monthly">Fixa mensal (até 2099)</option></select></label></div>
       {form.mode==="installments"&&<div className="repeat-config"><div className="section-header"><h3>Configurar repetição</h3><span>Parcelas mensais</span></div>
       <div className="form-grid"><label>Começar na parcela<input type="number" min="1" max={form.count} value={form.startIndex} onChange={e=>field("startIndex",e.target.value)}/></label><label>Total de parcelas<input type="number" min="2" max="60" value={form.count} onChange={e=>field("count",e.target.value)}/></label></div>
       <label>O valor informado representa<select value={form.valueMode} onChange={e=>field("valueMode",e.target.value)}><option value="total">Valor total da operação</option><option value="installment">Valor de cada parcela</option></select></label>
       <div className="repeat-preview"><strong>{Math.max(0,Number(form.count)-Number(form.startIndex)+1)||0} parcelas futuras</strong><span>{form.valueMode==="installment"?"Valor mensal: "+money(amountValue()):"Valor do contrato: "+money(amountValue())}</span></div></div>}
+      {form.mode==="monthly"&&<div className="repeat-config"><strong>Recorrência sem prazo de término</strong><p>Uma única regra será salva. As próximas parcelas são calculadas sob demanda até 2099.</p><label>Encerrar em (opcional)<input type="date" min={form.dueOn} max="2099-12-31" value={form.endsOn||""} onChange={ev=>field("endsOn",ev.target.value)}/></label></div>}
       </>}
       <div className="field-row"><CalendarDays/><label><small>Data de vencimento</small><input required type="date" value={form.dueOn} onChange={e=>field("dueOn",e.target.value)}/></label></div>
       <div className="form-group">

@@ -22,7 +22,7 @@ export default function MovementList({items,compact=false,today,walletName,onDet
    return <div key={t.id}>
     {showGroup&&<h3 className="movement-group">{monthName(t.due_on)}</h3>}
     <article className="movement-item">
-     <div className={"movement-direction "+t.direction} aria-hidden="true">{remaining===0?<CheckCircle2 size={21}/>:t.direction==="income"?<ArrowDownLeft size={20}/>:<Clock3 size={20}/>}</div>
+     <button type="button" className={"movement-direction "+t.direction} title={remaining===0?"Ver título quitado":"Baixa rápida"} aria-label={remaining===0?"Ver detalhes do título quitado":"Efetivar baixa rápida de "+t.description} onClick={()=>remaining===0?onDetails(t.id):onAction("settle",t.id)}>{remaining===0?<CheckCircle2 size={21}/>:<Clock3 size={20}/>}</button>
      <button type="button" className="movement-main" onClick={()=>{setOpened(null);onDetails(t.id);}} aria-label={"Ver detalhes de "+t.description}>
       <span className="movement-wallet">{walletName(t.wallet_id)}</span>
       <strong>{t.description}</strong>
