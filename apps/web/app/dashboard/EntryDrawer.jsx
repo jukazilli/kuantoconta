@@ -4,8 +4,9 @@ import {X,Plus,CalendarDays,ReceiptText,CircleDollarSign,Repeat2,CheckCircle2,Cl
 import MoneyInput from "./MoneyInput";
 import {cents,money,isoDate,brDay} from "../../lib/finance";
 import {maskToCents} from "../../lib/money-input";
+import {isSeries} from "../../lib/cancel-scope";
 const fdate=d=>{const s=isoDate(d).split("-");return s.length===3?s[2]+"/"+s[1]+"/"+s[0]:"—";};
-export default function EntryDrawer({drawer,form,setForm,selectedTitleObj,settlements=[],wallets=[],categories=[],rules=[],busy,error,onSave,onClose,onAction,onAddCategory}){
+export default function EntryDrawer({drawer,form,setForm,selectedTitleObj,settlements=[],wallets=[],categories=[],rules=[],cancellations=[],busy,error,onSave,onClose,onAction,onAddCategory}){
  const [quick,setQuick]=useState(null),[newName,setNewName]=useState(""),[quickError,setQuickError]=useState(""),[quickBusy,setQuickBusy]=useState(false);
  const field=(name,value)=>setForm(old=>({...old,[name]:value}));
  const edit=drawer==="edit",newTitle=drawer==="title",titleEntry=newTitle||edit;
@@ -44,8 +45,15 @@ export default function EntryDrawer({drawer,form,setForm,selectedTitleObj,settle
       <div className="strong"><dt>Saldo pendente</dt><dd>{money(balanceDue)}</dd></div>
     </dl>
     <div className="detail-actions"><button className="dark-button" disabled={balanceDue===0} onClick={()=>onAction("settle",selectedTitleObj.id)}>Baixa total ou parcial</button><button className="light-button" onClick={()=>onAction("edit",selectedTitleObj.id)}>Editar esta ocorrência</button></div>
+    {cancellations.some(c=>c.title_id===selectedTitleObj?.id)&&<div className="editing-scope-note">
+      <strong>Cancelamento parcial registrado</strong>
+      <p>Valor original antes do cancelamento: {money(cents(cancellations.find(c=>c.title_id===selectedTitleObj?.id)?.original_amount_cents))}</p>
+      <p>Valor pendente cancelado: {money(cents(cancellations.find(c=>c.title_id===selectedTitleObj?.id)?.cancelled_pending_cents))}</p>
+      <p>Pagamentos e recebimentos efetuados foram preservados no histórico.</p>
+    </div>}
+    {(balanceDue>0||isSeries(selectedTitleObj))&&<button type="button" className="text-button" onClick={()=>onAction("cancel",selectedTitleObj.id)}>Excluir este lançamento ou sua série</button>}
     <div className="detail-history"><h3>Histórico de baixas</h3>{settlements.filter(s=>s.title_id===selectedTitleObj?.id).length?settlements.filter(s=>s.title_id===selectedTitleObj?.id).map(s=><div className={"history-row"+(s.reversed_at?" reversed":"")} key={s.id}><p><CheckCircle2 size={15}/>{fdate(s.settled_on)} — {money(cents(s.amount_cents))} {s.reversed_at&&<span>• Revertida</span>}</p>{!s.reversed_at&&<button type="button" disabled={busy} onClick={()=>onAction("reverse",s.id)}>Desfazer baixa</button>}</div>):<p><Clock3 size={15}/> Nenhuma baixa registrada.</p>}</div>
-    {rules.some(r=>r.id===selectedTitleObj?.series_id)&&<button type="button" className="text-button" onClick={()=>onAction("stop_recurring",selectedTitleObj.id)}>Encerrar recorrência a partir desta ocorrência</button>}
+
     <p className="hint">Ao editar esta ocorrência, as demais parcelas da série não serão alteradas.</p>
    </div>:<form id="entry-form" className="entry-form" onSubmit={onSave}>
     {titleEntry&&<><div className="field-row major"><ReceiptText/><input aria-label="Descrição do lançamento" placeholder="Descrição" required value={form.description} maxLength={120} onChange={e=>field("description",e.target.value)}/></div>

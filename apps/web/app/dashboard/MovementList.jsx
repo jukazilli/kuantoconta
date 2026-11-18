@@ -2,6 +2,7 @@
 import {useState} from "react";
 import {Clock3,CheckCircle2,MoreHorizontal,ArrowDownLeft,ArrowUpRight} from "lucide-react";
 import {cents,money,isoDate} from "../../lib/finance";
+import {isSeries} from "../../lib/cancel-scope";
 const formatDate=d=>{const s=isoDate(d).split("-");return s.length===3?s[2]+"/"+s[1]+"/"+s[0]:"—";};
 const monthName=d=>new Date(isoDate(d).slice(0,7)+"-15T12:00:00Z").toLocaleDateString("pt-BR",{month:"long",year:"numeric",timeZone:"UTC"});
 function State({title,today}){
@@ -32,7 +33,7 @@ export default function MovementList({items,compact=false,today,walletName,onDet
      <div className="movement-menu-anchor">
       <button type="button" className="movement-more" aria-expanded={opened===t.id} aria-label={"Opções de "+t.description} onClick={()=>setOpened(opened===t.id?null:t.id)}><MoreHorizontal size={22}/></button>
       {opened===t.id&&<div className="movement-menu" role="menu">
-       {[["detail","Ver detalhes"],["edit","Editar lançamento"],["duplicate","Duplicar"],...(remaining>0?[["settle","Baixa total ou parcial"]]:[]),...(cents(t.settled_cents)===0?[["cancel","Excluir lançamento"]]:[])].map(([action,label])=><button type="button" role="menuitem" key={action} className={action==="cancel"?"danger":""} onClick={()=>{setOpened(null);onAction(action,t.id);}}>{label}</button>)}
+       {[["detail","Ver detalhes"],["edit","Editar lançamento"],["duplicate","Duplicar"],...(remaining>0?[["settle","Baixa total ou parcial"]]:[]),...((remaining>0||isSeries(t))?[["cancel","Excluir lançamento"]]:[])].map(([action,label])=><button type="button" role="menuitem" key={action} className={action==="cancel"?"danger":""} onClick={()=>{setOpened(null);onAction(action,t.id);}}>{label}</button>)}
       </div>}
      </div>
     </article>

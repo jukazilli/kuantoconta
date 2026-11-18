@@ -110,3 +110,31 @@ input:not([type=checkbox]):not([type=radio]),select,textarea{font-size:16px!impo
 .history-row.reversed span{text-decoration:none}
 .detail-history>.text-button{padding:12px 0}
 @media(max-width:480px){.history-row{align-items:flex-start;flex-direction:column}.history-row button{margin:0 0 8px 24px}}
+
+/* Confirmed deletion by scope; accessible modal that stacks over the details drawer. */
+.cancel-dialog-backdrop{position:fixed;inset:0;z-index:250;display:grid;place-items:center;background:rgba(18,21,18,.50);backdrop-filter:blur(5px);padding:18px}
+.cancel-scope-dialog{background:white;width:min(100%,475px);border-radius:24px;padding:25px;max-height:95dvh;overflow:auto;box-shadow:0 28px 80px rgba(20,24,20,.2)}
+.cancel-dialog-header{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.cancel-dialog-header h2{font-size:23px}
+.cancel-dialog-header button{border:0;background:transparent;color:#838880;display:grid;place-items:center;width:35px;height:35px}
+.cancel-context{display:grid;gap:7px;background:#f6f7f4;border-radius:15px;padding:15px;margin:20px 0 15px}
+.cancel-context strong{font-size:15px}
+.cancel-context span{font-size:12px;color:#838881}
+.cancel-explainer{font-size:13px;color:#7a8178;line-height:1.5}
+.cancel-scope-options{border:0;padding:0;margin:20px 0;display:grid;gap:10px}
+.cancel-scope-options legend{font-size:12px;font-weight:750;color:#565e55;margin-bottom:11px}
+.cancel-scope-option{display:flex;gap:14px;align-items:flex-start;border-radius:14px;padding:16px;border:1px solid #e5e9e3;cursor:pointer}
+.cancel-scope-option.selected{border-color:#dd895e;background:#fff7f3}
+.cancel-scope-option>input{accent-color:#d96243;width:18px;height:18px;margin:2px 0 0;flex:0 0 auto}
+.cancel-scope-option span{display:grid;gap:5px}
+.cancel-scope-option strong{font-size:13px;color:#31392f}
+.cancel-scope-option small{font-size:11px;line-height:1.5;color:#8c928a}
+.cancel-policy{display:flex;gap:10px;padding:13px;background:#fff4eb;border-radius:14px;color:#a86139;align-items:flex-start}
+.cancel-policy svg{flex:0 0 auto}
+.cancel-policy p{font-size:11px;line-height:1.55;margin:0}
+.cancel-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
+.cancel-actions button{flex:1;min-height:45px}
+.cancel-confirm{border:0;border-radius:30px;padding:12px 16px;color:#fff;background:#c7463f;font-size:12px;font-weight:750}
+.cancel-confirm:hover{background:#b63d38}
+.cancel-confirm:disabled{opacity:.5}
+@media(max-width:520px){.cancel-dialog-backdrop{align-items:end;padding:0}.cancel-scope-dialog{border-radius:25px 25px 0 0;width:100%;padding:22px;padding-bottom:max(25px,env(safe-area-inset-bottom));max-height:92dvh}}
