@@ -1,6 +1,7 @@
-import { cents, monthOf } from "./finance.js";
+import { brDay, cents, monthOf } from "./finance.js";
 import { normalizeCategoryName } from "./taxonomy.js";
 import { expandRecurring } from "./recurring.js";
+import { enrichSpendingPlans } from "./spending-plans.js";
 
 const VALID_MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 
@@ -91,7 +92,10 @@ export function computeBudgetSummary({
   economicEvents = [],
   titles = [],
   recurringRules = [],
-  cancelledRecurring = []
+  cancelledRecurring = [],
+  spendingPlans = [],
+  spendingPlanApplications = [],
+  today = brDay()
 }) {
   if (!isValidMonth(month)) return [];
 
@@ -120,9 +124,12 @@ export function computeBudgetSummary({
         limitCents: limitInfo ? limitInfo.limitCents : null,
         version: limitInfo ? limitInfo.version : null,
         ruleId: limitInfo ? limitInfo.ruleId : null,
-        usedCents: 0,
+        realizedCents: 0,
+        committedUnrealizedCents: 0,
+        plannedRemainingCents: 0,
         subcategories: new Map(),
-        events: []
+        events: [],
+        plans: []
       });
     }
     return buckets.get(key);
@@ -132,16 +139,25 @@ export function computeBudgetSummary({
     ensureBucket(root);
   }
 
-  const addConsumption = (root, subName, deltaCents, item) => {
+  const addRealized = (root, subName, deltaCents, item) => {
     const bucket = ensureBucket(root);
-    bucket.usedCents += deltaCents;
+    bucket.realizedCents += deltaCents;
     if (subName) {
       bucket.subcategories.set(subName, (bucket.subcategories.get(subName) || 0) + deltaCents);
     }
     bucket.events.push(item);
   };
 
-  // 1. Primary source: kc_economic_events (each purchase/event counted once in occurred_on month)
+  const addCommitted = (root, subName, deltaCents, item) => {
+    const bucket = ensureBucket(root);
+    bucket.committedUnrealizedCents += deltaCents;
+    if (subName) {
+      bucket.subcategories.set(subName, (bucket.subcategories.get(subName) || 0) + deltaCents);
+    }
+    bucket.events.push(item);
+  };
+
+  // 1. Realized economic consumption: kc_economic_events by occurred_on month (R)
   for (const ev of economicEvents) {
     if (ev.direction !== "expense" || ev.cancelled_at || ev.status === "cancelled") continue;
     if (monthOf(ev.occurred_on) !== month) continue;
@@ -150,7 +166,7 @@ export function computeBudgetSummary({
     const sub = ev.subcategory_id ? subById.get(String(ev.subcategory_id)) : null;
     const sign = ev.event_kind === "refund" ? -1 : 1;
     const delta = sign * cents(ev.amount_cents);
-    addConsumption(root, sub?.name || null, delta, {
+    addRealized(root, sub?.name || null, delta, {
       id: ev.id,
       description: ev.description,
       amountCents: delta,
@@ -161,7 +177,7 @@ export function computeBudgetSummary({
     });
   }
 
-  // 2. Fallback for legacy titles (no economic_event_id) + virtual monthly recurring occurrences
+  // 2. Committed unrealized obligations: titles/virtual recurrences without economic_event_id (C)
   const expanded = expandRecurring(
     { titles, recurringRules, cancelledRecurring },
     `${month}-01`,
@@ -169,13 +185,14 @@ export function computeBudgetSummary({
   );
   for (const t of expanded.titles || []) {
     if (t.direction !== "expense" || t.cancelled_at || t.economic_event_id) continue;
+    if ((t.entry_kind || "standard") === "reserve_transfer") continue;
     if (monthOf(t.due_on) !== month) continue;
     const root =
       (t.category_id && rootById.get(String(t.category_id))) ||
       rootByNorm.get(normalizeCategoryName(t.category || "Outros"));
     if (!root) continue;
     const amountCents = cents(t.amount_cents);
-    addConsumption(root, t.subcategory || null, amountCents, {
+    addCommitted(root, t.subcategory || null, amountCents, {
       id: t.id,
       description: t.description,
       amountCents,
@@ -186,15 +203,42 @@ export function computeBudgetSummary({
     });
   }
 
+  // 3. Non-obligational spending intentions remaining for this month (P)
+  const enrichedPlans = enrichSpendingPlans(
+    spendingPlans,
+    spendingPlanApplications,
+    today,
+    economicEvents
+  );
+  for (const p of enrichedPlans) {
+    if (String(p.planned_month) !== month) continue;
+    if (!p.active && p.status !== "fulfilled") continue;
+    const root = rootById.get(String(p.category_id));
+    if (!root) continue;
+    const bucket = ensureBucket(root);
+    if (p.active && p.remainingCents > 0) {
+      bucket.plannedRemainingCents += p.remainingCents;
+      bucket.plans.push(p);
+    }
+  }
+
   return Array.from(buckets.values())
-    .filter(b => b.limitCents !== null || b.usedCents !== 0)
+    .filter(b => b.limitCents !== null || b.realizedCents !== 0 || b.committedUnrealizedCents !== 0 || b.plannedRemainingCents > 0)
     .map(b => {
-      const remainingCents = b.limitCents !== null ? b.limitCents - b.usedCents : null;
-      const overLimitCents = b.limitCents !== null ? Math.max(0, b.usedCents - b.limitCents) : 0;
+      // Backwards-compatible alias: usedCents = R + C
+      const usedCents = b.realizedCents + b.committedUnrealizedCents;
+      const remainingLimitCents = b.limitCents !== null ? b.limitCents - b.realizedCents : null;
+      const remainingCents = b.limitCents !== null ? b.limitCents - usedCents : null;
+      const unallocatedCents =
+        b.limitCents !== null
+          ? b.limitCents - b.realizedCents - b.committedUnrealizedCents - b.plannedRemainingCents
+          : null;
+      const overLimitCents = b.limitCents !== null ? Math.max(0, usedCents - b.limitCents) : 0;
+      const overPlannedCents = unallocatedCents !== null ? Math.max(0, -unallocatedCents) : 0;
       const utilizationPct =
         b.limitCents !== null && b.limitCents > 0
-          ? Math.round((b.usedCents / b.limitCents) * 100)
-          : b.limitCents === 0 && b.usedCents > 0
+          ? Math.round((usedCents / b.limitCents) * 100)
+          : b.limitCents === 0 && usedCents > 0
             ? 100
             : 0;
       return {
@@ -203,23 +247,30 @@ export function computeBudgetSummary({
         canonicalKey: b.canonicalKey,
         active: b.active,
         limitCents: b.limitCents,
-        usedCents: b.usedCents,
+        realizedCents: b.realizedCents,
+        committedUnrealizedCents: b.committedUnrealizedCents,
+        plannedRemainingCents: b.plannedRemainingCents,
+        remainingLimitCents,
+        unallocatedCents,
+        usedCents,
         remainingCents,
         overLimitCents,
+        overPlannedCents,
         utilizationPct,
         version: b.version,
         ruleId: b.ruleId,
-        subcategories: Array.from(b.subcategories.entries()).map(([name, usedCents]) => ({
+        subcategories: Array.from(b.subcategories.entries()).map(([name, used]) => ({
           name,
-          usedCents
+          usedCents: used
         })),
-        events: b.events
+        events: b.events,
+        plans: b.plans
       };
     })
     .sort((a, b) => {
       if (a.limitCents !== null && b.limitCents === null) return -1;
       if (a.limitCents === null && b.limitCents !== null) return 1;
-      return b.usedCents - a.usedCents;
+      return (b.usedCents + b.plannedRemainingCents) - (a.usedCents + a.plannedRemainingCents);
     });
 }
 
