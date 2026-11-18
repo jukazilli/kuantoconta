@@ -246,7 +246,7 @@ export function diagnoseFinancialHealth(rawData, options = {}) {
   const windowEnd = dayAdd(today, policy.protectionWindowDays);
   const minInWindow = (range.daily || [])
     .filter((d) => d.date >= today && d.date <= windowEnd)
-    .reduce((m, d) => Math.min(m, d.balance), reconciled.knownCash ? reconciled.liveCash : 0);
+    .reduce((m, d) => Math.min(m, d.balance), reconciled.knownCash ? reconciled.totalWalletCashCents : 0);
 
   return {
     asOf: today,
