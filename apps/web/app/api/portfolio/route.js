@@ -49,21 +49,24 @@ export async function GET(){
  const owner=await authenticate();if(!owner.id)return error(owner.error,owner.status);
  try{
   await seedDefaultCategories(owner.id);
-  const [wallets,titles,settlements,assets,liabilities,savedCategories,recurringRules,cancelledRecurring,cancellations,budgetRules,budgetPeriods,economicEvents]=await Promise.all([
-   sql`SELECT id,name,opening_balance_cents::text,opening_at,created_at FROM public.kc_wallets WHERE user_id=${owner.id} ORDER BY created_at LIMIT 100`,
-   sql`SELECT id,wallet_id,description,direction,category,subcategory,category_id,subcategory_id,economic_event_id,amount_cents::text,settled_cents::text,due_on::text,recurrence,installment_index,installment_total,series_id,created_at FROM public.kc_titles WHERE user_id=${owner.id} AND cancelled_at IS NULL ORDER BY due_on,id LIMIT 4000`,
+  const [wallets,titles,settlements,assets,liabilities,savedCategories,recurringRules,cancelledRecurring,cancellations,budgetRules,budgetPeriods,economicEvents,debtPayments,goals,healthSnapshots]=await Promise.all([
+   sql`SELECT id,name,opening_balance_cents::text,opening_at,wallet_kind,liquidity_kind,is_reserved,created_at FROM public.kc_wallets WHERE user_id=${owner.id} ORDER BY created_at LIMIT 100`,
+   sql`SELECT id,wallet_id,description,direction,category,subcategory,category_id,subcategory_id,economic_event_id,amount_cents::text,settled_cents::text,due_on::text,recurrence,installment_index,installment_total,series_id,is_essential,income_confidence,entry_kind,liability_id,created_at FROM public.kc_titles WHERE user_id=${owner.id} AND cancelled_at IS NULL ORDER BY due_on,id LIMIT 4000`,
    sql`SELECT s.id,s.title_id,s.wallet_id,s.amount_cents::text,s.settled_on::text,s.created_at,s.reversed_at,s.reversal_reason,t.direction,t.category FROM public.kc_settlements s JOIN public.kc_titles t ON t.id=s.title_id AND t.user_id=s.user_id WHERE s.user_id=${owner.id} ORDER BY s.settled_on,s.created_at LIMIT 7000`,
-   sql`SELECT id,label,value_cents::text,valued_on::text FROM public.kc_assets WHERE user_id=${owner.id} ORDER BY label LIMIT 200`,
-   sql`SELECT id,label,principal_cents::text,valued_on::text FROM public.kc_liabilities WHERE user_id=${owner.id} ORDER BY label LIMIT 200`,
-   sql`SELECT id,name,direction,parent_id,canonical_key,active FROM public.kc_categories WHERE user_id=${owner.id} ORDER BY name LIMIT 300`,
-   sql`SELECT id,wallet_id,direction,description,category,subcategory,category_id,subcategory_id,amount_cents::text,starts_on::text,ends_on::text,paused_at::text,created_at FROM public.kc_recurring_rules WHERE user_id=${owner.id} ORDER BY starts_on LIMIT 300`,
+   sql`SELECT id,label,value_cents::text,valued_on::text,asset_kind,liquidity_kind,linked_wallet_id FROM public.kc_assets WHERE user_id=${owner.id} ORDER BY label LIMIT 200`,
+   sql`SELECT id,label,principal_cents::text,valued_on::text,debt_kind,interest_rate_bps,cet_bps,monthly_installment_cents::text,remaining_installments,maturity_on::text,status,series_id FROM public.kc_liabilities WHERE user_id=${owner.id} ORDER BY label LIMIT 200`,
+   sql`SELECT id,name,direction,parent_id,canonical_key,active,is_essential FROM public.kc_categories WHERE user_id=${owner.id} ORDER BY name LIMIT 300`,
+   sql`SELECT id,wallet_id,direction,description,category,subcategory,category_id,subcategory_id,amount_cents::text,starts_on::text,ends_on::text,paused_at::text,is_essential,income_confidence,entry_kind,created_at FROM public.kc_recurring_rules WHERE user_id=${owner.id} ORDER BY starts_on LIMIT 300`,
    sql`SELECT series_id,installment_index FROM public.kc_titles WHERE user_id=${owner.id} AND cancelled_at IS NOT NULL AND series_id IS NOT NULL LIMIT 4000`,
    sql`SELECT title_id,SUM(cancelled_pending_cents)::text AS cancelled_pending_cents,MAX(original_amount_cents)::text AS original_amount_cents FROM public.kc_title_cancellation_events WHERE user_id=${owner.id} GROUP BY title_id LIMIT 4000`,
    sql`SELECT id,category_id,limit_cents::text,starts_month,ends_month,active,created_at FROM public.kc_budget_rules WHERE user_id=${owner.id} ORDER BY created_at LIMIT 300`,
    sql`SELECT id,category_id,month,limit_cents::text,source_rule_id,version,updated_at FROM public.kc_budget_periods WHERE user_id=${owner.id} ORDER BY month DESC LIMIT 1200`,
-   sql`SELECT id,direction,description,amount_cents::text,occurred_on::text,category_id,subcategory_id,event_kind,competence_source,status,recurring_rule_id,parent_event_id,created_at FROM public.kc_economic_events WHERE user_id=${owner.id} AND cancelled_at IS NULL ORDER BY occurred_on DESC,created_at DESC LIMIT 4000`
+   sql`SELECT id,direction,description,amount_cents::text,occurred_on::text,category_id,subcategory_id,event_kind,competence_source,status,recurring_rule_id,parent_event_id,created_at FROM public.kc_economic_events WHERE user_id=${owner.id} AND cancelled_at IS NULL ORDER BY occurred_on DESC,created_at DESC LIMIT 4000`,
+   sql`SELECT id,liability_id,wallet_id,settlement_id,principal_cents::text,interest_fee_cents::text,paid_on::text,created_at FROM public.kc_debt_payments WHERE user_id=${owner.id} ORDER BY paid_on DESC LIMIT 1000`,
+   sql`SELECT id,title,category,target_cents::text,down_payment_cents::text,installment_count,installment_cents::text,interest_bps,desired_on::text,priority,status,created_at FROM public.kc_financial_goals WHERE user_id=${owner.id} AND status<>'cancelled' ORDER BY priority,created_at DESC LIMIT 100`,
+   sql`SELECT as_of::text,state,policy_version,reason_codes,stable_streak_months,updated_at FROM public.kc_health_snapshots WHERE user_id=${owner.id} ORDER BY as_of DESC LIMIT 1`
   ]);
-  return send({wallets,titles,settlements,assets,liabilities,recurringRules,cancelledRecurring,cancellations,categories:savedCategories,budgetRules,budgetPeriods,economicEvents,as_of:new Date().toISOString()});
+  return send({wallets,titles,settlements,assets,liabilities,recurringRules,cancelledRecurring,cancellations,categories:savedCategories,budgetRules,budgetPeriods,economicEvents,debtPayments,goals,latestHealthSnapshot:healthSnapshots[0]||null,as_of:new Date().toISOString()});
  }catch(e){console.error("portfolio-get",e?.name);return error("Falha ao consultar as finanças.",500);}
 }
 export async function POST(request){
@@ -74,7 +77,10 @@ export async function POST(request){
   if(x.action==="wallet"){
    const name=textValue(x.name,90);if(!name)return error("Informe o nome da conta.");
    const initial=amount(x.balance??"0",true,true);
-   await sql`INSERT INTO public.kc_wallets(user_id,name,opening_balance_cents,opening_at) VALUES(${owner.id},${name},${initial},now())`;
+   const walletKind=["checking","cash","reserve","investment"].includes(x.walletKind)?x.walletKind:"checking";
+   const liquidityKind=["immediate","d_plus","locked"].includes(x.liquidityKind)?x.liquidityKind:"immediate";
+   const isReserved=Boolean(x.isReserved)||walletKind==="reserve";
+   await sql`INSERT INTO public.kc_wallets(user_id,name,opening_balance_cents,opening_at,wallet_kind,liquidity_kind,is_reserved) VALUES(${owner.id},${name},${initial},now(),${walletKind},${liquidityKind},${isReserved})`;
    return send({saved:true},201);
   }
   if(x.action==="category"){
@@ -182,9 +188,48 @@ export async function POST(request){
   if(x.action==="asset"||x.action==="liability"){
    const label=textValue(x.label,120),value=amount(x.amount,true);
    if(!label)return error("Descrição inválida.");
-   if(x.action==="asset")await sql`INSERT INTO public.kc_assets(user_id,label,value_cents,valued_on) VALUES(${owner.id},${label},${value},current_date)`;
-   else await sql`INSERT INTO public.kc_liabilities(user_id,label,principal_cents,valued_on) VALUES(${owner.id},${label},${value},current_date)`;
+   if(x.action==="asset"){
+    const assetKind=["property","investment","reserve","other"].includes(x.assetKind)?x.assetKind:"other";
+    const liquidityKind=["immediate","d_plus","locked"].includes(x.liquidityKind)?x.liquidityKind:"locked";
+    const linkedWalletId=uuid(x.linkedWalletId)?x.linkedWalletId:null;
+    if(linkedWalletId){
+     const w=await sql`SELECT id FROM public.kc_wallets WHERE id=${linkedWalletId}::uuid AND user_id=${owner.id} LIMIT 1`;
+     if(!w.length)return error("Conta vinculada não encontrada.",404);
+    }
+    await sql`INSERT INTO public.kc_assets(user_id,label,value_cents,valued_on,asset_kind,liquidity_kind,linked_wallet_id) VALUES(${owner.id},${label},${value},current_date,${assetKind},${liquidityKind},${linkedWalletId}::uuid)`;
+   }else{
+    const debtKind=["loan","financing","credit_card","other"].includes(x.debtKind)?x.debtKind:"loan";
+    const interestRateBps=Number.isInteger(x.interestRateBps)&&x.interestRateBps>=0?x.interestRateBps:null;
+    const monthlyInstallmentCents=x.monthlyInstallment!==undefined&&x.monthlyInstallment!==null&&x.monthlyInstallment!==""?amount(x.monthlyInstallment,true):null;
+    const remainingInstallments=Number.isInteger(x.remainingInstallments)&&x.remainingInstallments>=0?x.remainingInstallments:null;
+    const maturityOn=x.maturityOn&&day(x.maturityOn)?x.maturityOn:null;
+    await sql`INSERT INTO public.kc_liabilities(user_id,label,principal_cents,valued_on,debt_kind,interest_rate_bps,monthly_installment_cents,remaining_installments,maturity_on) VALUES(${owner.id},${label},${value},current_date,${debtKind},${interestRateBps},${monthlyInstallmentCents},${remainingInstallments},${maturityOn}::date)`;
+   }
    return send({saved:true},201);
+  }
+  if(x.action==="debt_payment"){
+   if(!uuid(x.liabilityId)||!day(x.paidOn))return error("Dívida ou data inválida.");
+   if(!validSettlementDay(x.paidOn,brDay()))return error("Pagamento realizado não pode ter data futura.");
+   const principalCents=amount(x.principal??"0",true);
+   const interestFeeCents=amount(x.interestFee??"0",true);
+   if(principalCents===0&&interestFeeCents===0)return error("Informe o valor amortizado ou dos juros.");
+   const walletId=uuid(x.walletId)?x.walletId:null;
+   const idempotencyKey=uuid(x.idempotencyKey)?x.idempotencyKey:crypto.randomUUID();
+   const rows=await sql`SELECT public.kc_record_debt_payment(${owner.id},${x.liabilityId}::uuid,${walletId}::uuid,${principalCents},${interestFeeCents},${x.paidOn}::date,${idempotencyKey}::uuid) AS info`;
+   return send({saved:true,...rows[0]?.info},201);
+  }
+  if(x.action==="goal"){
+   const title=textValue(x.title,120);
+   if(!title)return error("Informe o nome do objetivo ou compra.");
+   const targetCents=amount(x.target);
+   const downPaymentCents=x.downPayment!==undefined&&x.downPayment!==null&&x.downPayment!==""?amount(x.downPayment,true):0;
+   if(downPaymentCents>targetCents)return error("Entrada não pode superar o valor total.");
+   const installmentCount=Number(x.installmentCount||1);
+   if(!Number.isInteger(installmentCount)||installmentCount<1||installmentCount>120)return error("Quantidade de parcelas inválida.");
+   const installmentCents=x.installmentAmount?amount(x.installmentAmount,true):Math.ceil((targetCents-downPaymentCents)/installmentCount);
+   const desiredOn=x.desiredOn&&day(x.desiredOn)?x.desiredOn:null;
+   const rows=await sql`INSERT INTO public.kc_financial_goals(user_id,title,target_cents,down_payment_cents,installment_count,installment_cents,desired_on,status) VALUES(${owner.id},${title},${targetCents},${downPaymentCents},${installmentCount},${installmentCents},${desiredOn}::date,'simulated') RETURNING id`;
+   return send({saved:true,id:rows[0]?.id},201);
   }
   return error("Ação não reconhecida.");
  }catch(e){if(e?.message?.includes("Informe")||e?.message?.includes("Valor")||e?.message?.includes("Solicitação"))return error(e.message);if(e?.code==="23505")return error("Nome já utilizado. Escolha outro para evitar duplicidade.",409);console.error("portfolio-post",e?.name);return error("Não foi possível salvar.",500);}
@@ -276,6 +321,11 @@ export async function PATCH(request){
    const siblings=await sql`SELECT id,name FROM public.kc_categories WHERE user_id=${owner.id} AND direction=${cat[0].direction} AND id<>${x.categoryId}::uuid LIMIT 300`;
    if(siblings.some(s=>normalizeCategoryName(s.name)===normalizeCategoryName(name)))return error("Já existe uma categoria com esse nome.",409);
    await sql`UPDATE public.kc_categories SET name=${name} WHERE id=${x.categoryId}::uuid AND user_id=${owner.id}`;
+   return send({saved:true});
+  }
+  if(x.action==="cancel_goal"){
+   if(!uuid(x.goalId))return error("Objetivo inválido.");
+   await sql`UPDATE public.kc_financial_goals SET status='cancelled' WHERE id=${x.goalId}::uuid AND user_id=${owner.id}`;
    return send({saved:true});
   }
   if(x.action==="cancel"){

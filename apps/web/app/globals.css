@@ -164,3 +164,61 @@ input:not([type=checkbox]):not([type=radio]),select,textarea{font-size:16px!impo
 .balance-card.secondary{min-height:auto}
 .balance-num.secondary{font-size:clamp(18px,1.5vw,24px);color:#42463f;margin-bottom:14px}
 .budget-overview-panel{display:flex;flex-direction:column;gap:10px}
+
+/* ADR-009: Financial Health, Milestones, Priorities & Goal Planner */
+.health-card{grid-column:1/-1;display:grid;gap:14px}
+.health-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.health-title-group{display:grid;gap:6px}
+.health-badge{display:inline-flex;align-items:center;gap:8px;padding:7px 14px;border-radius:999px;font-size:14px;width:fit-content;border:1px solid transparent}
+.health-badge--red{background:#fff1f0;color:#b42318;border-color:#f9cac6}
+.health-badge--orange{background:#fff6ed;color:#b54708;border-color:#fed7aa}
+.health-badge--blue{background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe}
+.health-badge--green{background:#ecfdf3;color:#067647;border-color:#abefc6}
+.health-badge--unknown{background:#f4f5f3;color:#4b5248;border-color:#dfe3dc}
+.health-reasons{margin:0;padding-left:18px;display:grid;gap:4px;font-size:13px;color:#4a4f48}
+.health-metrics-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.health-mini-stat{background:#f8f9f7;border:1px solid #eceee9;border-radius:14px;padding:12px 14px;display:grid;gap:4px}
+.health-mini-stat span{font-size:11px;color:var(--muted)}
+.health-mini-stat strong{font-size:15px;color:var(--ink)}
+.health-footnote{font-size:11px;color:var(--muted)}
+
+.planning-fh-stack{display:grid;gap:18px;margin-top:18px}
+.milestones-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.milestone-box{border:1px solid #eceee9;background:#fbfcfa;border-radius:16px;padding:14px 16px;display:grid;gap:6px}
+.milestone-box span{font-size:12px;color:var(--muted)}
+.milestone-box strong{font-size:17px;color:var(--ink);text-transform:capitalize}
+.milestone-box small{font-size:11px;color:#687066;line-height:1.45}
+
+.allocation-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-bottom:14px}
+.allocation-summary>div{border:1px solid #eceee9;background:#fbfcfa;border-radius:14px;padding:12px 14px;display:grid;gap:4px}
+.allocation-summary span{font-size:12px;color:var(--muted)}
+.allocation-summary strong{font-size:18px;color:var(--ink)}
+
+.priority-list{display:grid;gap:10px}
+.priority-item{border:1px solid #eceee9;border-radius:14px;padding:14px 16px;background:#fff;display:grid;gap:8px}
+.priority-item-head{display:flex;justify-content:space-between;gap:12px;align-items:center}
+.priority-item p{margin:0;font-size:12px;color:#575c55;line-height:1.5}
+.priority-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:4px}
+.priority-option{border:1px solid #e7ebe4;border-radius:12px;padding:10px 12px;background:#f9faf8;display:grid;gap:4px}
+.priority-option strong{font-size:12px}
+.priority-option small{font-size:11px;color:#687066}
+
+.goal-planner-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:18px}
+.goal-form{display:grid;gap:12px}
+.goal-form label{display:grid;gap:5px;font-size:12px;color:#4a4f48}
+.goal-form input{border:1px solid #dce1d8;border-radius:12px;padding:9px 12px;font-size:14px;background:#fff}
+.goal-form-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.goal-result{display:grid;gap:12px;align-content:start}
+.goal-verdict{display:flex;gap:10px;align-items:flex-start;padding:14px;border-radius:14px;border:1px solid transparent}
+.goal-verdict.ok{background:#ecfdf3;color:#067647;border-color:#abefc6}
+.goal-verdict.warn{background:#fff6ed;color:#b54708;border-color:#fed7aa}
+.goal-verdict div{display:grid;gap:4px}
+.goal-verdict strong{font-size:14px}
+.goal-verdict small{font-size:12px;line-height:1.45}
+.goal-scenarios{border:1px solid #eceee9;border-radius:14px;padding:12px 14px;display:grid;gap:8px}
+.goal-scenarios ul,.saved-goals ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.goal-scenarios li,.saved-goals li{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:12px;padding-top:6px;border-top:1px solid #f0f2ee}
+.saved-goals{margin-top:16px;padding-top:14px;border-top:1px solid #eceee9;display:grid;gap:8px}
+.saved-goals li div{display:grid;gap:2px}
+.saved-goals li small{font-size:11px;color:var(--muted)}
+@media(max-width:920px){.health-metrics-row,.milestones-grid,.allocation-summary,.priority-options,.goal-planner-grid{grid-template-columns:1fr}}
