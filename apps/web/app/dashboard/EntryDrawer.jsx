@@ -127,9 +127,9 @@ export default function EntryDrawer({
   const targetCents=safeCents(form.goalTarget);
   const downPaymentCents=Math.min(targetCents,safeCents(form.goalDownPayment));
   const count=Math.max(1,Math.min(120,Number(form.goalInstallments||1)));
-  const installmentCents=Math.ceil(Math.max(0,targetCents-downPaymentCents)/count);
-  return simulateGoalPurchase(rawData,{title:form.description||"Compra planejada",targetCents,downPaymentCents,installmentCount:count,installmentCents,desiredOn:form.goalDesiredOn||brDay()},{today:brDay()});
- },[drawer,rawData,form.description,form.goalTarget,form.goalDownPayment,form.goalInstallments,form.goalDesiredOn]);
+  const interestBps=Math.min(10000,Math.max(0,Math.round(Number(String(form.goalInterestPct||"0").replace(",","."))*100)||0));
+  return simulateGoalPurchase(rawData,{title:form.description||"Compra planejada",targetCents,downPaymentCents,installmentCount:count,interestBps,useCapitalInDownPayment:Boolean(form.goalUseCapital),desiredOn:form.goalDesiredOn||brDay()},{today:brDay()});
+ },[drawer,rawData,form.description,form.goalTarget,form.goalDownPayment,form.goalInstallments,form.goalInterestPct,form.goalUseCapital,form.goalDesiredOn]);
 
  return <div className="overlay" onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}><section className="drawer" role="dialog" aria-modal="true" aria-label={formTitle}>
    <header className="drawer-head"><button type="button" className="plain-icon" onClick={onClose} aria-label="Fechar"><X size={23}/></button><h2>{formTitle}</h2>{canSubmit?<button className="save-pill" form="entry-form" type="submit" disabled={busy}>{busy?"Salvando...":"Salvar"}</button>:<span className="drawer-head-spacer"/>}</header>
@@ -334,15 +334,28 @@ export default function EntryDrawer({
       </div>
       <div className="form-grid">
         <label>Parcelas<input required type="number" min="1" max="120" value={form.goalInstallments||"1"} onChange={e=>field("goalInstallments",e.target.value)}/></label>
-        <label>Data desejada<input required type="date" min={brDay()} value={form.goalDesiredOn||brDay()} onChange={e=>field("goalDesiredOn",e.target.value)}/></label>
+        <label>Juros (% a.m. · opcional)<input type="text" inputMode="decimal" placeholder="Ex.: 1,80" value={form.goalInterestPct||""} onChange={e=>field("goalInterestPct",e.target.value)}/></label>
       </div>
-      {goalPreview&&<div className={`goal-verdict ${goalPreview.isFeasible?"ok":"warn"}`}>
-        <Compass size={18}/>
-        <div>
-          <strong>{goalPreview.isFeasible?`Cabe no plano na data desejada (${fdate(form.goalDesiredOn||brDay())})`:goalPreview.firstFeasibleDate?`Melhor momento: a partir de ${fdate(goalPreview.firstFeasibleDate)}`:"Ainda não cabe no horizonte"}</strong>
-          <small>{goalPreview.bottleneckDate?`Gargalo em ${fdate(goalPreview.bottleneckDate)} (falta de ${money(goalPreview.bottleneckShortfallCents)}).`:`Todas as ${goalPreview.installmentCountVerified||1} parcela(s) verificadas sem comprometer o piso protegido.`}</small>
+      <label>Data desejada<input required type="date" min={brDay()} value={form.goalDesiredOn||brDay()} onChange={e=>field("goalDesiredOn",e.target.value)}/></label>
+      <label className="kc-check"><input type="checkbox" checked={Boolean(form.goalUseCapital)} onChange={e=>field("goalUseCapital",e.target.checked)}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Usar saldo da Carteira de Capital / Reserva na entrada</span></label>
+      {goalPreview&&<>
+        <div className={`goal-verdict ${goalPreview.isFeasible?"ok":"warn"}`}>
+          <Compass size={18}/>
+          <div>
+            <strong>{goalPreview.isFeasible?`Cabe no plano na data desejada (${fdate(form.goalDesiredOn||brDay())})`:goalPreview.firstFeasibleDate?`Melhor momento: a partir de ${fdate(goalPreview.firstFeasibleDate)}`:"Ainda não cabe no horizonte"}</strong>
+            <small>
+              {goalPreview.perInstallmentCents>0&&`${goalPreview.installmentCountVerified}x de ${money(goalPreview.perInstallmentCents)}`}
+              {goalPreview.totalInterestCents>0&&` · Juros totais: ${money(goalPreview.totalInterestCents)}`}
+            </small>
+          </div>
         </div>
-      </div>}
+        {goalPreview.twoStepVerdict&&<div className="repeat-config">
+          <div className="repeat-preview" style={{borderTop:0,paddingTop:0}}>
+            <span><strong>1. Entrada ({money(goalPreview.twoStepVerdict.downPaymentCents)}):</strong> {goalPreview.twoStepVerdict.hasDownPaymentNow?"Você já tem disponível hoje":goalPreview.twoStepVerdict.downPaymentReadyDate?`Atinge em ${fdate(goalPreview.twoStepVerdict.downPaymentReadyDate)}`:"Não atinge no horizonte"}</span>
+            <span><strong>2. Parcela ({money(goalPreview.twoStepVerdict.perInstallmentCents)}/mês):</strong> {goalPreview.twoStepVerdict.installmentFitsMonthly?`Cabe na sobra mensal (${money(goalPreview.twoStepVerdict.monthlyFreeSurplusCents)}/mês)`:`Não cabe na sobra mensal (${money(goalPreview.twoStepVerdict.monthlyFreeSurplusCents)}/mês · faltam ${money(goalPreview.twoStepVerdict.monthlyGapCents)}/mês)`}</span>
+          </div>
+        </div>}
+      </>}
     </>}
 
     {drawer==="capital_goal"&&<>

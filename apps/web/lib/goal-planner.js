@@ -1,9 +1,28 @@
-import { brDay, cents, compute, dayAdd, isoDate } from "./finance.js";
+import { brDay, cents, compute, dayAdd, isoDate, monthOf } from "./finance.js";
 import { lastDayOfMonth, moveMonth } from "./period.js";
 import { expandRecurring } from "./recurring.js";
 import { reconcilePortfolio } from "./reconciliation.js";
 import { resolvePolicy } from "./health-policy.js";
 import { enrichSpendingPlans } from "./spending-plans.js";
+import { computeBudgetSummary } from "./budgets.js";
+
+/**
+ * Brazilian Tabela Price (French amortization) monthly installment in integer cents.
+ */
+export function computePriceInstallmentCents({
+  financedCents = 0,
+  installmentCount = 1,
+  monthlyInterestBps = 0,
+}) {
+  const pv = Math.max(0, cents(financedCents));
+  const n = Math.max(1, Number(installmentCount || 1));
+  if (pv <= 0) return 0;
+  const bps = Math.max(0, Number(monthlyInterestBps || 0));
+  if (bps <= 0) return Math.ceil(pv / n);
+  const i = bps / 10000;
+  const factor = (i * Math.pow(1 + i, n)) / (Math.pow(1 + i, n) - 1);
+  return Math.ceil(pv * factor);
+}
 
 function addMonthsIso(iso, delta) {
   const [y, m, d] = iso.split("-").map(Number);
@@ -23,7 +42,11 @@ function buildSchedule(goal, startDate) {
     explicitInst > 0
       ? explicitInst
       : remaining > 0
-        ? Math.ceil(remaining / count)
+        ? computePriceInstallmentCents({
+            financedCents: remaining,
+            installmentCount: count,
+            monthlyInterestBps: goal.interestBps || 0,
+          })
         : 0;
 
   const outflows = [];
@@ -161,8 +184,71 @@ export function simulateGoalPurchase(rawData, goal, options = {}) {
     return { date: d.date, balance: d.balance - cumPlans };
   });
 
+  const useCapital = Boolean(goal.useCapitalInDownPayment);
   const protectedFloorCents =
-    policy.minimumCashFloorCents + (reconciled.walletReserveCents ?? 0);
+    policy.minimumCashFloorCents + (useCapital ? 0 : (reconciled.walletReserveCents ?? 0));
+
+  const downCents = Math.min(Math.max(0, cents(goal.targetCents)), Math.max(0, cents(goal.downPaymentCents)));
+  const financedCents = Math.max(0, cents(goal.targetCents) - downCents);
+  const explicitInstCents = cents(goal.installmentCents);
+  const perInstallmentCents =
+    explicitInstCents > 0
+      ? explicitInstCents
+      : financedCents > 0
+        ? computePriceInstallmentCents({
+            financedCents,
+            installmentCount,
+            monthlyInterestBps: goal.interestBps || 0,
+          })
+        : 0;
+  const totalInterestCents = Math.max(0, perInstallmentCents * installmentCount - financedCents);
+  const totalCostCents = downCents + perInstallmentCents * installmentCount;
+
+  // Step 1 & Step 2 independent verdict (Entrada vs Parcela no orçamento mensal)
+  const currentMonth = String(today).slice(0, 7);
+  const currentBudgets = computeBudgetSummary({
+    month: currentMonth,
+    categories: rawData?.categories || [],
+    budgetRules: rawData?.budgetRules || [],
+    budgetPeriods: rawData?.budgetPeriods || [],
+    economicEvents: rawData?.economicEvents || [],
+    titles: rawData?.titles || [],
+    recurringRules: rawData?.recurringRules || [],
+    cancelledRecurring: rawData?.cancelledRecurring || [],
+    spendingPlans: rawData?.spendingPlans || [],
+    spendingPlanApplications: rawData?.spendingPlanApplications || [],
+    today,
+  });
+  const unspentControlledBudgetsCents = currentBudgets.reduce(
+    (sum, b) => sum + (b.limitCents !== null ? Math.max(0, cents(b.limitCents) - cents(b.usedCents)) : 0),
+    0
+  );
+  const sampleMonths = [currentMonth, moveMonth(today, 1), moveMonth(today, 2)];
+  const monthlySurpluses = sampleMonths.map((ym) => {
+    const inc = (expanded.titles || [])
+      .filter((t) => !t.cancelled_at && t.direction === "income" && !t.liability_id && monthOf(t.due_on) === ym)
+      .reduce((s, t) => s + cents(t.amount_cents), 0);
+    const exp = (expanded.titles || [])
+      .filter((t) => !t.cancelled_at && t.direction === "expense" && monthOf(t.due_on) === ym)
+      .reduce((s, t) => s + cents(t.amount_cents), 0);
+    return inc - exp - unspentControlledBudgetsCents;
+  });
+  const avgMonthlyFreeSurplusCents = Math.round(
+    monthlySurpluses.reduce((s, v) => s + v, 0) / monthlySurpluses.length
+  );
+
+  const availableForDownCents = Math.max(
+    0,
+    (useCapital ? (reconciled.totalWalletCashCents ?? 0) : (reconciled.operatingCashCents ?? 0)) - policy.minimumCashFloorCents
+  );
+  const hasDownPaymentNow = downCents === 0 || availableForDownCents >= downCents;
+  let downPaymentReadyDate = hasDownPaymentNow ? today : null;
+  if (!downPaymentReadyDate) {
+    const foundDay = daily.find((d) => d.balance - protectedFloorCents >= downCents);
+    downPaymentReadyDate = foundDay ? foundDay.date : null;
+  }
+  const installmentFitsMonthly = perInstallmentCents === 0 || avgMonthlyFreeSurplusCents >= perInstallmentCents;
+  const monthlyGapCents = Math.max(0, perInstallmentCents - Math.max(0, avgMonthlyFreeSurplusCents));
 
   const desiredDate = goal.desiredOn && goal.desiredOn >= today ? goal.desiredOn : today;
   const desiredSchedule = buildSchedule(goal, desiredDate);
@@ -272,6 +358,19 @@ export function simulateGoalPurchase(rawData, goal, options = {}) {
     bottleneckDate: desiredEval.bottleneckDate,
     bottleneckShortfallCents: desiredEval.shortfallCents,
     installmentCountVerified: installmentCount,
+    perInstallmentCents,
+    totalInterestCents,
+    totalCostCents,
+    twoStepVerdict: {
+      downPaymentCents: downCents,
+      availableForDownCents,
+      hasDownPaymentNow,
+      downPaymentReadyDate,
+      perInstallmentCents,
+      monthlyFreeSurplusCents: avgMonthlyFreeSurplusCents,
+      installmentFitsMonthly,
+      monthlyGapCents,
+    },
     scenarios,
   };
 }
