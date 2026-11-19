@@ -25,7 +25,7 @@ function toCents(mask) {
   return Number.isFinite(num) ? Math.round(num * 100) : 0;
 }
 
-export default function PlanningGoalsPanel({ rawData, healthPlan, onSaveGoal, onCancelGoal, busy }) {
+export default function PlanningGoalsPanel({ rawData, healthPlan, onSaveGoal, onCancelGoal, busy, section = "all" }) {
   const today = brDay();
   const [goalForm, setGoalForm] = useState({
     title: "Notebook",
@@ -56,11 +56,13 @@ export default function PlanningGoalsPanel({ rawData, healthPlan, onSaveGoal, on
 
   if (!healthPlan) return null;
   const { milestones, allocation, goals } = healthPlan;
+  const showHealth = section === "all" || section === "health";
+  const showGoals = section === "all" || section === "goals";
 
   return (
     <div className="planning-fh-stack">
       {/* 1. Recovery Milestones */}
-      <section className="panel">
+      {showHealth && <section className="panel">
         <div className="section-header">
           <div>
             <div className="eyebrow">PROJEÇÃO DE RECUPERAÇÃO</div>
@@ -85,10 +87,10 @@ export default function PlanningGoalsPanel({ rawData, healthPlan, onSaveGoal, on
             <small>Cobertura e margem mantidas de forma consecutiva.</small>
           </article>
         </div>
-      </section>
+      </section>}
 
       {/* 2. Allocable Capacity & Priorities */}
-      <section className="panel">
+      {showHealth && <section className="panel">
         <div className="section-header">
           <div>
             <div className="eyebrow">MOTOR DE PRIORIDADES</div>
@@ -131,10 +133,10 @@ export default function PlanningGoalsPanel({ rawData, healthPlan, onSaveGoal, on
             </article>
           ))}
         </div>
-      </section>
+      </section>}
 
       {/* 3. Smart Purchase / Goal Planner (PCP/MRP) */}
-      <section className="panel">
+      {showGoals && <section className="panel" id="goal-planner-section">
         <div className="section-header">
           <div>
             <div className="eyebrow">PLANEJADOR INTELIGENTE (SIMULAÇÃO)</div>
@@ -279,7 +281,7 @@ export default function PlanningGoalsPanel({ rawData, healthPlan, onSaveGoal, on
             </ul>
           </div>
         )}
-      </section>
+      </section>}
     </div>
   );
 }
