@@ -123,6 +123,14 @@ function Empty({ children }) {
   );
 }
 
+const defaultScreenFilters = () => ({
+  overview: { rangeStart: TODAY, date: lastDayOfMonth(TODAY), showPlanned: true, showRealized: true, showCategories: true },
+  movements: { rangeStart: TODAY, date: lastDayOfMonth(TODAY), direction: "all", status: "all" },
+  planning: { rangeStart: TODAY, date: lastDayOfMonth(TODAY), onlyFeasible: false },
+  patrimony: { rangeStart: TODAY, date: lastDayOfMonth(TODAY), walletKind: "all" },
+  health: { rangeStart: TODAY, date: lastDayOfMonth(TODAY) },
+});
+
 export default function Dashboard({ user }) {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -130,11 +138,9 @@ export default function Dashboard({ user }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [active, setActive] = useState("overview");
-  const [rangeStart, setRangeStart] = useState(TODAY);
-  const [date, setDate] = useState(lastDayOfMonth(TODAY));
+  const [screenFilters, setScreenFilters] = useState(defaultScreenFilters);
   const [drawer, setDrawer] = useState(null);
   const [form, setForm] = useState(defaultForm());
-  const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
   const [selectedTitle, setSelectedTitle] = useState(null);
   const [cancelTarget, setCancelTarget] = useState(null);
@@ -144,10 +150,23 @@ export default function Dashboard({ user }) {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [selectedGoal, setSelectedGoal] = useState(null);
   const [planningView, setPlanningView] = useState("goals"); // "goals" | "budgets"
-  const [showPlanned, setShowPlanned] = useState(true);
-  const [showRealized, setShowRealized] = useState(true);
-  const [showCategories, setShowCategories] = useState(true);
   const filterRef = useRef(null);
+
+  const curFilter = screenFilters[active] || screenFilters.overview;
+  const rangeStart = curFilter.rangeStart || TODAY;
+  const date = curFilter.date || lastDayOfMonth(TODAY);
+  const setScreenFilter = (tabKey, patch) =>
+    setScreenFilters((old) => ({ ...old, [tabKey]: { ...(old[tabKey] || {}), ...patch } }));
+  const setRangeStart = (v) => setScreenFilter(active, { rangeStart: v });
+  const setDate = (v) => setScreenFilter(active, { date: v });
+  const filter = screenFilters.movements.direction || "all";
+  const setFilter = (dir) => setScreenFilter("movements", { direction: dir });
+  const showPlanned = screenFilters.overview.showPlanned !== false;
+  const setShowPlanned = (v) => setScreenFilter("overview", { showPlanned: v });
+  const showRealized = screenFilters.overview.showRealized !== false;
+  const setShowRealized = (v) => setScreenFilter("overview", { showRealized: v });
+  const showCategories = screenFilters.overview.showCategories !== false;
+  const setShowCategories = (v) => setScreenFilter("overview", { showCategories: v });
 
   async function refresh() {
     try {
@@ -205,14 +224,21 @@ export default function Dashboard({ user }) {
     .sort((a, b) => b.value - a.value);
 
   const rows = titles
-    .filter(
-      (t) =>
-        inRange(t.due_on, rangeStart, date) &&
-        (filter === "all" || t.direction === filter) &&
-        (!query ||
-          t.description.toLowerCase().includes(query.toLowerCase()) ||
-          t.category.toLowerCase().includes(query.toLowerCase()))
-    )
+    .filter((t) => {
+      if (!inRange(t.due_on, rangeStart, date)) return false;
+      if (active === "movements") {
+        if (filter !== "all" && t.direction !== filter) return false;
+        const mStatus = screenFilters.movements.status || "all";
+        const rem = cents(t.amount_cents) - cents(t.settled_cents);
+        if (mStatus === "pending" && rem === 0) return false;
+        if (mStatus === "done" && rem > 0) return false;
+        if (mStatus === "late" && !(rem > 0 && isoDate(t.due_on) < TODAY)) return false;
+      }
+      if (query && !t.description.toLowerCase().includes(query.toLowerCase()) && !t.category.toLowerCase().includes(query.toLowerCase())) {
+        return false;
+      }
+      return true;
+    })
     .sort((a, b) => isoDate(a.due_on).localeCompare(isoDate(b.due_on)));
 
   const overviewRows = rows.filter((x) => {
@@ -686,9 +712,11 @@ export default function Dashboard({ user }) {
   function selectMonth(delta) {
     const next = moveMonth(rangeStart, delta);
     const first = firstDayOfMonth(`${next}-01`);
-    setRangeStart(first);
-    setDate(lastDayOfMonth(first));
+    setScreenFilter(active, { rangeStart: first, date: lastDayOfMonth(first) });
   }
+  const isCustomRange =
+    !(rangeStart === firstDayOfMonth(date) && date === lastDayOfMonth(rangeStart)) &&
+    !(rangeStart === TODAY && date === lastDayOfMonth(TODAY));
 
   const setTab = (k) => {
     setActive(k);
@@ -759,15 +787,40 @@ export default function Dashboard({ user }) {
             <button type="button" className="pill pill-secondary" onClick={() => setActionMenu("create")}>
               Criar
             </button>
+            {active === "planning" && (
+              <div className="toolbar-segmented" role="tablist" aria-label="Visão de planejamento">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={planningView === "goals"}
+                  className={planningView === "goals" ? "active" : ""}
+                  onClick={() => setPlanningView("goals")}
+                >
+                  Compras planejadas
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={planningView === "budgets"}
+                  className={planningView === "budgets" ? "active" : ""}
+                  onClick={() => setPlanningView("budgets")}
+                >
+                  Orçamentos 50-30-20
+                </button>
+              </div>
+            )}
           </div>
           <div className="toolbar-right">
-            <div className="date-range soft-pill" aria-label="Período selecionado">
-              <span className="field-label">Início</span>
-              <strong>{fmtDate(rangeStart)}</strong>
-              <span className="divider" aria-hidden="true" />
-              <span className="field-label">Fim</span>
-              <strong>{fmtDate(date)}</strong>
-            </div>
+            {isCustomRange && (
+              <button
+                type="button"
+                className="date-range-chip soft-pill"
+                aria-label="Período customizado selecionado"
+                onClick={() => setFilterOpen(true)}
+              >
+                {fmtDate(rangeStart).slice(0, 5)} – {fmtDate(date).slice(0, 5)}
+              </button>
+            )}
             <div className="month-nav soft-pill" aria-label="Navegar por mês">
               <button type="button" aria-label="Mês anterior" onClick={() => selectMonth(-1)}>
                 <ChevronLeft size={19} strokeWidth={2.5} aria-hidden="true" />
@@ -781,7 +834,7 @@ export default function Dashboard({ user }) {
               <button
                 type="button"
                 className="filter-btn"
-                aria-label="Abrir filtros de período e exibição"
+                aria-label="Abrir filtros desta tela"
                 aria-expanded={filterOpen}
                 onClick={() => setFilterOpen(true)}
               >
@@ -983,16 +1036,6 @@ export default function Dashboard({ user }) {
 
         {active === "movements" && (
           <div className="workspace">
-            <div className="section-header">
-              <div>
-                <div className="eyebrow">CARTEIRA FINANCEIRA</div>
-                <h2>Movimentos</h2>
-              </div>
-              <button type="button" className="pill pill-primary" onClick={() => open("title", null, "spent")}>
-                <Plus size={16} /> Novo lançamento
-              </button>
-            </div>
-
             <div className="planning-stats">
               <div className="card kpi-panel">
                 <span className="metric-label">A receber no período</span>
@@ -1051,34 +1094,6 @@ export default function Dashboard({ user }) {
 
         {active === "planning" && (
           <div className="workspace">
-            <div className="section-header">
-              <div>
-                <div className="eyebrow">PLANEJAMENTO DE COMPRAS E ORÇAMENTOS</div>
-                <h2>Planejamento · {monthLong}</h2>
-              </div>
-              <div className="toolbar-buttons">
-                <div className="filter-pills">
-                  <button
-                    type="button"
-                    className={planningView === "goals" ? "active" : ""}
-                    onClick={() => setPlanningView("goals")}
-                  >
-                    Compras planejadas
-                  </button>
-                  <button
-                    type="button"
-                    className={planningView === "budgets" ? "active" : ""}
-                    onClick={() => setPlanningView("budgets")}
-                  >
-                    Orçamentos 50-30-20
-                  </button>
-                </div>
-                <button type="button" className="pill pill-primary" onClick={() => open("goal_sim")}>
-                  <Plus size={16} /> Novo planejamento
-                </button>
-              </div>
-            </div>
-
             <div className="planning-stats">
               <div className="card kpi-panel">
                 <span className="metric-label">Saldos em contas</span>
@@ -1114,20 +1129,25 @@ export default function Dashboard({ user }) {
                 </div>
                 {(data?.goals || []).length ? (
                   <div className="goals-bento-grid">
-                    {(data?.goals || []).map((g, idx) => {
-                      const sim = simulateGoalPurchase(
-                        data || {},
-                        {
-                          title: g.title,
-                          targetCents: cents(g.target_cents),
-                          downPaymentCents: cents(g.down_payment_cents),
-                          installmentCount: Number(g.installment_count || 1),
-                          installmentCents: cents(g.installment_cents),
-                          desiredOn: isoDate(g.desired_on) || TODAY,
-                        },
-                        { today: TODAY }
-                      );
-                      return (
+                    {(data?.goals || [])
+                      .map((g, idx) => ({
+                        g,
+                        idx,
+                        sim: simulateGoalPurchase(
+                          data || {},
+                          {
+                            title: g.title,
+                            targetCents: cents(g.target_cents),
+                            downPaymentCents: cents(g.down_payment_cents),
+                            installmentCount: Number(g.installment_count || 1),
+                            installmentCents: cents(g.installment_cents),
+                            desiredOn: isoDate(g.desired_on) || TODAY,
+                          },
+                          { today: TODAY }
+                        ),
+                      }))
+                      .filter(({ sim }) => !screenFilters.planning.onlyFeasible || sim.isFeasible || Boolean(sim.firstFeasibleDate))
+                      .map(({ g, idx, sim }) => (
                         <button
                           type="button"
                           key={g.id || idx}
@@ -1148,8 +1168,7 @@ export default function Dashboard({ user }) {
                             <small>{g.installment_count > 1 ? `${g.installment_count}x de ${money(cents(g.installment_cents))}` : "À vista"}</small>
                           </div>
                         </button>
-                      );
-                    })}
+                      ))}
                   </div>
                 ) : (
                   <Empty>
@@ -1279,16 +1298,6 @@ export default function Dashboard({ user }) {
 
         {active === "patrimony" && (
           <div className="workspace">
-            <div className="section-header">
-              <div>
-                <div className="eyebrow">POSIÇÃO PATRIMONIAL</div>
-                <h2>Patrimônio e contas</h2>
-              </div>
-              <button type="button" className="pill pill-primary" onClick={() => open("wallet")}>
-                <Plus size={16} /> Nova conta
-              </button>
-            </div>
-
             <div className="planning-stats">
               <div className="card kpi-panel">
                 <span className="metric-label">Patrimônio líquido projetado</span>
@@ -1342,7 +1351,15 @@ export default function Dashboard({ user }) {
               </div>
               <div className="wallet-list">
                 {wallets.length ? (
-                  wallets.map((w) => {
+                  wallets
+                    .filter((w) => {
+                      const wf = screenFilters.patrimony.walletKind || "all";
+                      const isCap = w.is_reserved || w.wallet_kind === "reserve" || w.wallet_kind === "investment";
+                      if (wf === "checking") return !isCap;
+                      if (wf === "capital") return isCap;
+                      return true;
+                    })
+                    .map((w) => {
                     const isCap = w.is_reserved || w.wallet_kind === "reserve" || w.wallet_kind === "investment";
                     return (
                       <article className="account-panel-row" key={w.id}>
@@ -1395,15 +1412,6 @@ export default function Dashboard({ user }) {
 
         {active === "health" && (
           <div className="workspace">
-            <div className="section-header">
-              <div>
-                <div className="eyebrow">DIAGNÓSTICO E PRIORIDADES</div>
-                <h2>Saúde financeira</h2>
-              </div>
-              <button type="button" className="mini-pill" onClick={() => setTab("planning")}>
-                <TrendingUp size={15} /> Ir para Planejamento
-              </button>
-            </div>
             <HealthDiagnosisCard healthPlan={healthPlan} onOpenPlanning={() => setTab("planning")} />
             <PlanningGoalsPanel rawData={data} healthPlan={healthPlan} busy={busy} section="health" />
           </div>
@@ -1655,7 +1663,9 @@ export default function Dashboard({ user }) {
         >
           <div className="dialog filter-dialog" role="dialog" aria-modal="true" aria-labelledby="filterDialogTitle">
             <div className="dialog-head">
-              <h2 id="filterDialogTitle">Filtrar período e visão</h2>
+              <h2 id="filterDialogTitle">
+                Filtros · {TABS.find((t) => t[0] === active)?.[1] || "Tela atual"}
+              </h2>
               <button type="button" className="dialog-close" onClick={() => setFilterOpen(false)} aria-label="Fechar">
                 <X size={17} />
               </button>
@@ -1692,41 +1702,98 @@ export default function Dashboard({ user }) {
                 <button
                   type="button"
                   className="tiny-btn"
-                  onClick={() => {
-                    setRangeStart(TODAY);
-                    setDate(lastDayOfMonth(TODAY));
-                  }}
+                  onClick={() => setScreenFilter(active, { rangeStart: TODAY, date: lastDayOfMonth(TODAY) })}
                 >
                   Mês atual
                 </button>
                 <button
                   type="button"
                   className="tiny-btn"
-                  onClick={() => {
-                    setRangeStart(TODAY);
-                    setDate(END);
-                  }}
+                  onClick={() => setScreenFilter(active, { rangeStart: TODAY, date: END })}
                 >
                   Até 31/12
                 </button>
               </div>
-              <div className="filter-checks-group">
-                <label className="kc-check">
-                  <input type="checkbox" checked={showPlanned} onChange={(e) => setShowPlanned(e.target.checked)} />
-                  <span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3} /></span>
-                  <span>Incluir previstos</span>
-                </label>
-                <label className="kc-check">
-                  <input type="checkbox" checked={showRealized} onChange={(e) => setShowRealized(e.target.checked)} />
-                  <span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3} /></span>
-                  <span>Mostrar realizados</span>
-                </label>
-                <label className="kc-check">
-                  <input type="checkbox" checked={showCategories} onChange={(e) => setShowCategories(e.target.checked)} />
-                  <span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3} /></span>
-                  <span>Exibir despesas por categoria</span>
-                </label>
-              </div>
+
+              {active === "overview" && (
+                <div className="filter-checks-group">
+                  <label className="kc-check">
+                    <input type="checkbox" checked={showPlanned} onChange={(e) => setShowPlanned(e.target.checked)} />
+                    <span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3} /></span>
+                    <span>Incluir previstos</span>
+                  </label>
+                  <label className="kc-check">
+                    <input type="checkbox" checked={showRealized} onChange={(e) => setShowRealized(e.target.checked)} />
+                    <span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3} /></span>
+                    <span>Mostrar realizados</span>
+                  </label>
+                  <label className="kc-check">
+                    <input type="checkbox" checked={showCategories} onChange={(e) => setShowCategories(e.target.checked)} />
+                    <span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3} /></span>
+                    <span>Exibir despesas por categoria</span>
+                  </label>
+                </div>
+              )}
+
+              {active === "movements" && (
+                <div className="filter-checks-group">
+                  <span className="field-caption">Situação dos lançamentos</span>
+                  <div className="filter-pills">
+                    {[
+                      ["all", "Todas"],
+                      ["pending", "Pendentes"],
+                      ["done", "Quitados"],
+                      ["late", "Vencidos"],
+                    ].map(([k, l]) => (
+                      <button
+                        key={k}
+                        type="button"
+                        className={(screenFilters.movements.status || "all") === k ? "active" : ""}
+                        onClick={() => setScreenFilter("movements", { status: k })}
+                      >
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {active === "planning" && (
+                <div className="filter-checks-group">
+                  <label className="kc-check">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(screenFilters.planning.onlyFeasible)}
+                      onChange={(e) => setScreenFilter("planning", { onlyFeasible: e.target.checked })}
+                    />
+                    <span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3} /></span>
+                    <span>Mostrar apenas compras viáveis</span>
+                  </label>
+                </div>
+              )}
+
+              {active === "patrimony" && (
+                <div className="filter-checks-group">
+                  <span className="field-caption">Tipo de conta</span>
+                  <div className="filter-pills">
+                    {[
+                      ["all", "Todas"],
+                      ["checking", "Uso diário"],
+                      ["capital", "Capital / Reserva"],
+                    ].map(([k, l]) => (
+                      <button
+                        key={k}
+                        type="button"
+                        className={(screenFilters.patrimony.walletKind || "all") === k ? "active" : ""}
+                        onClick={() => setScreenFilter("patrimony", { walletKind: k })}
+                      >
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <button type="button" className="dark-button" onClick={() => setFilterOpen(false)}>
                 Aplicar filtros
               </button>
