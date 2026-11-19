@@ -128,7 +128,7 @@ test("Locked reserve is excluded from immediate emergency liquidity", () => {
 
 test("FH-20: portfolio API queries scope all new ADR-009 tables by owner.id", () => {
   const routeSrc = readFileSync(
-    path.join(__dirname, "../app/api/portfolio/route.js"),
+    path.join(__dirname, "./portfolio-service.js"),
     "utf8"
   );
   assert.match(routeSrc, /FROM public\.kc_debt_payments WHERE user_id=\$\{owner\.id\}/);
