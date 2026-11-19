@@ -47,7 +47,6 @@ import CancelScopeDialog from "./CancelScopeDialog";
 import FinanceChart from "./FinanceChart";
 import HealthDiagnosisCard from "./HealthDiagnosisCard";
 import PlanningGoalsPanel from "./PlanningGoalsPanel";
-import OnboardingModal from "./OnboardingModal";
 import GuidedTour from "./GuidedTour";
 
 const TABS = [
@@ -171,16 +170,15 @@ export default function Dashboard({ user }) {
   const [selectedGoal, setSelectedGoal] = useState(null);
   const [healthModal, setHealthModal] = useState(null); // "diagnosis" | "dedoduro" | "tesouraco" | "milestones" | null
   const [planningView, setPlanningView] = useState("goals"); // "goals" | "budgets"
-  const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [tourOpen, setTourOpen] = useState(false);
   const filterRef = useRef(null);
 
   useEffect(() => {
     if (!data || loading) return;
     const hasEntries = (data.titles?.length || 0) > 0 || (data.recurringRules?.length || 0) > 0;
-    const key = `kc_onboarding_done_${user?.email || "user"}`;
+    const key = `kc_tour_done_${user?.email || "user"}`;
     if (!hasEntries && typeof window !== "undefined" && !window.localStorage.getItem(key)) {
-      setOnboardingOpen(true);
+      setTourOpen(true);
     }
   }, [data, loading, user?.email]);
 
@@ -1752,13 +1750,6 @@ export default function Dashboard({ user }) {
                   </button>
                   <button
                     type="button"
-                    className="pill pill-secondary"
-                    onClick={() => setOnboardingOpen(true)}
-                  >
-                    <Plus size={16} /> Configurar 1ª receita e despesa
-                  </button>
-                  <button
-                    type="button"
                     className="pill pill-primary"
                     onClick={async () => {
                       await authClient.signOut();
@@ -2381,32 +2372,6 @@ export default function Dashboard({ user }) {
           onConfirm={confirmCancel}
         />
       )}
-
-      <OnboardingModal
-        open={onboardingOpen}
-        wallets={wallets}
-        onClose={() => {
-          setOnboardingOpen(false);
-          const obKey = `kc_onboarding_done_${user?.email || "user"}`;
-          const tourKey = `kc_tour_done_${user?.email || "user"}`;
-          if (typeof window !== "undefined") {
-            window.localStorage.setItem(obKey, "skipped");
-            if (!window.localStorage.getItem(tourKey)) setTourOpen(true);
-          }
-        }}
-        onCompleted={async () => {
-          const obKey = `kc_onboarding_done_${user?.email || "user"}`;
-          const tourKey = `kc_tour_done_${user?.email || "user"}`;
-          if (typeof window !== "undefined") {
-            window.localStorage.setItem(obKey, "done");
-          }
-          setOnboardingOpen(false);
-          await refresh();
-          if (typeof window !== "undefined" && !window.localStorage.getItem(tourKey)) {
-            setTourOpen(true);
-          }
-        }}
-      />
 
       <GuidedTour
         open={tourOpen}
