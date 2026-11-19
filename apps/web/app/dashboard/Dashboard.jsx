@@ -21,6 +21,7 @@ import {
 import { authClient } from "../../lib/auth/client";
 import { money, cents, brDay, isoDate } from "../../lib/finance";
 import { computeRange, lastDayOfMonth, firstDayOfMonth, moveMonth, inRange } from "../../lib/period";
+import { computeMonthlyIncomeCeilingCents } from "../../lib/budgets";
 import { maskToDecimal, centsToMask } from "../../lib/money-input";
 import { expandRecurring } from "../../lib/recurring";
 import { buildFinancialHealthPlan } from "../../lib/financial-health";
@@ -75,7 +76,6 @@ const defaultForm = (kind = "expense") => ({
   amount: "",
   direction: kind,
   category: "",
-  subcategory: "",
   occurredOn: TODAY,
   dueOn: TODAY,
   settlementState: kind === "expense" ? "paid" : "pending",
@@ -89,6 +89,10 @@ const defaultForm = (kind = "expense") => ({
   startIndex: "1",
   valueMode: "total",
   walletId: "",
+  walletKind: "checking",
+  fromWalletId: "",
+  toWalletId: "",
+  transferredOn: TODAY,
   name: "",
   balance: "0,00",
   label: "",
@@ -216,6 +220,21 @@ export default function Dashboard({ user }) {
   const monthOnly = monthDate.toLocaleDateString("pt-BR", { month: "long", timeZone: "UTC" });
   const monthNavLabel = selectedMonth.slice(0, 4) === TODAY.slice(0, 4) ? monthOnly : `${monthOnly.slice(0, 3)}/${selectedMonth.slice(0, 4)}`;
 
+  const monthlyIncomeCents = useMemo(
+    () =>
+      computeMonthlyIncomeCeilingCents({
+        month: selectedMonth,
+        titles: data?.titles || [],
+        recurringRules: data?.recurringRules || [],
+        cancelledRecurring: data?.cancelledRecurring || [],
+      }),
+    [selectedMonth, data]
+  );
+  const budgetItems = summary.budgetSummary || [];
+  const allocatedBudgetCents = budgetItems.reduce((sum, b) => sum + (b.limitCents !== null ? Math.max(0, cents(b.limitCents)) : 0), 0);
+  const remainingAllocableCents = Math.max(0, monthlyIncomeCents - allocatedBudgetCents);
+  const capitalBudget = budgetItems.find((b) => /capital|reserva/i.test(b.categoryName));
+
   // Endividamento: indicador canônico de dívida contratada em valor monetário (ou "A calcular" se dados insuficientes)
   const debtCents = healthPlan?.diagnosis?.indicators?.outstandingDebtCents;
   const hasDebtBasis = Boolean(healthPlan && (summary.knownCash || (data?.liabilities?.length || 0) > 0));
@@ -258,6 +277,37 @@ export default function Dashboard({ user }) {
     setDrawer("budget");
   }
 
+  function openCapitalTransfer() {
+    const checking = wallets.find((w) => !w.is_reserved && w.wallet_kind !== "reserve" && w.wallet_kind !== "investment") || wallets[0];
+    const capital = wallets.find((w) => w.is_reserved || w.wallet_kind === "reserve" || w.wallet_kind === "investment") || wallets[1] || wallets[0];
+    const suggested = capitalBudget?.limitCents > 0 ? centsToMask(capitalBudget.limitCents) : "";
+    setForm({
+      ...defaultForm("expense"),
+      fromWalletId: checking?.id || "",
+      toWalletId: capital?.id || "",
+      amount: suggested,
+      transferredOn: TODAY,
+    });
+    setSelectedTitle(null);
+    setError("");
+    setDrawer("transfer_capital");
+  }
+
+  async function suggestBudgets() {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      await request("POST", { action: "suggest_budgets", month: selectedMonth });
+      await refresh();
+      setNotice("Orçamentos 50-30-20 e Carteira de Capital gerados a partir da sua renda do mês.");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function editTitle(id, duplicate = false) {
     const t = titles.find((x) => x.id === id);
     if (!t) return;
@@ -267,7 +317,6 @@ export default function Dashboard({ user }) {
       amount: centsToMask(cents(t.amount_cents)),
       direction: t.direction,
       category: t.category,
-      subcategory: t.subcategory || "",
       walletId: t.wallet_id,
       dueOn: isoDate(t.due_on),
       mode: "single",
@@ -385,10 +434,22 @@ export default function Dashboard({ user }) {
           idempotency: crypto.randomUUID(),
         });
       } else if (drawer === "wallet") {
+        const walletKind = form.walletKind || "checking";
         await request("POST", {
           action: "wallet",
           name: form.name,
           balance: maskToDecimal(form.balance, { allowNegative: true }),
+          walletKind,
+          liquidityKind: walletKind === "investment" ? "d_plus" : "immediate",
+          isReserved: walletKind === "reserve" || walletKind === "investment",
+        });
+      } else if (drawer === "transfer_capital") {
+        await request("POST", {
+          action: "transfer_capital",
+          fromWalletId: form.fromWalletId,
+          toWalletId: form.toWalletId,
+          amount: maskToDecimal(form.amount),
+          transferredOn: form.transferredOn || TODAY,
         });
       } else if (drawer === "budget") {
         await request("POST", {
@@ -415,7 +476,6 @@ export default function Dashboard({ user }) {
           action: "spending_plan",
           description: form.description,
           category: form.category,
-          subcategory: form.subcategory || null,
           amount: maskToDecimal(form.amount),
           plannedMonth: form.plannedMonth || TODAY.slice(0, 7),
           plannedFor: form.plannedFor || null,
@@ -435,7 +495,6 @@ export default function Dashboard({ user }) {
           direction: form.direction,
           description: form.description,
           category: form.category,
-          subcategory: form.subcategory || null,
           amount: maskToDecimal(form.amount),
           occurredOn: form.occurredOn || form.dueOn,
           dueOn: effectiveState === "paid" ? form.settledOn || TODAY : form.dueOn,
@@ -573,7 +632,6 @@ export default function Dashboard({ user }) {
     );
   }
 
-  const budgetItems = summary.budgetSummary || [];
   const expenseCategories = (data?.categories || []).filter((c) => c.direction === "expense" && c.parent_id === null);
 
   if (loading) {
@@ -995,6 +1053,56 @@ export default function Dashboard({ user }) {
             </div>
 
             <section className="card panel">
+              <div className="card-heading" style={{ marginBottom: 14 }}>
+                <div>
+                  <div className="eyebrow">TETO PELA RENDA · 50-30-20</div>
+                  <h2 className="card-title">Distribuição dos orçamentos</h2>
+                </div>
+                <div className="toolbar-buttons">
+                  {monthlyIncomeCents > 0 ? (
+                    <>
+                      <button type="button" className="mini-pill" disabled={busy} onClick={suggestBudgets}>
+                        Gerar 50-30-20
+                      </button>
+                      {wallets.length >= 2 && (
+                        <button type="button" className="mini-pill" onClick={openCapitalTransfer}>
+                          Efetivar aporte Capital
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className="pill pill-primary"
+                      onClick={() => open("income", null, "bill")}
+                    >
+                      <Plus size={15} /> Cadastrar a receber
+                    </button>
+                  )}
+                </div>
+              </div>
+              {monthlyIncomeCents <= 0 ? (
+                <div className="alert">
+                  <AlertTriangle size={16} />
+                  <span>
+                    Cadastre seus valores a receber de {monthLong} primeiro para liberar a criação e sugestão automática de orçamentos.
+                  </span>
+                </div>
+              ) : (
+                <div className="allocation-summary" style={{ marginBottom: 0 }}>
+                  <div>
+                    <span>A receber no mês</span>
+                    <strong>{money(monthlyIncomeCents)}</strong>
+                  </div>
+                  <div>
+                    <span>Alocado nos orçamentos · Disponível: {money(remainingAllocableCents)}</span>
+                    <strong>{money(allocatedBudgetCents)}</strong>
+                  </div>
+                </div>
+              )}
+            </section>
+
+            <section className="card panel">
               <div className="card-heading" style={{ marginBottom: 16 }}>
                 <div>
                   <div className="eyebrow">ORÇAMENTOS DO MÊS</div>
@@ -1131,24 +1239,39 @@ export default function Dashboard({ user }) {
             <section className="card panel">
               <div className="card-heading" style={{ marginBottom: 14 }}>
                 <h2 className="card-title">Contas bancárias e carteiras</h2>
-                <button type="button" className="mini-pill" onClick={() => open("wallet")}>
-                  <Plus size={14} /> Nova conta
-                </button>
+                <div className="toolbar-buttons">
+                  {wallets.length >= 2 && (
+                    <button type="button" className="mini-pill" onClick={openCapitalTransfer}>
+                      Efetivar aporte
+                    </button>
+                  )}
+                  <button type="button" className="mini-pill" onClick={() => open("wallet")}>
+                    <Plus size={14} /> Nova conta
+                  </button>
+                </div>
               </div>
               <div className="wallet-list">
                 {wallets.length ? (
-                  wallets.map((w) => (
-                    <article className="account-panel-row" key={w.id}>
-                      <div className="account-icon">
-                        <Wallet size={20} />
-                      </div>
-                      <div className="account-info">
-                        <h3>{w.name}</h3>
-                        <p>Saldo inicial em {w.opening_at ? fmtDate(w.opening_at) : "data não informada"}</p>
-                      </div>
-                      <strong>{display(walletBalance(w))}</strong>
-                    </article>
-                  ))
+                  wallets.map((w) => {
+                    const isCap = w.is_reserved || w.wallet_kind === "reserve" || w.wallet_kind === "investment";
+                    return (
+                      <article className="account-panel-row" key={w.id}>
+                        <div className="account-icon">
+                          <Wallet size={20} />
+                        </div>
+                        <div className="account-info">
+                          <h3>
+                            {w.name}{" "}
+                            <span className="small-flag" style={{ marginLeft: 6, fontSize: 10 }}>
+                              {isCap ? "Capital / Reserva" : "Uso diário"}
+                            </span>
+                          </h3>
+                          <p>Saldo inicial em {w.opening_at ? fmtDate(w.opening_at) : "data não informada"}</p>
+                        </div>
+                        <strong>{display(walletBalance(w))}</strong>
+                      </article>
+                    );
+                  })
                 ) : (
                   <Empty>Nenhuma conta cadastrada.</Empty>
                 )}
@@ -1376,7 +1499,27 @@ export default function Dashboard({ user }) {
 
             {actionMenu === "budget_pick" && (
               <div className="action-menu">
-                {expenseCategories.length ? (
+                {monthlyIncomeCents <= 0 ? (
+                  <>
+                    <div className="alert">
+                      <AlertTriangle size={16} />
+                      <span>Cadastre seus valores a receber de {monthLong} antes de definir limites de orçamento.</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActionMenu(null);
+                        open("income", null, "bill");
+                      }}
+                    >
+                      <span>
+                        Cadastrar valor a receber
+                        <small>Informe seu salário ou receita prevista do mês</small>
+                      </span>
+                      <span>›</span>
+                    </button>
+                  </>
+                ) : expenseCategories.length ? (
                   expenseCategories.map((cat) => {
                     const existing = budgetItems.find((b) => String(b.categoryId) === String(cat.id));
                     return (
@@ -1398,7 +1541,7 @@ export default function Dashboard({ user }) {
                           <small>
                             {existing?.limitCents !== null && existing?.limitCents !== undefined
                               ? `Limite atual: ${money(existing.limitCents)}`
-                              : "Sem limite configurado"}
+                              : "Não controla limite"}
                           </small>
                         </span>
                         <span>›</span>
@@ -1406,7 +1549,7 @@ export default function Dashboard({ user }) {
                     );
                   })
                 ) : (
-                  <p className="hint">Nenhuma categoria de despesa encontrada. Crie uma ao adicionar um lançamento.</p>
+                  <p className="hint">Nenhum orçamento encontrado. Crie um ao adicionar um lançamento.</p>
                 )}
               </div>
             )}
@@ -1424,6 +1567,8 @@ export default function Dashboard({ user }) {
           settlements={data?.settlements || []}
           wallets={wallets}
           categories={data?.categories || []}
+          budgets={budgetItems}
+          monthlyIncomeCents={monthlyIncomeCents}
           rules={data?.recurringRules || []}
           spendingPlans={data?.spendingPlans || []}
           spendingPlanApplications={data?.spendingPlanApplications || []}

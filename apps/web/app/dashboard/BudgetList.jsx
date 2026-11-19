@@ -79,7 +79,7 @@ export default function BudgetList({
                     </span>
                   )
                 ) : (
-                  <span className="budget-remaining">Sem limite definido</span>
+                  <span className="budget-remaining">Não controla limite</span>
                 )}
                 {onEditBudget && (
                   <button
@@ -160,16 +160,6 @@ export default function BudgetList({
                         </li>
                       ))}
                     </ul>
-                  </div>
-                )}
-
-                {item.subcategories?.length > 0 && (
-                  <div className="budget-subs">
-                    {item.subcategories.map(sub => (
-                      <span className="movement-tag secondary" key={sub.name}>
-                        {sub.name}: {money(sub.usedCents)}
-                      </span>
-                    ))}
                   </div>
                 )}
 

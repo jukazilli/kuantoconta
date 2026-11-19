@@ -1,7 +1,7 @@
 import {sql} from "../../../lib/db";
 import {brDay,validSettlementDay} from "../../../lib/finance";
 import {DEFAULT_CATEGORIES,allowedRoot,canonicalCategoryKey,normalizeCategoryName} from "../../../lib/taxonomy";
-import {isValidMonth} from "../../../lib/budgets";
+import {isValidMonth,computeMonthlyIncomeCeilingCents,validateBudgetAllocationCeiling,suggestBudgetsFromIncome} from "../../../lib/budgets";
 import {decodeOccurrenceId,occurrenceForMonth} from "../../../lib/recurring";
 import {validScope} from "../../../lib/cancel-scope";
 import {getIdentity,legalAccepted,sameOrigin,PRIVATE_HEADERS} from "../../../lib/authorization";
@@ -44,6 +44,17 @@ async function seedDefaultCategories(userId){
   SELECT ${userId},r.name,r.direction,r.canonical_key
   FROM jsonb_to_recordset(${JSON.stringify(defaults)}::jsonb) AS r(name text,direction text,canonical_key text)
   ON CONFLICT DO NOTHING`;
+}
+async function loadBudgetCeilingInputs(userId){
+ const [categories,budgetRules,budgetPeriods,titles,recurringRules,cancelledRecurring]=await Promise.all([
+  sql`SELECT id,name,direction,parent_id,canonical_key,active,is_essential FROM public.kc_categories WHERE user_id=${userId} ORDER BY name LIMIT 300`,
+  sql`SELECT id,category_id,limit_cents::text,starts_month,ends_month,active,created_at FROM public.kc_budget_rules WHERE user_id=${userId} ORDER BY created_at LIMIT 300`,
+  sql`SELECT id,category_id,month,limit_cents::text,source_rule_id,version,updated_at FROM public.kc_budget_periods WHERE user_id=${userId} ORDER BY month DESC LIMIT 1200`,
+  sql`SELECT id,wallet_id,description,direction,category,category_id,amount_cents::text,settled_cents::text,due_on::text,entry_kind,cancelled_at FROM public.kc_titles WHERE user_id=${userId} AND cancelled_at IS NULL LIMIT 4000`,
+  sql`SELECT id,wallet_id,direction,description,category,category_id,amount_cents::text,starts_on::text,ends_on::text,paused_at::text,entry_kind FROM public.kc_recurring_rules WHERE user_id=${userId} LIMIT 300`,
+  sql`SELECT series_id,installment_index FROM public.kc_titles WHERE user_id=${userId} AND cancelled_at IS NOT NULL AND series_id IS NOT NULL LIMIT 4000`
+ ]);
+ return {categories,budgetRules,budgetPeriods,titles,recurringRules,cancelledRecurring};
 }
 export async function GET(){
  const owner=await authenticate();if(!owner.id)return error(owner.error,owner.status);
@@ -92,12 +103,18 @@ export async function POST(request){
    const existingCats=await sql`SELECT id,name,parent_id FROM public.kc_categories WHERE user_id=${owner.id} AND direction=${direction} LIMIT 300`;
    if(!x.parentName){
      if(allowedRoot(direction,name)||existingCats.some(c=>!c.parent_id&&normalizeCategoryName(c.name)===normalized))return error("Categoria já cadastrada.",409);
+     const hasLimit=direction==="expense"&&x.limit!==undefined&&x.limit!==null&&x.limit!=="";
+     const limitCents=hasLimit?amount(x.limit,true,false):0;
+     const targetMonth=isValidMonth(x.month)?x.month:brDay().slice(0,7);
+     if(hasLimit&&limitCents>0){
+      const inputs=await loadBudgetCeilingInputs(owner.id);
+      const check=validateBudgetAllocationCeiling({month:targetMonth,targetCategoryId:null,newLimitCents:limitCents,active:true,...inputs});
+      if(!check.ok)return error(check.error,400);
+     }
      const key=canonicalCategoryKey(direction,name);
      const inserted=await sql`INSERT INTO public.kc_categories(user_id,name,direction,canonical_key) VALUES(${owner.id},${name},${direction},${key}) RETURNING id`;
      const catId=inserted[0]?.id;
-     if(catId&&direction==="expense"&&x.limit!==undefined&&x.limit!==null&&x.limit!==""){
-      const limitCents=amount(x.limit,true,false);
-      const targetMonth=isValidMonth(x.month)?x.month:brDay().slice(0,7);
+     if(catId&&hasLimit){
       await sql`SELECT public.kc_upsert_budget_rule(${owner.id},${catId}::uuid,${limitCents},${targetMonth},true,NULL)`;
      }
      return send({saved:true,id:catId},201);
@@ -117,13 +134,59 @@ export async function POST(request){
    return send({saved:true,id:insertedSub[0]?.id},201);
   }
   if(x.action==="budget"){
-   if(!uuid(x.categoryId))return error("Categoria inválida.");
+   if(!uuid(x.categoryId))return error("Orçamento inválido.");
    const targetMonth=isValidMonth(x.month)?x.month:brDay().slice(0,7);
    const active=x.active!==false;
    const limitCents=active?amount(x.limit,true,false):0;
+   const inputs=await loadBudgetCeilingInputs(owner.id);
+   const check=validateBudgetAllocationCeiling({month:targetMonth,targetCategoryId:x.categoryId,newLimitCents:limitCents,active,...inputs});
+   if(!check.ok)return error(check.error,400);
    const expectedVersion=Number.isInteger(x.expectedVersion)?x.expectedVersion:null;
    const rows=await sql`SELECT public.kc_upsert_budget_rule(${owner.id},${x.categoryId}::uuid,${limitCents},${targetMonth},${active},${expectedVersion}) AS info`;
    return send({saved:true,...rows[0]?.info},201);
+  }
+  if(x.action==="suggest_budgets"){
+   const targetMonth=isValidMonth(x.month)?x.month:brDay().slice(0,7);
+   const inputs=await loadBudgetCeilingInputs(owner.id);
+   const incomeCents=computeMonthlyIncomeCeilingCents({month:targetMonth,...inputs});
+   if(incomeCents<=0)return error("Cadastre seus valores a receber deste mês antes de gerar os orçamentos.",400);
+   const suggestions=suggestBudgetsFromIncome({incomeCents});
+   const existingCats=await sql`SELECT id,name,canonical_key FROM public.kc_categories WHERE user_id=${owner.id} AND direction='expense' AND parent_id IS NULL LIMIT 300`;
+   const catByNorm=new Map(existingCats.map(c=>[normalizeCategoryName(c.name),c.id]));
+   for(const s of suggestions){
+    let catId=catByNorm.get(normalizeCategoryName(s.categoryName));
+    if(!catId){
+     const key=canonicalCategoryKey("expense",s.categoryName);
+     const ins=await sql`INSERT INTO public.kc_categories(user_id,name,direction,canonical_key) VALUES(${owner.id},${s.categoryName},'expense',${key}) ON CONFLICT DO NOTHING RETURNING id`;
+     catId=ins[0]?.id;
+     if(!catId){
+      const found=await sql`SELECT id FROM public.kc_categories WHERE user_id=${owner.id} AND direction='expense' AND parent_id IS NULL AND canonical_key=${key} LIMIT 1`;
+      catId=found[0]?.id;
+     }
+     if(catId)catByNorm.set(normalizeCategoryName(s.categoryName),catId);
+    }
+    if(catId){
+     await sql`SELECT public.kc_upsert_budget_rule(${owner.id},${catId}::uuid,${s.controlsLimit?s.limitCents:0},${targetMonth},${s.controlsLimit},NULL)`;
+    }
+   }
+   const existingCapital=await sql`SELECT id FROM public.kc_wallets WHERE user_id=${owner.id} AND (is_reserved=true OR wallet_kind IN ('reserve','investment')) LIMIT 1`;
+   if(!existingCapital.length){
+    await sql`INSERT INTO public.kc_wallets(user_id,name,opening_balance_cents,opening_at,wallet_kind,liquidity_kind,is_reserved) VALUES(${owner.id},'Carteira de Capital',0,now(),'investment','d_plus',true)`;
+   }
+   return send({saved:true,incomeCents},201);
+  }
+  if(x.action==="transfer_capital"){
+   if(!uuid(x.fromWalletId)||!uuid(x.toWalletId)||x.fromWalletId===x.toWalletId)return error("Selecione contas de origem e destino diferentes.");
+   const transferCents=amount(x.amount,false,false);
+   const transferDay=day(x.transferredOn)?x.transferredOn:brDay();
+   if(transferDay>brDay())return error("A data da transferência não pode ser futura.");
+   const wallets=await sql`SELECT id,name FROM public.kc_wallets WHERE user_id=${owner.id} AND id IN (${x.fromWalletId}::uuid,${x.toWalletId}::uuid)`;
+   if(wallets.length!==2)return error("Contas não encontradas.",404);
+   const desc=textValue(x.description,120)||"Aporte para Carteira de Capital";
+   const outTitle=await sql`INSERT INTO public.kc_titles(user_id,wallet_id,description,direction,category,amount_cents,settled_cents,due_on,recurrence,entry_kind) VALUES(${owner.id},${x.fromWalletId}::uuid,${desc},'expense','Reserva e Capital',${transferCents},${transferCents},${transferDay},'once','reserve_transfer') RETURNING id`;
+   const inTitle=await sql`INSERT INTO public.kc_titles(user_id,wallet_id,description,direction,category,amount_cents,settled_cents,due_on,recurrence,entry_kind) VALUES(${owner.id},${x.toWalletId}::uuid,${desc},'income','Reserva e Capital',${transferCents},${transferCents},${transferDay},'once','reserve_transfer') RETURNING id`;
+   await sql`INSERT INTO public.kc_settlements(user_id,title_id,wallet_id,amount_cents,settled_on) VALUES(${owner.id},${outTitle[0].id}::uuid,${x.fromWalletId}::uuid,${transferCents},${transferDay}),(${owner.id},${inTitle[0].id}::uuid,${x.toWalletId}::uuid,${transferCents},${transferDay})`;
+   return send({saved:true},201);
   }
   if(x.action==="materialize"){
    const occ=decodeOccurrenceId(x.occurrenceId);

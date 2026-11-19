@@ -27,7 +27,7 @@ export default function MovementList({items,compact=false,today,walletName,onDet
      <button type="button" className="movement-main" onClick={()=>{setOpened(null);onDetails(t.id);}} aria-label={"Ver detalhes de "+t.description}>
       <span className="movement-wallet">{walletName(t.wallet_id)}</span>
       <strong>{t.description}</strong>
-      <span className="movement-taxonomy"><span className="movement-tag">{t.category}</span>{t.subcategory&&<span className="movement-tag secondary">{t.subcategory}</span>}{t.installment_total>1&&<span className="movement-installment">{t.installment_index}/{t.installment_total}</span>}</span>
+      <span className="movement-taxonomy"><span className="movement-tag">{t.category}</span>{t.installment_total>1&&<span className="movement-installment">{t.installment_index}/{t.installment_total}</span>}</span>
      </button>
      <div className="movement-right"><span className="movement-due">{formatDate(t.due_on)}</span><strong className={t.direction==="income"?"movement-income":""}>{money(cents(t.amount_cents))}</strong><State title={t} today={today}/></div>
      <div className="movement-menu-anchor">
