@@ -17,11 +17,12 @@ import {
   X,
   Info,
   HeartPulse,
+  Check,
 } from "lucide-react";
 import { authClient } from "../../lib/auth/client";
 import { money, cents, brDay, isoDate } from "../../lib/finance";
 import { computeRange, lastDayOfMonth, firstDayOfMonth, moveMonth, inRange } from "../../lib/period";
-import { computeMonthlyIncomeCeilingCents } from "../../lib/budgets";
+import { computeMonthlyIncomeCeilingCents, computeProjectedBalanceWithBudgetsCents } from "../../lib/budgets";
 import { maskToDecimal, centsToMask } from "../../lib/money-input";
 import { expandRecurring } from "../../lib/recurring";
 import { buildFinancialHealthPlan } from "../../lib/financial-health";
@@ -234,6 +235,15 @@ export default function Dashboard({ user }) {
   const allocatedBudgetCents = budgetItems.reduce((sum, b) => sum + (b.limitCents !== null ? Math.max(0, cents(b.limitCents)) : 0), 0);
   const remainingAllocableCents = Math.max(0, monthlyIncomeCents - allocatedBudgetCents);
   const capitalBudget = budgetItems.find((b) => /capital|reserva/i.test(b.categoryName));
+  const projectedBalanceCents = useMemo(
+    () =>
+      computeProjectedBalanceWithBudgetsCents({
+        receivableCents: summary.receivable.total,
+        rows,
+        budgetSummary: budgetItems,
+      }),
+    [summary.receivable.total, rows, budgetItems]
+  );
 
   // Endividamento: indicador canônico de dívida contratada em valor monetário (ou "A calcular" se dados insuficientes)
   const debtCents = healthPlan?.diagnosis?.indicators?.outstandingDebtCents;
@@ -691,82 +701,16 @@ export default function Dashboard({ user }) {
                 <ChevronRight size={19} strokeWidth={2.5} aria-hidden="true" />
               </button>
             </div>
-            <div className="filter-wrap" ref={filterRef}>
+            <div className="filter-wrap">
               <button
                 type="button"
                 className="filter-btn"
                 aria-label="Abrir filtros de período e exibição"
                 aria-expanded={filterOpen}
-                onClick={() => setFilterOpen((v) => !v)}
+                onClick={() => setFilterOpen(true)}
               >
                 <SlidersHorizontal size={19} aria-hidden="true" />
               </button>
-              {filterOpen && (
-                <div className="popover open" role="dialog" aria-label="Filtros do período">
-                  <h3>Filtrar período e visão</h3>
-                  <div className="popover-dates">
-                    <label>
-                      <span>Início</span>
-                      <input
-                        aria-label="Início do período"
-                        type="date"
-                        value={rangeStart}
-                        max={date}
-                        onChange={(e) => {
-                          const v = e.target.value || TODAY;
-                          setRangeStart(v);
-                          if (v > date) setDate(v);
-                        }}
-                      />
-                    </label>
-                    <label>
-                      <span>Fim</span>
-                      <input
-                        aria-label="Fim do período"
-                        type="date"
-                        min={rangeStart}
-                        max="2099-12-31"
-                        value={date}
-                        onChange={(e) => setDate(e.target.value >= rangeStart ? e.target.value : rangeStart)}
-                      />
-                    </label>
-                  </div>
-                  <div className="popover-shortcuts">
-                    <button
-                      type="button"
-                      className="tiny-btn"
-                      onClick={() => {
-                        setRangeStart(TODAY);
-                        setDate(lastDayOfMonth(TODAY));
-                      }}
-                    >
-                      Mês atual
-                    </button>
-                    <button
-                      type="button"
-                      className="tiny-btn"
-                      onClick={() => {
-                        setRangeStart(TODAY);
-                        setDate(END);
-                      }}
-                    >
-                      Até 31/12
-                    </button>
-                  </div>
-                  <label className="popover-check">
-                    <input type="checkbox" checked={showPlanned} onChange={(e) => setShowPlanned(e.target.checked)} />
-                    Incluir previstos
-                  </label>
-                  <label className="popover-check">
-                    <input type="checkbox" checked={showRealized} onChange={(e) => setShowRealized(e.target.checked)} />
-                    Mostrar realizados
-                  </label>
-                  <label className="popover-check">
-                    <input type="checkbox" checked={showCategories} onChange={(e) => setShowCategories(e.target.checked)} />
-                    Exibir categorias
-                  </label>
-                </div>
-              )}
             </div>
           </div>
         </section>
@@ -792,62 +736,71 @@ export default function Dashboard({ user }) {
       <main className="dashboard" aria-label="Conteúdo principal">
         {active === "overview" && (
           <>
-            <section className="top-grid" aria-label="Resumo e compromissos">
-              <div className="left-stack">
-                <div className="summary-grid">
-                  <button
-                    type="button"
-                    className="card metric-card clickable"
-                    onClick={() => {
-                      setFilter("expense");
-                      setTab("movements");
-                    }}
-                  >
-                    <span className="metric-icon">
-                      <ArrowDown size={24} aria-hidden="true" />
-                    </span>
-                    <span className="metric-text">
-                      <span className="metric-label">A pagar</span>
-                      <strong className="metric-value">{display(summary.payable.total)}</strong>
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    className="card metric-card clickable"
-                    onClick={() => {
-                      setFilter("income");
-                      setTab("movements");
-                    }}
-                  >
-                    <span className="metric-icon">
-                      <ArrowUp size={24} aria-hidden="true" />
-                    </span>
-                    <span className="metric-text">
-                      <span className="metric-label">A receber</span>
-                      <strong className="metric-value">{display(summary.receivable.total)}</strong>
-                    </span>
-                  </button>
-                  <button type="button" className="card metric-card clickable" onClick={() => setTab("patrimony")}>
-                    <span className="metric-icon">
-                      <Coins size={24} aria-hidden="true" />
-                    </span>
-                    <span className="metric-text">
-                      <span className="metric-label">Endividamento</span>
-                      <strong className="metric-value">{debtDisplay}</strong>
-                    </span>
+            <section className="summary-grid" aria-label="Indicadores principais">
+              <button
+                type="button"
+                className="card metric-card clickable"
+                onClick={() => {
+                  setFilter("expense");
+                  setTab("movements");
+                }}
+              >
+                <span className="metric-icon">
+                  <ArrowDown size={24} aria-hidden="true" />
+                </span>
+                <span className="metric-text">
+                  <span className="metric-label">A pagar</span>
+                  <strong className="metric-value">{display(summary.payable.total)}</strong>
+                </span>
+              </button>
+              <button
+                type="button"
+                className="card metric-card clickable"
+                onClick={() => {
+                  setFilter("income");
+                  setTab("movements");
+                }}
+              >
+                <span className="metric-icon">
+                  <ArrowUp size={24} aria-hidden="true" />
+                </span>
+                <span className="metric-text">
+                  <span className="metric-label">A receber</span>
+                  <strong className="metric-value">{display(summary.receivable.total)}</strong>
+                </span>
+              </button>
+              <button type="button" className="card metric-card clickable" onClick={() => setTab("planning")}>
+                <span className="metric-icon">
+                  <TrendingUp size={24} aria-hidden="true" />
+                </span>
+                <span className="metric-text">
+                  <span className="metric-label">Saldo previsto</span>
+                  <strong className={`metric-value ${projectedBalanceCents < 0 ? "red" : ""}`}>
+                    {display(projectedBalanceCents)}
+                  </strong>
+                </span>
+              </button>
+              <button type="button" className="card metric-card clickable" onClick={() => setTab("patrimony")}>
+                <span className="metric-icon">
+                  <Coins size={24} aria-hidden="true" />
+                </span>
+                <span className="metric-text">
+                  <span className="metric-label">Endividamento</span>
+                  <strong className="metric-value">{debtDisplay}</strong>
+                </span>
+              </button>
+            </section>
+
+            <section className="mid-grid" aria-label="Compromissos e limites">
+              <article className="card commitments">
+                <div className="card-heading">
+                  <h2 className="card-title">Próximos compromissos</h2>
+                  <button type="button" className="mini-pill" onClick={() => setTab("movements")}>
+                    Carteira <ChevronRight size={15} aria-hidden="true" />
                   </button>
                 </div>
-
-                <article className="card commitments">
-                  <div className="card-heading">
-                    <h2 className="card-title">Próximos compromissos</h2>
-                    <button type="button" className="mini-pill" onClick={() => setTab("movements")}>
-                      Carteira <ChevronRight size={15} aria-hidden="true" />
-                    </button>
-                  </div>
-                  <div className="commitments-body">{titlesTable(true)}</div>
-                </article>
-              </div>
+                <div className="commitments-body">{titlesTable(true)}</div>
+              </article>
 
               <article className="card limits">
                 <div className="limits-heading">
@@ -1553,6 +1506,95 @@ export default function Dashboard({ user }) {
                 )}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {filterOpen && (
+        <div
+          className="action-overlay open"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setFilterOpen(false);
+          }}
+        >
+          <div className="dialog filter-dialog" role="dialog" aria-modal="true" aria-labelledby="filterDialogTitle">
+            <div className="dialog-head">
+              <h2 id="filterDialogTitle">Filtrar período e visão</h2>
+              <button type="button" className="dialog-close" onClick={() => setFilterOpen(false)} aria-label="Fechar">
+                <X size={17} />
+              </button>
+            </div>
+            <div className="filter-dialog-body">
+              <div className="popover-dates">
+                <label>
+                  <span>Início</span>
+                  <input
+                    aria-label="Início do período"
+                    type="date"
+                    value={rangeStart}
+                    max={date}
+                    onChange={(e) => {
+                      const v = e.target.value || TODAY;
+                      setRangeStart(v);
+                      if (v > date) setDate(v);
+                    }}
+                  />
+                </label>
+                <label>
+                  <span>Fim</span>
+                  <input
+                    aria-label="Fim do período"
+                    type="date"
+                    min={rangeStart}
+                    max="2099-12-31"
+                    value={date}
+                    onChange={(e) => setDate(e.target.value >= rangeStart ? e.target.value : rangeStart)}
+                  />
+                </label>
+              </div>
+              <div className="popover-shortcuts">
+                <button
+                  type="button"
+                  className="tiny-btn"
+                  onClick={() => {
+                    setRangeStart(TODAY);
+                    setDate(lastDayOfMonth(TODAY));
+                  }}
+                >
+                  Mês atual
+                </button>
+                <button
+                  type="button"
+                  className="tiny-btn"
+                  onClick={() => {
+                    setRangeStart(TODAY);
+                    setDate(END);
+                  }}
+                >
+                  Até 31/12
+                </button>
+              </div>
+              <div className="filter-checks-group">
+                <label className="kc-check">
+                  <input type="checkbox" checked={showPlanned} onChange={(e) => setShowPlanned(e.target.checked)} />
+                  <span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3} /></span>
+                  <span>Incluir previstos</span>
+                </label>
+                <label className="kc-check">
+                  <input type="checkbox" checked={showRealized} onChange={(e) => setShowRealized(e.target.checked)} />
+                  <span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3} /></span>
+                  <span>Mostrar realizados</span>
+                </label>
+                <label className="kc-check">
+                  <input type="checkbox" checked={showCategories} onChange={(e) => setShowCategories(e.target.checked)} />
+                  <span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3} /></span>
+                  <span>Exibir despesas por categoria</span>
+                </label>
+              </div>
+              <button type="button" className="dark-button" onClick={() => setFilterOpen(false)}>
+                Aplicar filtros
+              </button>
+            </div>
           </div>
         </div>
       )}

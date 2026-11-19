@@ -5,6 +5,7 @@ import {
   validateBudgetAllocationCeiling,
   suggestBudgetsFromIncome,
   computeBudgetSummary,
+  computeProjectedBalanceWithBudgetsCents,
 } from "./budgets.js";
 
 test("blocks active budget limit when monthly income is zero", () => {
@@ -107,4 +108,45 @@ test("computeBudgetSummary reports negative overrun when expenses exceed budget 
   assert.equal(summary.length, 1);
   assert.equal(summary[0].remainingLimitCents, -1700);
   assert.equal(summary[0].overLimitCents, 1700);
+});
+
+test("computeProjectedBalanceWithBudgetsCents commits budget limits without double-counting expenses inside budget", () => {
+  const budgetSummary = [
+    { categoryId: "cat-trans", categoryName: "Transporte", limitCents: 30000, usedCents: 0 },
+  ];
+  // 1. Before spending: 2400 income - 300 budget - 790 uncapped Moradia = 1310
+  const beforeSpend = computeProjectedBalanceWithBudgetsCents({
+    receivableCents: 240000,
+    rows: [
+      { id: "1", direction: "expense", category: "Moradia", amount_cents: 79000 },
+    ],
+    budgetSummary,
+  });
+  assert.equal(beforeSpend, 131000);
+
+  // 2. Spend R$ 17 inside Transporte: Saldo previsto remains 1310 (no double counting)
+  const afterUber = computeProjectedBalanceWithBudgetsCents({
+    receivableCents: 240000,
+    rows: [
+      { id: "1", direction: "expense", category: "Moradia", amount_cents: 79000 },
+      { id: "2", direction: "expense", category: "Transporte", category_id: "cat-trans", amount_cents: 1700 },
+    ],
+    budgetSummary: [
+      { categoryId: "cat-trans", categoryName: "Transporte", limitCents: 30000, usedCents: 1700 },
+    ],
+  });
+  assert.equal(afterUber, 131000);
+
+  // 3. Overrun Transporte to R$ 350: Saldo previsto reflects the R$ 50 overrun -> 1260
+  const afterOverrun = computeProjectedBalanceWithBudgetsCents({
+    receivableCents: 240000,
+    rows: [
+      { id: "1", direction: "expense", category: "Moradia", amount_cents: 79000 },
+      { id: "2", direction: "expense", category: "Transporte", category_id: "cat-trans", amount_cents: 35000 },
+    ],
+    budgetSummary: [
+      { categoryId: "cat-trans", categoryName: "Transporte", limitCents: 30000, usedCents: 35000 },
+    ],
+  });
+  assert.equal(afterOverrun, 126000);
 });

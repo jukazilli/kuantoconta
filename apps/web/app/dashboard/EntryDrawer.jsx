@@ -1,6 +1,6 @@
 "use client";
 import {useMemo,useState} from "react";
-import {X,Plus,CalendarDays,ReceiptText,CircleDollarSign,Repeat2,CheckCircle2,Clock3,ChevronDown,ChevronRight,Sparkles} from "lucide-react";
+import {X,Plus,CalendarDays,ReceiptText,CircleDollarSign,Repeat2,CheckCircle2,Clock3,ChevronDown,ChevronRight,Sparkles,Check} from "lucide-react";
 import MoneyInput from "./MoneyInput";
 import {cents,money,isoDate,brDay} from "../../lib/finance";
 import {maskToCents,maskToDecimal} from "../../lib/money-input";
@@ -29,7 +29,7 @@ export default function EntryDrawer({
   onAddCategory,
   cancellations=[]
 }){
- const [quick,setQuick]=useState(null),[newName,setNewName]=useState(""),[trackBudget,setTrackBudget]=useState(false),[quickLimit,setQuickLimit]=useState(""),[quickError,setQuickError]=useState(""),[quickBusy,setQuickBusy]=useState(false),[showMore,setShowMore]=useState(false);
+ const [quick,setQuick]=useState(null),[budgetPicker,setBudgetPicker]=useState(false),[newName,setNewName]=useState(""),[trackBudget,setTrackBudget]=useState(false),[quickLimit,setQuickLimit]=useState(""),[quickError,setQuickError]=useState(""),[quickBusy,setQuickBusy]=useState(false),[showMore,setShowMore]=useState(false);
  const field=(name,value)=>setForm(old=>({...old,[name]:value}));
  const edit=drawer==="edit",newTitle=drawer==="title",editPlan=drawer==="edit_plan",titleEntry=newTitle||edit;
  const intent=newTitle?(form.intent||"spent"):"bill";
@@ -38,12 +38,12 @@ export default function EntryDrawer({
  const balanceDue=selectedTitleObj?Math.max(0,cents(selectedTitleObj.amount_cents)-cents(selectedTitleObj.settled_cents)):0;
  const amountValue=()=>{try{return maskToCents(form.amount);}catch{return 0;}};
 
- const formatBudgetOption=name=>{
-  if(form.direction!=="expense")return name;
+ const formatBudgetMeta=name=>{
+  if(form.direction!=="expense")return "";
   const b=budgets.find(x=>x.categoryName===name);
-  if(!b||b.limitCents===null)return `${name} (não controla limite)`;
+  if(!b||b.limitCents===null)return "Não controla limite";
   const rem=b.remainingLimitCents??b.remainingCents??0;
-  return rem<0?`${name} (estourado: ${money(rem)})`:`${name} (restam ${money(rem)})`;
+  return rem<0?`Estourado: ${money(rem)}`:`Restam ${money(rem)}`;
  };
 
  // Discrete reconciliation suggestion when recording a real expense ("Gastei") matching an active spending plan (LC-21)
@@ -152,7 +152,17 @@ export default function EntryDrawer({
       <div className="field-row money-input"><CircleDollarSign/><span>R$</span><MoneyInput ariaLabel="Valor estimado em reais" value={form.amount} onChange={v=>field("amount",v)}/></div>
       <div className="field-row major"><ReceiptText/><input aria-label="O que pretende gastar" placeholder="Ex.: Mercado, Presente" required value={form.description} maxLength={120} onChange={e=>field("description",e.target.value)}/></div>
       <div className="form-group">
-        <div className="controlled-classification"><label>Orçamento<select required value={form.category} onChange={e=>field("category",e.target.value)}><option value="">Selecione</option>{roots.map(c=><option key={c.id} value={c.name}>{formatBudgetOption(c.name)}</option>)}</select></label><button type="button" className="inline-plus" aria-label="Criar orçamento" onClick={()=>{setQuick("category");setNewName("");setQuickError("");}}><Plus size={20}/></button></div>
+        <div className="controlled-classification">
+          <div className="budget-picker-field">
+            <span className="field-caption">Orçamento</span>
+            <input className="sr-only-input" tabIndex={-1} aria-hidden="true" required value={form.category} onChange={()=>{}}/>
+            <button type="button" className="budget-picker-trigger" onClick={()=>setBudgetPicker(true)}>
+              <span>{form.category||"Selecione o orçamento"}</span>
+              <small>{form.category?formatBudgetMeta(form.category):"Escolher da lista ›"}</small>
+            </button>
+          </div>
+          <button type="button" className="inline-plus" aria-label="Criar orçamento" onClick={()=>{setQuick("category");setNewName("");setQuickError("");}}><Plus size={20}/></button>
+        </div>
         <div className="form-grid">
           <label>Mês previsto<input required type="month" value={form.plannedMonth||brDay().slice(0,7)} onChange={e=>setForm(old=>({...old,plannedMonth:e.target.value,plannedFor:""}))}/></label>
           <label>Dia previsto (opcional)<input type="date" value={form.plannedFor||""} onChange={e=>setForm(old=>({...old,plannedFor:e.target.value,plannedMonth:e.target.value?e.target.value.slice(0,7):old.plannedMonth}))}/></label>
@@ -165,7 +175,17 @@ export default function EntryDrawer({
       <div className="field-row money-input"><CircleDollarSign/><span>R$</span><MoneyInput ariaLabel="Valor em reais" value={form.amount} onChange={v=>field("amount",v)}/></div>
       <div className="field-row major"><ReceiptText/><input aria-label="Onde ou com o quê" placeholder="Onde ou com o quê? (ex.: Uber, Padaria)" required value={form.description} maxLength={120} onChange={e=>field("description",e.target.value)}/></div>
       <div className="form-group">
-        <div className="controlled-classification"><label>De qual orçamento sai?<select required value={form.category} onChange={e=>setForm(old=>({...old,category:e.target.value,spendingPlanId:""}))}><option value="">Selecione o orçamento</option>{roots.map(c=><option key={c.id} value={c.name}>{formatBudgetOption(c.name)}</option>)}</select></label><button type="button" className="inline-plus" aria-label="Criar orçamento" onClick={()=>{setQuick("category");setNewName("");setQuickError("");}}><Plus size={20}/></button></div>
+        <div className="controlled-classification">
+          <div className="budget-picker-field">
+            <span className="field-caption">De qual orçamento sai?</span>
+            <input className="sr-only-input" tabIndex={-1} aria-hidden="true" required value={form.category} onChange={()=>{}}/>
+            <button type="button" className="budget-picker-trigger" onClick={()=>setBudgetPicker(true)}>
+              <span>{form.category||"Selecione o orçamento"}</span>
+              <small>{form.category?formatBudgetMeta(form.category):"Escolher da lista ›"}</small>
+            </button>
+          </div>
+          <button type="button" className="inline-plus" aria-label="Criar orçamento" onClick={()=>{setQuick("category");setNewName("");setQuickError("");}}><Plus size={20}/></button>
+        </div>
         <div className="form-grid" role="group" aria-label="Como vai pagar">
           <label className="tick"><input type="radio" name="settlementState" checked={form.settlementState==="paid"} onChange={()=>field("settlementState","paid")}/> Já paguei</label>
           <label className="tick"><input type="radio" name="settlementState" checked={form.settlementState!=="paid"} onChange={()=>field("settlementState","pending")}/> Vou pagar depois</label>
@@ -226,11 +246,25 @@ export default function EntryDrawer({
         <div className="field-row"><CalendarDays/><label><small>Data de vencimento</small><input required type="date" value={form.dueOn} onChange={e=>field("dueOn",e.target.value)}/></label></div>
       }
       <div className="form-group">
-        <div className="controlled-classification"><label>{form.direction==="income"?"Origem da receita":"De qual orçamento sai?"}<select required value={form.category} onChange={e=>field("category",e.target.value)}><option value="">Selecione</option>{roots.map(c=><option key={c.id} value={c.name}>{formatBudgetOption(c.name)}</option>)}</select></label><button type="button" className="inline-plus" aria-label={form.direction==="income"?"Criar origem":"Criar orçamento"} onClick={()=>{setQuick("category");setNewName("");setQuickError("");}}><Plus size={20}/></button></div>
+        {form.direction==="income"?(
+          <div className="controlled-classification"><label>Origem da receita<select required value={form.category} onChange={e=>field("category",e.target.value)}><option value="">Selecione</option>{roots.map(c=><option key={c.id} value={c.name}>{c.name}</option>)}</select></label><button type="button" className="inline-plus" aria-label="Criar origem" onClick={()=>{setQuick("category");setNewName("");setQuickError("");}}><Plus size={20}/></button></div>
+        ):(
+          <div className="controlled-classification">
+            <div className="budget-picker-field">
+              <span className="field-caption">De qual orçamento sai?</span>
+              <input className="sr-only-input" tabIndex={-1} aria-hidden="true" required value={form.category} onChange={()=>{}}/>
+              <button type="button" className="budget-picker-trigger" onClick={()=>setBudgetPicker(true)}>
+                <span>{form.category||"Selecione o orçamento"}</span>
+                <small>{form.category?formatBudgetMeta(form.category):"Escolher da lista ›"}</small>
+              </button>
+            </div>
+            <button type="button" className="inline-plus" aria-label="Criar orçamento" onClick={()=>{setQuick("category");setNewName("");setQuickError("");}}><Plus size={20}/></button>
+          </div>
+        )}
         <label>Conta<select required value={form.walletId} onChange={e=>field("walletId",e.target.value)}><option value="">Selecione uma conta</option>{wallets.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}</select></label>
       </div>
       {!wallets.length&&<p className="hint">Cadastre uma conta antes de registrar receitas ou contas.</p>}
-      {newTitle&&<label className="tick"><input type="checkbox" checked={form.keepOpen} onChange={e=>field("keepOpen",e.target.checked)}/> Salvar e continuar</label>}
+      {newTitle&&<label className="kc-check"><input type="checkbox" checked={form.keepOpen} onChange={e=>field("keepOpen",e.target.checked)}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Salvar e continuar</span></label>}
     </>}
 
     {editPlan&&<>
@@ -252,7 +286,7 @@ export default function EntryDrawer({
         <option value="investment">Carteira de Capital / Investimentos</option>
       </select></label>
       <label>Saldo de abertura (R$)<MoneyInput value={form.balance} allowNegative onChange={v=>field("balance",v)} ariaLabel="Saldo de abertura"/></label>
-      <label className="tick"><input type="checkbox" checked={String(form.balance).startsWith("-")} onChange={e=>field("balance",e.target.checked?"-"+(form.balance||"0,00").replace("-",""):(form.balance||"0,00").replace("-",""))}/> Saldo negativo (devedor)</label>
+      <label className="kc-check"><input type="checkbox" checked={String(form.balance).startsWith("-")} onChange={e=>field("balance",e.target.checked?"-"+(form.balance||"0,00").replace("-",""):(form.balance||"0,00").replace("-",""))}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Saldo negativo (devedor)</span></label>
     </>}
 
     {drawer==="transfer_capital"&&<>
@@ -272,12 +306,33 @@ export default function EntryDrawer({
     {drawer==="settle"&&<><p className="hint">Confirmar o valor pago ou recebido. A parte restante permanece pendente.</p><div className="settle-title">{selectedTitleObj?.description}<small>Saldo em aberto: {money(balanceDue)}</small></div><label>Valor efetivado (R$)<MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Valor efetivado em reais"/></label><label>Data da efetivação<input required type="date" max={brDay()} value={form.settledOn} onChange={e=>field("settledOn",e.target.value)}/></label></>}
     {drawer==="budget"&&<>
       <div className="settle-title">{form.category}<small>Competência: {form.budgetMonth}</small></div>
-      <label className="tick"><input type="checkbox" checked={form.budgetActive!==false} onChange={e=>field("budgetActive",e.target.checked)}/> Controlar limite mensal neste orçamento</label>
+      <label className="kc-check"><input type="checkbox" checked={form.budgetActive!==false} onChange={e=>field("budgetActive",e.target.checked)}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Controlar limite mensal neste orçamento</span></label>
       {form.budgetActive!==false&&<label>Limite mensal (R$)<MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Limite mensal em reais"/></label>}
       {form.budgetActive===false&&<p className="hint">Este orçamento apenas acompanha os gastos, sem trava de limite mensal.</p>}
     </>}
     {(drawer==="asset"||drawer==="liability")&&<><label>Descrição<input required maxLength={120} placeholder={drawer==="asset"?"Ex.: veículo":"Ex.: empréstimo"} value={form.label} onChange={e=>field("label",e.target.value)}/></label><label>Valor atual (R$)<MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Valor atual"/></label><p className="hint">Não inclua novamente o dinheiro já registrado em uma conta.</p></>}
    </form>}
-   {quick&&<div className="nested-overlay"><form className="quick-category" onSubmit={createCategory}><div className="quick-head"><h3>{form.direction==="income"?"Nova origem de receita":"Novo orçamento"}</h3><button type="button" aria-label="Fechar" onClick={()=>{setQuick(null);setTrackBudget(false);setQuickLimit("");}}><X size={20}/></button></div><label>Nome<input required maxLength={80} autoFocus value={newName} onChange={e=>setNewName(e.target.value)} placeholder={form.direction==="income"?"Ex.: Freelance":"Ex.: Transporte"}/></label>{form.direction==="expense"&&<><label className="tick"><input type="checkbox" checked={trackBudget} onChange={e=>setTrackBudget(e.target.checked)}/> Controlar limite mensal</label>{trackBudget&&<label>Limite mensal (R$)<MoneyInput value={quickLimit} onChange={setQuickLimit} ariaLabel="Limite mensal em reais"/></label>}</>}{quickError&&<div className="notice error" role="alert">{quickError}</div>}<button type="submit" className="dark-button" disabled={quickBusy}>{quickBusy?"Salvando...":"Adicionar"}</button></form></div>}
+   {budgetPicker&&<div className="nested-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setBudgetPicker(false);}}>
+     <div className="quick-category budget-picker-dialog" role="dialog" aria-modal="true" aria-label="Selecionar orçamento">
+       <div className="quick-head">
+         <h3>Selecionar orçamento</h3>
+         <button type="button" aria-label="Fechar" onClick={()=>setBudgetPicker(false)}><X size={20}/></button>
+       </div>
+       <div className="action-menu">
+         {roots.map(c=>{
+           const meta=formatBudgetMeta(c.name);
+           const isOver=meta.startsWith("Estourado");
+           return <button type="button" key={c.id} className={form.category===c.name?"selected":""} onClick={()=>{setForm(old=>({...old,category:c.name,spendingPlanId:""}));setBudgetPicker(false);}}>
+             <span>{c.name}<small className={isOver?"red":""}>{meta}</small></span>
+             <span>{form.category===c.name?<Check size={16}/>:"›"}</span>
+           </button>;
+         })}
+       </div>
+       <button type="button" className="light-button" onClick={()=>{setBudgetPicker(false);setQuick("category");setNewName("");setQuickError("");}}>
+         <Plus size={16}/> Novo orçamento
+       </button>
+     </div>
+   </div>}
+   {quick&&<div className="nested-overlay"><form className="quick-category" onSubmit={createCategory}><div className="quick-head"><h3>{form.direction==="income"?"Nova origem de receita":"Novo orçamento"}</h3><button type="button" aria-label="Fechar" onClick={()=>{setQuick(null);setTrackBudget(false);setQuickLimit("");}}><X size={20}/></button></div><label>Nome<input required maxLength={80} autoFocus value={newName} onChange={e=>setNewName(e.target.value)} placeholder={form.direction==="income"?"Ex.: Freelance":"Ex.: Transporte"}/></label>{form.direction==="expense"&&<><label className="kc-check"><input type="checkbox" checked={trackBudget} onChange={e=>setTrackBudget(e.target.checked)}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Controlar limite mensal</span></label>{trackBudget&&<label>Limite mensal (R$)<MoneyInput value={quickLimit} onChange={setQuickLimit} ariaLabel="Limite mensal em reais"/></label>}</>}{quickError&&<div className="notice error" role="alert">{quickError}</div>}<button type="submit" className="dark-button" disabled={quickBusy}>{quickBusy?"Salvando...":"Adicionar"}</button></form></div>}
  </section></div>;
 }
