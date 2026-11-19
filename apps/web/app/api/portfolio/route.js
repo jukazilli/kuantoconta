@@ -362,7 +362,8 @@ export async function POST(request){
    if(!Number.isInteger(installmentCount)||installmentCount<1||installmentCount>120)return error("Quantidade de parcelas inválida.");
    const installmentCents=x.installmentAmount?amount(x.installmentAmount,true):Math.ceil((targetCents-downPaymentCents)/installmentCount);
    const desiredOn=x.desiredOn&&day(x.desiredOn)?x.desiredOn:null;
-   const rows=await sql`INSERT INTO public.kc_financial_goals(user_id,title,target_cents,down_payment_cents,installment_count,installment_cents,desired_on,status) VALUES(${owner.id},${title},${targetCents},${downPaymentCents},${installmentCount},${installmentCents},${desiredOn}::date,'simulated') RETURNING id`;
+   const category=textValue(x.category,60)||null;
+   const rows=await sql`INSERT INTO public.kc_financial_goals(user_id,title,category,target_cents,down_payment_cents,installment_count,installment_cents,desired_on,status) VALUES(${owner.id},${title},${category},${targetCents},${downPaymentCents},${installmentCount},${installmentCents},${desiredOn}::date,'simulated') RETURNING id`;
    return send({saved:true,id:rows[0]?.id},201);
   }
   return error("Ação não reconhecida.");
