@@ -17,7 +17,7 @@ const REASON_LABELS = {
   EXPENSIVE_DEBT: "Existe dívida ativa com taxa mensal elevada.",
   HIGH_DEBT_COMMITMENT: "Comprometimento da renda recorrente acima do limite da política.",
   MARGIN_UNSTABLE: "Margem mensal atual insuficiente ou negativa.",
-  LOW_INITIAL_RESERVE: "Reserva líquida ainda abaixo do colchão inicial.",
+  LOW_INITIAL_RESERVE: "Sua reserva de emergência ainda está abaixo do mínimo recomendado.",
   RESERVE_BUILDING: "Reserva em construção rumo à meta completa.",
   BALANCED_BUILDING: "Compromissos cobertos e capacidade de avanço gradual.",
   SUSTAINED_PROTECTION: "Cobertura, margem e reserva sustentadas no horizonte.",
@@ -34,9 +34,9 @@ function fmtMonth(ym) {
   });
 }
 
-export default function HealthDiagnosisCard({ healthPlan, onOpenPlanning }) {
+export default function HealthDiagnosisCard({ healthPlan }) {
   if (!healthPlan) return null;
-  const { diagnosis, milestones, dataQuality, isProvisionalPolicy } = healthPlan;
+  const { diagnosis, milestones, dataQuality } = healthPlan;
   const meta = STATE_META[diagnosis.state] || STATE_META.unknown;
   const { Icon } = meta;
   const ind = diagnosis.indicators;
@@ -45,27 +45,26 @@ export default function HealthDiagnosisCard({ healthPlan, onOpenPlanning }) {
     .slice(0, 2)
     .map((code) => REASON_LABELS[code] || code);
 
+  const fmtShort = (ym) =>
+    ym
+      ? new Date(ym + "-15T12:00:00Z")
+          .toLocaleDateString("pt-BR", { month: "short", year: "numeric", timeZone: "UTC" })
+          .replace(".", "")
+      : null;
+
   const nextMilestoneText = milestones.firstSavingMonth
-    ? `Pode começar a guardar em ${fmtMonth(milestones.firstSavingMonth)}`
+    ? `Guardar em ${fmtShort(milestones.firstSavingMonth)}`
     : milestones.firstCoveredMonth
-      ? `Contas cobertas a partir de ${fmtMonth(milestones.firstCoveredMonth)}`
-      : "O plano ainda não fecha no horizonte";
+      ? `Contas em dia em ${fmtShort(milestones.firstCoveredMonth)}`
+      : "Ainda não fecha no ano";
 
   return (
     <section className="panel health-card" aria-label="Diagnóstico de saúde financeira">
       <div className="health-card-head">
-        <div className="health-title-group">
-          <span className="eyebrow">SAÚDE FINANCEIRA</span>
-          <div className={`health-badge health-badge--${meta.tone}`}>
-            <Icon size={17} aria-hidden="true" />
-            <strong>{meta.label}</strong>
-          </div>
+        <div className={`health-badge health-badge--${meta.tone}`}>
+          <Icon size={17} aria-hidden="true" />
+          <strong>{meta.label}</strong>
         </div>
-        {onOpenPlanning && (
-          <button type="button" className="pill-button" onClick={onOpenPlanning}>
-            Planejamento <ArrowRight size={15} />
-          </button>
-        )}
       </div>
 
       {mainReasons.length > 0 && (
