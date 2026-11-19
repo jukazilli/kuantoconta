@@ -299,7 +299,8 @@ export function computeMonthlyIncomeCeilingCents({
   );
   return (expanded.titles || []).reduce((sum, t) => {
     if (t.cancelled_at || t.direction !== "income") return sum;
-    if ((t.entry_kind || "standard") === "reserve_transfer") return sum;
+    const kind = t.entry_kind || "standard";
+    if (kind === "reserve_transfer" || kind === "debt_payment" || t.liability_id) return sum;
     if (monthOf(t.due_on) !== month) return sum;
     return sum + Math.max(0, cents(t.amount_cents));
   }, 0);
@@ -428,30 +429,55 @@ export function suggestBudgetsFromIncome({ incomeCents }) {
 }
 
 /**
- * Computes "Saldo previsto" for the selected period/month:
- * - Controlled budgets commit max(usedCents, limitCents) so creating a budget immediately
- *   reduces Saldo previsto, and spending within that budget does not double-count.
- * - Expenses in categories without a controlled limit (e.g. Moradia) reduce Saldo previsto normally.
+ * Computes "Saldo previsto" accumulated with prior/live operational cash:
+ * - Starts from openingOperationalCents (live checking cash, excluding Capital/Reserve wallets).
+ * - Adds remaining pending receivables in the period (excluding loan_principal & reserve_transfer).
+ * - Subtracts remaining controlled budget commitments max(0, max(used, limit) - settledInBudget)
+ *   so already-settled expenses in live checking cash are never double-counted, and spending inside
+ *   a budget does not reduce Saldo previsto twice.
+ * - Subtracts pending uncapped expenses (categories without a controlled limit, e.g. Moradia).
  */
 export function computeProjectedBalanceWithBudgetsCents({
-  receivableCents = 0,
+  openingOperationalCents = 0,
+  receivableCents = null,
   rows = [],
   budgetSummary = []
 }) {
+  // Backwards-compatible fallback when caller passes explicit receivableCents without settlement breakdown
+  const hasSettlementData = rows.some((t) => t.settled_cents !== undefined);
+  const pendingReceivableCents =
+    receivableCents !== null && !hasSettlementData
+      ? cents(receivableCents)
+      : rows.reduce((sum, t) => {
+          if (t.cancelled_at || t.direction !== "income") return sum;
+          const kind = t.entry_kind || "standard";
+          if (kind === "reserve_transfer" || kind === "loan_principal") return sum;
+          return sum + Math.max(0, cents(t.amount_cents) - cents(t.settled_cents));
+        }, 0);
+
   const controlledById = new Map();
   const controlledByNorm = new Map();
-  let controlledCommitmentCents = 0;
+  let controlledRemainingCommitmentCents = 0;
 
   for (const b of budgetSummary) {
     if (b.limitCents === null || b.limitCents === undefined) continue;
     const used = Math.max(0, cents(b.usedCents));
     const limit = Math.max(0, cents(b.limitCents));
-    controlledCommitmentCents += Math.max(used, limit);
+    const settledInBudget = rows.reduce((sum, t) => {
+      if (t.cancelled_at || t.direction !== "expense") return sum;
+      if ((t.entry_kind || "standard") === "reserve_transfer") return sum;
+      const matchesId = b.categoryId && t.category_id && String(t.category_id) === String(b.categoryId);
+      const matchesName = b.categoryName && normalizeCategoryName(t.category || "") === normalizeCategoryName(b.categoryName);
+      if (!matchesId && !matchesName) return sum;
+      return sum + Math.max(0, cents(t.settled_cents));
+    }, 0);
+    const totalNeeded = Math.max(used, limit);
+    controlledRemainingCommitmentCents += Math.max(0, totalNeeded - settledInBudget);
     if (b.categoryId) controlledById.set(String(b.categoryId), true);
     if (b.categoryName) controlledByNorm.set(normalizeCategoryName(b.categoryName), true);
   }
 
-  let uncappedExpenseCents = 0;
+  let uncappedPendingExpenseCents = 0;
   for (const t of rows) {
     if (t.direction !== "expense" || t.cancelled_at) continue;
     if ((t.entry_kind || "standard") === "reserve_transfer") continue;
@@ -459,9 +485,44 @@ export function computeProjectedBalanceWithBudgetsCents({
       (t.category_id && controlledById.has(String(t.category_id))) ||
       controlledByNorm.has(normalizeCategoryName(t.category || ""));
     if (!inControlled) {
-      uncappedExpenseCents += Math.max(0, cents(t.amount_cents));
+      const pending = hasSettlementData
+        ? Math.max(0, cents(t.amount_cents) - cents(t.settled_cents))
+        : Math.max(0, cents(t.amount_cents));
+      uncappedPendingExpenseCents += pending;
     }
   }
 
-  return cents(receivableCents) - (controlledCommitmentCents + uncappedExpenseCents);
+  return cents(openingOperationalCents) + pendingReceivableCents - (controlledRemainingCommitmentCents + uncappedPendingExpenseCents);
+}
+
+/**
+ * Total Endividamento: sum of ALL remaining pending payable installments/titles
+ * across the entire future horizon (2028, 2029, etc.), excluding open-ended recurring bills
+ * without an end date, plus active liabilities not already linked to a title series.
+ */
+export function computeTotalDebtCents({ titles = [], liabilities = [], knownCash = false }) {
+  const pendingTitles = titles.filter(
+    (t) =>
+      !t.cancelled_at &&
+      t.direction === "expense" &&
+      (t.entry_kind || "standard") !== "reserve_transfer" &&
+      !t.virtual // open-ended virtual recurrences are excluded; materialized & finite installments are included
+  );
+  const titleSeriesIds = new Set(
+    pendingTitles.filter((t) => t.series_id).map((t) => String(t.series_id))
+  );
+
+  const pendingPayableCents = pendingTitles.reduce((sum, t) => {
+    const rem = Math.max(0, cents(t.amount_cents) - cents(t.settled_cents));
+    return sum + rem;
+  }, 0);
+
+  const unlinkedLiabilitiesCents = (liabilities || [])
+    .filter((l) => l.status !== "settled" && (!l.series_id || !titleSeriesIds.has(String(l.series_id))))
+    .reduce((sum, l) => sum + Math.max(0, cents(l.principal_cents)), 0);
+
+  if (!knownCash && pendingTitles.length === 0 && (liabilities || []).length === 0) {
+    return null;
+  }
+  return pendingPayableCents + unlinkedLiabilitiesCents;
 }

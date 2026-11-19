@@ -18,11 +18,16 @@ import {
   Info,
   HeartPulse,
   Check,
+  Bell,
+  Compass,
+  Trash2,
 } from "lucide-react";
 import { authClient } from "../../lib/auth/client";
 import { money, cents, brDay, isoDate } from "../../lib/finance";
 import { computeRange, lastDayOfMonth, firstDayOfMonth, moveMonth, inRange } from "../../lib/period";
-import { computeMonthlyIncomeCeilingCents, computeProjectedBalanceWithBudgetsCents } from "../../lib/budgets";
+import { computeMonthlyIncomeCeilingCents, computeProjectedBalanceWithBudgetsCents, computeTotalDebtCents } from "../../lib/budgets";
+import { buildNotifications } from "../../lib/notifications";
+import { simulateGoalPurchase } from "../../lib/goal-planner";
 import { maskToDecimal, centsToMask } from "../../lib/money-input";
 import { expandRecurring } from "../../lib/recurring";
 import { buildFinancialHealthPlan } from "../../lib/financial-health";
@@ -94,6 +99,14 @@ const defaultForm = (kind = "expense") => ({
   fromWalletId: "",
   toWalletId: "",
   transferredOn: TODAY,
+  loanPrincipal: "0,00",
+  loanReceivedOn: TODAY,
+  loanCreditWallet: true,
+  loanCount: "12",
+  goalTarget: "2.500,00",
+  goalDownPayment: "0,00",
+  goalInstallments: "1",
+  goalDesiredOn: TODAY,
   name: "",
   balance: "0,00",
   label: "",
@@ -128,6 +141,9 @@ export default function Dashboard({ user }) {
   const [cancelError, setCancelError] = useState("");
   const [actionMenu, setActionMenu] = useState(null); // "add" | "create" | "budget_pick" | null
   const [filterOpen, setFilterOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [selectedGoal, setSelectedGoal] = useState(null);
+  const [planningView, setPlanningView] = useState("goals"); // "goals" | "budgets"
   const [showPlanned, setShowPlanned] = useState(true);
   const [showRealized, setShowRealized] = useState(true);
   const [showCategories, setShowCategories] = useState(true);
@@ -235,20 +251,50 @@ export default function Dashboard({ user }) {
   const allocatedBudgetCents = budgetItems.reduce((sum, b) => sum + (b.limitCents !== null ? Math.max(0, cents(b.limitCents)) : 0), 0);
   const remainingAllocableCents = Math.max(0, monthlyIncomeCents - allocatedBudgetCents);
   const capitalBudget = budgetItems.find((b) => /capital|reserva/i.test(b.categoryName));
+  const checkingBalanceCents = useMemo(
+    () =>
+      wallets
+        .filter((w) => !w.is_reserved && w.wallet_kind !== "reserve" && w.wallet_kind !== "investment")
+        .reduce((sum, w) => sum + (walletBalance(w) ?? 0), 0),
+    [wallets, data]
+  );
+  const capitalBalanceCents = useMemo(
+    () =>
+      wallets
+        .filter((w) => w.is_reserved || w.wallet_kind === "reserve" || w.wallet_kind === "investment")
+        .reduce((sum, w) => sum + (walletBalance(w) ?? 0), 0),
+    [wallets, data]
+  );
   const projectedBalanceCents = useMemo(
     () =>
       computeProjectedBalanceWithBudgetsCents({
-        receivableCents: summary.receivable.total,
+        openingOperationalCents: summary.knownCash ? checkingBalanceCents : 0,
         rows,
         budgetSummary: budgetItems,
       }),
-    [summary.receivable.total, rows, budgetItems]
+    [summary.knownCash, checkingBalanceCents, rows, budgetItems]
   );
-
-  // Endividamento: indicador canônico de dívida contratada em valor monetário (ou "A calcular" se dados insuficientes)
-  const debtCents = healthPlan?.diagnosis?.indicators?.outstandingDebtCents;
-  const hasDebtBasis = Boolean(healthPlan && (summary.knownCash || (data?.liabilities?.length || 0) > 0));
-  const debtDisplay = hasDebtBasis && debtCents !== null && debtCents !== undefined ? money(debtCents) : "A calcular";
+  const totalDebtCents = useMemo(
+    () =>
+      computeTotalDebtCents({
+        titles: expanded?.titles || [],
+        liabilities: data?.liabilities || [],
+        knownCash: summary.knownCash,
+      }),
+    [expanded, data, summary.knownCash]
+  );
+  const notifications = useMemo(
+    () =>
+      buildNotifications({
+        summary,
+        healthPlan,
+        titles: data?.titles || [],
+        budgetSummary: budgetItems,
+        today: TODAY,
+      }),
+    [summary, healthPlan, data, budgetItems]
+  );
+  const debtDisplay = totalDebtCents === null ? "A calcular" : money(totalDebtCents);
 
   function open(kind, id, intentOverride = null) {
     const t = titles.find((item) => item.id === id);
@@ -461,6 +507,27 @@ export default function Dashboard({ user }) {
           amount: maskToDecimal(form.amount),
           transferredOn: form.transferredOn || TODAY,
         });
+      } else if (drawer === "loan") {
+        await request("POST", {
+          action: "loan",
+          description: form.description,
+          principal: maskToDecimal(form.loanPrincipal || "0,00"),
+          receivedOn: form.loanReceivedOn || TODAY,
+          creditWallet: form.loanCreditWallet !== false,
+          walletId: form.walletId,
+          installmentCount: Number(form.loanCount || 12),
+          installmentAmount: maskToDecimal(form.amount),
+          firstDueOn: form.dueOn || TODAY,
+        });
+      } else if (drawer === "goal_sim") {
+        await request("POST", {
+          action: "goal",
+          title: form.description || "Compra planejada",
+          target: maskToDecimal(form.goalTarget || "0,00"),
+          downPayment: maskToDecimal(form.goalDownPayment || "0,00"),
+          installmentCount: Number(form.goalInstallments || 1),
+          desiredOn: form.goalDesiredOn || TODAY,
+        });
       } else if (drawer === "budget") {
         await request("POST", {
           action: "budget",
@@ -663,6 +730,15 @@ export default function Dashboard({ user }) {
           <span className="preview-pill">V1 · Preview</span>
           <button
             type="button"
+            className="bell-btn"
+            aria-label={`Notificações (${notifications.length})`}
+            onClick={() => setNotificationsOpen(true)}
+          >
+            <Bell size={18} aria-hidden="true" />
+            {notifications.length > 0 && <span className="bell-badge">{notifications.length}</span>}
+          </button>
+          <button
+            type="button"
             className="avatar"
             title={user.email}
             aria-label="Abrir Perfil"
@@ -678,7 +754,7 @@ export default function Dashboard({ user }) {
           <div className="toolbar-left">
             <button type="button" className="pill pill-primary" onClick={() => setActionMenu("add")}>
               <Plus size={17} aria-hidden="true" />
-              Adicionar
+              Lançamento
             </button>
             <button type="button" className="pill pill-secondary" onClick={() => setActionMenu("create")}>
               Criar
@@ -778,6 +854,11 @@ export default function Dashboard({ user }) {
                   <strong className={`metric-value ${projectedBalanceCents < 0 ? "red" : ""}`}>
                     {display(projectedBalanceCents)}
                   </strong>
+                  {summary.knownCash && capitalBalanceCents > 0 && (
+                    <span className="metric-sub-mini">
+                      Uso: {money(checkingBalanceCents)} · Capital: {money(capitalBalanceCents)}
+                    </span>
+                  )}
                 </span>
               </button>
               <button type="button" className="card metric-card clickable" onClick={() => setTab("patrimony")}>
@@ -972,171 +1053,227 @@ export default function Dashboard({ user }) {
           <div className="workspace">
             <div className="section-header">
               <div>
-                <div className="eyebrow">PLANEJAMENTO POR PERÍODO</div>
+                <div className="eyebrow">PLANEJAMENTO DE COMPRAS E ORÇAMENTOS</div>
                 <h2>Planejamento · {monthLong}</h2>
               </div>
               <div className="toolbar-buttons">
-                <button type="button" className="mini-pill" onClick={() => setTab("health")}>
-                  <HeartPulse size={15} /> Ver saúde financeira
-                </button>
-                <button type="button" className="pill pill-primary" onClick={() => setActionMenu("budget_pick")}>
-                  <Plus size={16} /> Configurar limite
+                <div className="filter-pills">
+                  <button
+                    type="button"
+                    className={planningView === "goals" ? "active" : ""}
+                    onClick={() => setPlanningView("goals")}
+                  >
+                    Compras planejadas
+                  </button>
+                  <button
+                    type="button"
+                    className={planningView === "budgets" ? "active" : ""}
+                    onClick={() => setPlanningView("budgets")}
+                  >
+                    Orçamentos 50-30-20
+                  </button>
+                </div>
+                <button type="button" className="pill pill-primary" onClick={() => open("goal_sim")}>
+                  <Plus size={16} /> Novo planejamento
                 </button>
               </div>
             </div>
 
             <div className="planning-stats">
               <div className="card kpi-panel">
-                <span className="metric-label">Receitas do período</span>
-                <strong className="kpi-value">{display(summary.receivable.total)}</strong>
-                <span className="metric-sub">Previstas e confirmadas</span>
+                <span className="metric-label">Saldos em contas</span>
+                <strong className="kpi-value">{display(summary.liveCash)}</strong>
+                <span className="metric-sub">
+                  Uso diário: {money(checkingBalanceCents)} · Capital: {money(capitalBalanceCents)}
+                </span>
               </div>
               <div className="card kpi-panel">
-                <span className="metric-label">Pagamentos do período</span>
-                <strong className="kpi-value">{display(summary.payable.total)}</strong>
-                <span className="metric-sub">Previstos e confirmados</span>
+                <span className="metric-label">Limites do mês</span>
+                <strong className="kpi-value">{money(allocatedBudgetCents)}</strong>
+                <span className="metric-sub">
+                  {monthlyIncomeCents > 0 ? `De ${money(monthlyIncomeCents)} a receber` : "Cadastre seus a receber"}
+                </span>
               </div>
               <div className="card kpi-panel">
-                <span className="metric-label">Resultado do período</span>
-                <strong className={`kpi-value ${summary.periodResult < 0 ? "red" : ""}`}>
-                  {display(summary.periodResult)}
-                </strong>
-                <span className="metric-sub">{summary.periodResult >= 0 ? "Sobra estimada" : "Déficit estimado"}</span>
+                <span className="metric-label">Endividamento total</span>
+                <strong className="kpi-value">{debtDisplay}</strong>
+                <span className="metric-sub">Soma até a última parcela</span>
               </div>
             </div>
 
-            <section className="card panel">
-              <div className="card-heading" style={{ marginBottom: 14 }}>
-                <div>
-                  <div className="eyebrow">TETO PELA RENDA · 50-30-20</div>
-                  <h2 className="card-title">Distribuição dos orçamentos</h2>
+            {planningView === "goals" ? (
+              <section className="card panel">
+                <div className="card-heading" style={{ marginBottom: 16 }}>
+                  <div>
+                    <div className="eyebrow">COMPRAS E OBJETIVOS</div>
+                    <h2 className="card-title">Planejamentos salvos</h2>
+                  </div>
+                  <button type="button" className="mini-pill" onClick={() => open("goal_sim")}>
+                    <Plus size={14} /> Simular compra
+                  </button>
                 </div>
-                <div className="toolbar-buttons">
-                  {monthlyIncomeCents > 0 ? (
-                    <>
-                      <button type="button" className="mini-pill" disabled={busy} onClick={suggestBudgets}>
-                        Gerar 50-30-20
-                      </button>
-                      {wallets.length >= 2 && (
-                        <button type="button" className="mini-pill" onClick={openCapitalTransfer}>
-                          Efetivar aporte Capital
+                {(data?.goals || []).length ? (
+                  <div className="goals-bento-grid">
+                    {(data?.goals || []).map((g, idx) => {
+                      const sim = simulateGoalPurchase(
+                        data || {},
+                        {
+                          title: g.title,
+                          targetCents: cents(g.target_cents),
+                          downPaymentCents: cents(g.down_payment_cents),
+                          installmentCount: Number(g.installment_count || 1),
+                          installmentCents: cents(g.installment_cents),
+                          desiredOn: isoDate(g.desired_on) || TODAY,
+                        },
+                        { today: TODAY }
+                      );
+                      return (
+                        <button
+                          type="button"
+                          key={g.id || idx}
+                          className="goal-bento-card"
+                          onClick={() => setSelectedGoal({ raw: g, sim })}
+                        >
+                          <div className="goal-bento-top">
+                            <span className="goal-bento-icon">
+                              <Compass size={18} />
+                            </span>
+                            <span className={`status ${sim.isFeasible ? "done" : sim.firstFeasibleDate ? "partial" : "late"}`}>
+                              {sim.isFeasible ? "Viável na data" : sim.firstFeasibleDate ? `A partir de ${fmtDate(sim.firstFeasibleDate)}` : "Ainda não cabe"}
+                            </span>
+                          </div>
+                          <strong>{g.title}</strong>
+                          <div className="goal-bento-meta">
+                            <span>{money(cents(g.target_cents))}</span>
+                            <small>{g.installment_count > 1 ? `${g.installment_count}x de ${money(cents(g.installment_cents))}` : "À vista"}</small>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <Empty>
+                    Nenhum planejamento de compra salvo. Clique em &ldquo;+ Novo planejamento&rdquo; para descobrir o melhor momento para comprar.
+                  </Empty>
+                )}
+              </section>
+            ) : (
+              <>
+                <section className="card panel">
+                  <div className="card-heading" style={{ marginBottom: 14 }}>
+                    <div>
+                      <div className="eyebrow">TETO PELA RENDA · 50-30-20</div>
+                      <h2 className="card-title">Distribuição dos orçamentos</h2>
+                    </div>
+                    <div className="toolbar-buttons">
+                      {monthlyIncomeCents > 0 ? (
+                        <>
+                          <button type="button" className="mini-pill" disabled={busy} onClick={suggestBudgets}>
+                            Gerar 50-30-20
+                          </button>
+                          {wallets.length >= 2 && (
+                            <button type="button" className="mini-pill" onClick={openCapitalTransfer}>
+                              Efetivar aporte Capital
+                            </button>
+                          )}
+                          <button type="button" className="mini-pill" onClick={() => setActionMenu("budget_pick")}>
+                            Configurar limite
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          className="pill pill-primary"
+                          onClick={() => open("income", null, "bill")}
+                        >
+                          <Plus size={15} /> Cadastrar a receber
                         </button>
                       )}
-                    </>
+                    </div>
+                  </div>
+                  {monthlyIncomeCents <= 0 ? (
+                    <div className="alert">
+                      <AlertTriangle size={16} />
+                      <span>
+                        Cadastre seus valores a receber de {monthLong} primeiro para liberar a criação e sugestão automática de orçamentos.
+                      </span>
+                    </div>
                   ) : (
-                    <button
-                      type="button"
-                      className="pill pill-primary"
-                      onClick={() => open("income", null, "bill")}
-                    >
-                      <Plus size={15} /> Cadastrar a receber
-                    </button>
+                    <div className="allocation-summary" style={{ marginBottom: 0 }}>
+                      <div>
+                        <span>A receber no mês</span>
+                        <strong>{money(monthlyIncomeCents)}</strong>
+                      </div>
+                      <div>
+                        <span>Alocado nos orçamentos · Disponível: {money(remainingAllocableCents)}</span>
+                        <strong>{money(allocatedBudgetCents)}</strong>
+                      </div>
+                    </div>
                   )}
-                </div>
-              </div>
-              {monthlyIncomeCents <= 0 ? (
-                <div className="alert">
-                  <AlertTriangle size={16} />
-                  <span>
-                    Cadastre seus valores a receber de {monthLong} primeiro para liberar a criação e sugestão automática de orçamentos.
-                  </span>
-                </div>
-              ) : (
-                <div className="allocation-summary" style={{ marginBottom: 0 }}>
-                  <div>
-                    <span>A receber no mês</span>
-                    <strong>{money(monthlyIncomeCents)}</strong>
+                </section>
+
+                <section className="card panel">
+                  <div className="card-heading" style={{ marginBottom: 16 }}>
+                    <div>
+                      <div className="eyebrow">ORÇAMENTOS DO MÊS</div>
+                      <h2 className="card-title">Limites de {monthLong}</h2>
+                    </div>
+                    <span className="small-flag">Mês calendário</span>
                   </div>
-                  <div>
-                    <span>Alocado nos orçamentos · Disponível: {money(remainingAllocableCents)}</span>
-                    <strong>{money(allocatedBudgetCents)}</strong>
+                  <BudgetList
+                    items={budgetItems}
+                    monthLabel={monthLong}
+                    insufficientCash={summary.minCash !== null && summary.minCash < 0}
+                    onEditBudget={openBudget}
+                    onFulfillPlan={fulfillPlan}
+                    onEditPlan={editPlan}
+                    onCancelPlan={cancelPlan}
+                  />
+                </section>
+
+                <section className="card panel">
+                  <div className="card-heading" style={{ marginBottom: 16 }}>
+                    <h2 className="card-title">Evolução mês a mês</h2>
                   </div>
-                </div>
-              )}
-            </section>
-
-            <section className="card panel">
-              <div className="card-heading" style={{ marginBottom: 16 }}>
-                <div>
-                  <div className="eyebrow">ORÇAMENTOS DO MÊS</div>
-                  <h2 className="card-title">Limites de {monthLong}</h2>
-                </div>
-                <span className="small-flag">Mês calendário</span>
-              </div>
-              <BudgetList
-                items={budgetItems}
-                monthLabel={monthLong}
-                insufficientCash={summary.minCash !== null && summary.minCash < 0}
-                onEditBudget={openBudget}
-                onFulfillPlan={fulfillPlan}
-                onEditPlan={editPlan}
-                onCancelPlan={cancelPlan}
-              />
-            </section>
-
-            <section className="card panel">
-              <div className="card-heading" style={{ marginBottom: 16 }}>
-                <h2 className="card-title">Evolução mês a mês</h2>
-              </div>
-              <div className="table-scroll">
-                <table className="finance-table">
-                  <thead>
-                    <tr>
-                      <th>Mês</th>
-                      <th>Entradas</th>
-                      <th>Saídas</th>
-                      <th>Sobra/déficit</th>
-                      <th>Saldo (contratual)</th>
-                      <th>Saldo (com planos)</th>
-                      <th>Saldo (com limites)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {months.map((m) => (
-                      <tr key={m.month}>
-                        <td>
-                          <strong>
-                            {new Date(`${m.month}-15T12:00:00Z`).toLocaleDateString("pt-BR", {
-                              month: "long",
-                              year: "numeric",
-                              timeZone: "UTC",
-                            })}
-                          </strong>
-                        </td>
-                        <td>{money(m.income)}</td>
-                        <td>{money(m.expense)}</td>
-                        <td className={m.result < 0 ? "red" : ""}>{money(m.result)}</td>
-                        <td className="money-cell">{display(m.balance)}</td>
-                        <td className="money-cell">{display(m.balanceWithPlans)}</td>
-                        <td className="money-cell">{display(m.balanceWithinBudgets)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
-            <div className="planning-below">
-              <section className="card panel">
-                <h2 className="card-title">Compromissos conhecidos</h2>
-                <div className="large-line">{money(summary.allPayable)}</div>
-                <p className="hint">Soma de todas as contas a pagar ainda pendentes.</p>
-              </section>
-              <section className="card panel">
-                <h2 className="card-title">Margem mínima no período</h2>
-                <div className="large-line">{display(summary.safeToSpendCents)}</div>
-                <p className="hint">Menor caixa projetado após compromissos conhecidos.</p>
-              </section>
-            </div>
-
-            <PlanningGoalsPanel
-              rawData={data}
-              healthPlan={healthPlan}
-              onSaveGoal={saveGoal}
-              onCancelGoal={cancelGoal}
-              busy={busy}
-              section="goals"
-            />
+                  <div className="table-scroll">
+                    <table className="finance-table">
+                      <thead>
+                        <tr>
+                          <th>Mês</th>
+                          <th>Entradas</th>
+                          <th>Saídas</th>
+                          <th>Sobra/déficit</th>
+                          <th>Saldo (contratual)</th>
+                          <th>Saldo (com planos)</th>
+                          <th>Saldo (com limites)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {months.map((m) => (
+                          <tr key={m.month}>
+                            <td>
+                              <strong>
+                                {new Date(`${m.month}-15T12:00:00Z`).toLocaleDateString("pt-BR", {
+                                  month: "long",
+                                  year: "numeric",
+                                  timeZone: "UTC",
+                                })}
+                              </strong>
+                            </td>
+                            <td>{money(m.income)}</td>
+                            <td>{money(m.expense)}</td>
+                            <td className={m.result < 0 ? "red" : ""}>{money(m.result)}</td>
+                            <td className="money-cell">{display(m.balance)}</td>
+                            <td className="money-cell">{display(m.balanceWithPlans)}</td>
+                            <td className="money-cell">{display(m.balanceWithinBudgets)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              </>
+            )}
           </div>
         )}
 
@@ -1411,13 +1548,12 @@ export default function Dashboard({ user }) {
                   type="button"
                   onClick={() => {
                     setActionMenu(null);
-                    setTab("planning");
-                    setTimeout(() => document.getElementById("goal-planner-section")?.scrollIntoView({ behavior: "smooth" }), 80);
+                    open("goal_sim");
                   }}
                 >
                   <span>
-                    Nova meta
-                    <small>Simular uma compra ou objetivo sem gerar cobrança</small>
+                    Novo planejamento de compra
+                    <small>Descobrir o melhor momento para comprar sem gerar cobrança</small>
                   </span>
                   <span>›</span>
                 </button>
@@ -1438,12 +1574,12 @@ export default function Dashboard({ user }) {
                   type="button"
                   onClick={() => {
                     setActionMenu(null);
-                    open("liability");
+                    open("loan");
                   }}
                 >
                   <span>
-                    Nova dívida
-                    <small>Registrar passivo contratado</small>
+                    Novo empréstimo / financiamento
+                    <small>Creditar valor recebido e gerar parcelas no endividamento</small>
                   </span>
                   <span>›</span>
                 </button>
@@ -1599,6 +1735,113 @@ export default function Dashboard({ user }) {
         </div>
       )}
 
+      {notificationsOpen && (
+        <div
+          className="action-overlay open"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setNotificationsOpen(false);
+          }}
+        >
+          <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="notifDialogTitle">
+            <div className="dialog-head">
+              <h2 id="notifDialogTitle">Notificações</h2>
+              <button type="button" className="dialog-close" onClick={() => setNotificationsOpen(false)} aria-label="Fechar">
+                <X size={17} />
+              </button>
+            </div>
+            {notifications.length ? (
+              <div className="action-menu">
+                {notifications.map((n) => (
+                  <button
+                    type="button"
+                    key={n.id}
+                    onClick={() => {
+                      setNotificationsOpen(false);
+                      if (n.action === "transfer_capital") openCapitalTransfer();
+                      else if (n.targetTab) setTab(n.targetTab);
+                    }}
+                  >
+                    <span>
+                      <strong className={n.tone === "danger" ? "red" : ""}>{n.title}</strong>
+                      <small>{n.detail}</small>
+                    </span>
+                    <span>›</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <Empty>Tudo em ordem por aqui. Nenhum alerta no momento.</Empty>
+            )}
+          </div>
+        </div>
+      )}
+
+      {selectedGoal && (
+        <div
+          className="action-overlay open"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setSelectedGoal(null);
+          }}
+        >
+          <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="goalDetailTitle">
+            <div className="dialog-head">
+              <h2 id="goalDetailTitle">{selectedGoal.raw.title}</h2>
+              <button type="button" className="dialog-close" onClick={() => setSelectedGoal(null)} aria-label="Fechar">
+                <X size={17} />
+              </button>
+            </div>
+            <div className="detail-layout" style={{ padding: 0 }}>
+              <div className={`goal-verdict ${selectedGoal.sim.isFeasible ? "ok" : "warn"}`}>
+                <Compass size={18} />
+                <div>
+                  <strong>
+                    {selectedGoal.sim.isFeasible
+                      ? `Cabe no plano na data desejada (${fmtDate(selectedGoal.raw.desired_on)})`
+                      : selectedGoal.sim.firstFeasibleDate
+                        ? `Melhor momento: a partir de ${fmtDate(selectedGoal.sim.firstFeasibleDate)}`
+                        : "Ainda não cabe no plano"}
+                  </strong>
+                  <small>
+                    {selectedGoal.sim.bottleneckDate
+                      ? `Gargalo em ${fmtDate(selectedGoal.sim.bottleneckDate)} (falta de ${money(selectedGoal.sim.bottleneckShortfallCents)}).`
+                      : `Todas as ${selectedGoal.sim.installmentCountVerified || 1} parcela(s) verificadas sem comprometer o piso protegido.`}
+                  </small>
+                </div>
+              </div>
+
+              {selectedGoal.sim.scenarios?.length > 0 && (
+                <div className="goal-scenarios">
+                  <strong>Comparação de cenários</strong>
+                  <ul>
+                    {selectedGoal.sim.scenarios.map((s) => (
+                      <li key={s.id}>
+                        <span>{s.label}</span>
+                        <strong className={s.feasible ? "" : "red"}>
+                          {s.feasible ? `Viável (${fmtDate(s.startDate)})` : "Inviável"}
+                        </strong>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <button
+                type="button"
+                className="light-button"
+                disabled={busy}
+                onClick={async () => {
+                  const id = selectedGoal.raw.id;
+                  setSelectedGoal(null);
+                  await cancelGoal(id);
+                }}
+              >
+                <Trash2 size={15} /> Remover planejamento
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {drawer && (
         <EntryDrawer
           key={`${drawer}:${String(selectedTitle || "new")}:${form.intent || ""}`}
@@ -1611,6 +1854,7 @@ export default function Dashboard({ user }) {
           categories={data?.categories || []}
           budgets={budgetItems}
           monthlyIncomeCents={monthlyIncomeCents}
+          rawData={data}
           rules={data?.recurringRules || []}
           spendingPlans={data?.spendingPlans || []}
           spendingPlanApplications={data?.spendingPlanApplications || []}

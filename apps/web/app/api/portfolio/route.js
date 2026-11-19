@@ -175,6 +175,36 @@ export async function POST(request){
    }
    return send({saved:true,incomeCents},201);
   }
+  if(x.action==="loan"){
+   const label=textValue(x.description,120);if(!label)return error("Informe a descrição do empréstimo.");
+   const principalCents=amount(x.principal,false,false);
+   const installmentCents=amount(x.installmentAmount,false,false);
+   const count=Math.min(120,Math.max(2,parseInt(x.installmentCount,10)||0));
+   if(!Number.isInteger(count)||count<2)return error("Informe ao menos 2 parcelas.");
+   if(!day(x.firstDueOn))return error("Informe a data da primeira parcela.");
+   const creditWallet=x.creditWallet!==false;
+   const receivedDay=day(x.receivedOn)?x.receivedOn:brDay();
+   if(creditWallet){
+    if(!uuid(x.walletId))return error("Selecione a conta que recebeu o empréstimo.");
+    if(receivedDay>brDay())return error("A data de recebimento não pode ser futura.");
+   }
+   const seriesId=crypto.randomUUID();
+   const liabRows=await sql`INSERT INTO public.kc_liabilities(user_id,label,principal_cents,valued_on,debt_kind,monthly_installment_cents,remaining_installments,status,series_id) VALUES(${owner.id},${label},${principalCents},${receivedDay},'loan',${installmentCents},${count},'active',${seriesId}::uuid) RETURNING id`;
+   const liabilityId=liabRows[0]?.id;
+   const empCat=await sql`SELECT id FROM public.kc_categories WHERE user_id=${owner.id} AND direction='expense' AND parent_id IS NULL AND canonical_key='expense:emprestimos' LIMIT 1`;
+   const categoryId=empCat[0]?.id||null;
+   if(creditWallet&&uuid(x.walletId)){
+    const inTitle=await sql`INSERT INTO public.kc_titles(user_id,wallet_id,description,direction,category,category_id,amount_cents,settled_cents,due_on,recurrence,entry_kind,liability_id) VALUES(${owner.id},${x.walletId}::uuid,${label+" (valor recebido)"},'income','Empréstimos',${categoryId},${principalCents},${principalCents},${receivedDay},'once','debt_payment',${liabilityId}::uuid) RETURNING id`;
+    await sql`INSERT INTO public.kc_settlements(user_id,title_id,wallet_id,amount_cents,settled_on) VALUES(${owner.id},${inTitle[0].id}::uuid,${x.walletId}::uuid,${principalCents},${receivedDay})`;
+   }
+   const walletRef=uuid(x.walletId)?x.walletId:(await sql`SELECT id FROM public.kc_wallets WHERE user_id=${owner.id} ORDER BY created_at LIMIT 1`)[0]?.id;
+   if(!walletRef)return error("Cadastre uma conta antes de lançar as parcelas do empréstimo.");
+   for(let i=1;i<=count;i++){
+    const due=monthOffset(x.firstDueOn,i-1);
+    await sql`INSERT INTO public.kc_titles(user_id,wallet_id,description,direction,category,category_id,amount_cents,settled_cents,due_on,recurrence,installment_index,installment_total,series_id,entry_kind,liability_id) VALUES(${owner.id},${walletRef}::uuid,${`${label} (${i}/${count})`},'expense','Empréstimos',${categoryId},${installmentCents},0,${due},'installments',${i},${count},${seriesId}::uuid,'debt_payment',${liabilityId}::uuid)`;
+   }
+   return send({saved:true,liabilityId,seriesId},201);
+  }
   if(x.action==="transfer_capital"){
    if(!uuid(x.fromWalletId)||!uuid(x.toWalletId)||x.fromWalletId===x.toWalletId)return error("Selecione contas de origem e destino diferentes.");
    const transferCents=amount(x.amount,false,false);

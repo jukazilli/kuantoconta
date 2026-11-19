@@ -1,11 +1,12 @@
 "use client";
 import {useMemo,useState} from "react";
-import {X,Plus,CalendarDays,ReceiptText,CircleDollarSign,Repeat2,CheckCircle2,Clock3,ChevronDown,ChevronRight,Sparkles,Check} from "lucide-react";
+import {X,Plus,CalendarDays,ReceiptText,CircleDollarSign,Repeat2,CheckCircle2,Clock3,ChevronDown,ChevronRight,Sparkles,Check,Compass} from "lucide-react";
 import MoneyInput from "./MoneyInput";
 import {cents,money,isoDate,brDay} from "../../lib/finance";
 import {maskToCents,maskToDecimal} from "../../lib/money-input";
 import {isSeries} from "../../lib/cancel-scope";
 import {findMatchingSpendingPlans,computePlanRemainingCents} from "../../lib/spending-plans";
+import {simulateGoalPurchase} from "../../lib/goal-planner";
 
 const fdate=d=>{const s=isoDate(d).split("-");return s.length===3?`${s[2]}/${s[1]}/${s[0]}`:"—";};
 
@@ -19,6 +20,7 @@ export default function EntryDrawer({
   categories=[],
   budgets=[],
   monthlyIncomeCents=0,
+  rawData=null,
   spendingPlans=[],
   spendingPlanApplications=[],
   busy,
@@ -106,6 +108,8 @@ export default function EntryDrawer({
   drawer==="edit_plan"?"Ajustar previsão de gasto":
   drawer==="wallet"?"Nova conta":
   drawer==="transfer_capital"?"Aporte para Carteira de Capital":
+  drawer==="loan"?"Novo empréstimo / financiamento":
+  drawer==="goal_sim"?"Novo planejamento de compra":
   drawer==="settle"?"Confirmar pagamento":
   drawer==="detail"?"Detalhes do lançamento":
   drawer==="budget"?"Configurar orçamento":
@@ -114,6 +118,16 @@ export default function EntryDrawer({
  const canSubmit=drawer!=="detail";
  const checkingWallets=wallets.filter(w=>!w.is_reserved&&w.wallet_kind!=="reserve"&&w.wallet_kind!=="investment");
  const capitalWallets=wallets.filter(w=>w.is_reserved||w.wallet_kind==="reserve"||w.wallet_kind==="investment");
+
+ const goalPreview=useMemo(()=>{
+  if(drawer!=="goal_sim"||!rawData)return null;
+  const safeCents=v=>{try{return maskToCents(v||"0,00");}catch{return 0;}};
+  const targetCents=safeCents(form.goalTarget);
+  const downPaymentCents=Math.min(targetCents,safeCents(form.goalDownPayment));
+  const count=Math.max(1,Math.min(120,Number(form.goalInstallments||1)));
+  const installmentCents=Math.ceil(Math.max(0,targetCents-downPaymentCents)/count);
+  return simulateGoalPurchase(rawData,{title:form.description||"Compra planejada",targetCents,downPaymentCents,installmentCount:count,installmentCents,desiredOn:form.goalDesiredOn||brDay()},{today:brDay()});
+ },[drawer,rawData,form.description,form.goalTarget,form.goalDownPayment,form.goalInstallments,form.goalDesiredOn]);
 
  return <div className="overlay" onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}><section className="drawer" role="dialog" aria-modal="true" aria-label={formTitle}>
    <header className="drawer-head"><button type="button" className="plain-icon" onClick={onClose} aria-label="Fechar"><X size={23}/></button><h2>{formTitle}</h2>{canSubmit?<button className="save-pill" form="entry-form" type="submit" disabled={busy}>{busy?"Salvando...":"Salvar"}</button>:<span className="drawer-head-spacer"/>}</header>
@@ -311,6 +325,48 @@ export default function EntryDrawer({
       {form.budgetActive===false&&<p className="hint">Este orçamento apenas acompanha os gastos, sem trava de limite mensal.</p>}
     </>}
     {(drawer==="asset"||drawer==="liability")&&<><label>Descrição<input required maxLength={120} placeholder={drawer==="asset"?"Ex.: veículo":"Ex.: empréstimo"} value={form.label} onChange={e=>field("label",e.target.value)}/></label><label>Valor atual (R$)<MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Valor atual"/></label><p className="hint">Não inclua novamente o dinheiro já registrado em uma conta.</p></>}
+
+    {drawer==="loan"&&<>
+      <p className="hint">O valor recebido entra na conta sem contar como salário, e as parcelas somam no endividamento total até a última parcela.</p>
+      <label>Descrição do empréstimo / financiamento<input required maxLength={120} placeholder="Ex.: Empréstimo Banco X" value={form.description} onChange={e=>field("description",e.target.value)}/></label>
+      <div className="form-grid">
+        <label>Valor recebido (R$)<MoneyInput value={form.loanPrincipal||"0,00"} onChange={v=>field("loanPrincipal",v)} ariaLabel="Valor recebido"/></label>
+        <label>Data do recebimento<input required type="date" max={brDay()} value={form.loanReceivedOn||brDay()} onChange={e=>field("loanReceivedOn",e.target.value)}/></label>
+      </div>
+      <label className="kc-check"><input type="checkbox" checked={form.loanCreditWallet!==false} onChange={e=>field("loanCreditWallet",e.target.checked)}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Creditar o valor recebido na conta selecionada</span></label>
+      <label>Conta vinculada<select required value={form.walletId} onChange={e=>field("walletId",e.target.value)}><option value="">Selecione uma conta</option>{(checkingWallets.length?checkingWallets:wallets).map(w=><option key={w.id} value={w.id}>{w.name}</option>)}</select></label>
+      <div className="form-grid">
+        <label>Total de parcelas<input required type="number" min="2" max="120" value={form.loanCount||"12"} onChange={e=>field("loanCount",e.target.value)}/></label>
+        <label>Valor da parcela (R$)<MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Valor da parcela"/></label>
+      </div>
+      <label>Vencimento da 1ª parcela<input required type="date" value={form.dueOn} onChange={e=>field("dueOn",e.target.value)}/></label>
+      {(()=>{
+        const safeC=v=>{try{return maskToCents(v||"0,00");}catch{return 0;}};
+        const p=safeC(form.loanPrincipal);const inst=safeC(form.amount);const cnt=Math.max(2,Number(form.loanCount||12));
+        const total=inst*cnt;const interest=Math.max(0,total-p);
+        return inst>0?<div className="repeat-config"><div className="repeat-preview" style={{borderTop:0,paddingTop:0}}><strong>Total a pagar: {money(total)} ({cnt}x de {money(inst)})</strong><span>Custo financeiro / juros totais: {money(interest)}</span></div></div>:null;
+      })()}
+    </>}
+
+    {drawer==="goal_sim"&&<>
+      <p className="hint">Simule uma compra, viagem ou bem antes de assumir o compromisso. Não gera cobrança nem altera o saldo previsto.</p>
+      <label>O que deseja planejar?<input required maxLength={120} placeholder="Ex.: Notebook, Viagem, Geladeira" value={form.description} onChange={e=>field("description",e.target.value)}/></label>
+      <div className="form-grid">
+        <label>Valor total (R$)<MoneyInput value={form.goalTarget||"0,00"} onChange={v=>field("goalTarget",v)} ariaLabel="Valor total desejado"/></label>
+        <label>Entrada (R$)<MoneyInput value={form.goalDownPayment||"0,00"} onChange={v=>field("goalDownPayment",v)} ariaLabel="Valor de entrada"/></label>
+      </div>
+      <div className="form-grid">
+        <label>Parcelas<input required type="number" min="1" max="120" value={form.goalInstallments||"1"} onChange={e=>field("goalInstallments",e.target.value)}/></label>
+        <label>Data desejada<input required type="date" min={brDay()} value={form.goalDesiredOn||brDay()} onChange={e=>field("goalDesiredOn",e.target.value)}/></label>
+      </div>
+      {goalPreview&&<div className={`goal-verdict ${goalPreview.isFeasible?"ok":"warn"}`}>
+        <Compass size={18}/>
+        <div>
+          <strong>{goalPreview.isFeasible?`Cabe no plano na data desejada (${fdate(form.goalDesiredOn||brDay())})`:goalPreview.firstFeasibleDate?`Melhor momento: a partir de ${fdate(goalPreview.firstFeasibleDate)}`:"Ainda não cabe no horizonte"}</strong>
+          <small>{goalPreview.bottleneckDate?`Gargalo em ${fdate(goalPreview.bottleneckDate)} (falta de ${money(goalPreview.bottleneckShortfallCents)}).`:`Todas as ${goalPreview.installmentCountVerified||1} parcela(s) verificadas sem comprometer o piso protegido.`}</small>
+        </div>
+      </div>}
+    </>}
    </form>}
    {budgetPicker&&<div className="nested-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setBudgetPicker(false);}}>
      <div className="quick-category budget-picker-dialog" role="dialog" aria-modal="true" aria-label="Selecionar orçamento">
