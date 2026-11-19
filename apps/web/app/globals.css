@@ -186,7 +186,39 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
   border-color: rgba(242, 92, 5, .24);
   background: linear-gradient(180deg, rgba(255, 246, 237, .55) 0%, #fff 100%);
 }
-.pill-compact { padding: 8px 14px; font-size: 13px; display: inline-flex; align-items: center; gap: 4px; }
+.pill-compact { padding: 8px 14px; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
+.pill-outline-orange {
+  border: 1.5px solid var(--kc-orange);
+  background: #fff7f2;
+  color: var(--kc-orange);
+  font-weight: 600;
+}
+.icon-ghost-btn {
+  border: 0;
+  background: transparent;
+  color: var(--kc-muted-dark);
+  min-width: 38px;
+  min-height: 38px;
+  padding: 6px;
+  border-radius: 12px;
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  transition: transform .1s ease, background-color .15s ease, color .15s ease;
+}
+.icon-ghost-btn:active {
+  transform: scale(.93);
+  background: var(--kc-surface-inner);
+  color: var(--kc-orange);
+}
+.budget-meta-btn {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
 .health-chips-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 
 /* Horizontal Recovery Timeline */
