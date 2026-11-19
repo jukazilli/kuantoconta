@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { computeCapitalPace } from "./capital-pace.js";
 import { analyzeConsumptionHabits } from "./habit-analyzer.js";
 import { computePriceInstallmentCents, simulateGoalPurchase } from "./goal-planner.js";
+import { findBankBrand, bankIconPath } from "./bank-brands.js";
 
 test("computeCapitalPace detects on-pace vs behind-pace capital goals", () => {
   const onPace = computeCapitalPace({
@@ -89,4 +90,16 @@ test("computePriceInstallmentCents calculates Tabela Price with interest and sim
   assert.equal(sim.twoStepVerdict.hasDownPaymentNow, true);
   assert.equal(sim.twoStepVerdict.installmentFitsMonthly, false);
   assert.equal(sim.totalInterestCents > 0, true);
+});
+
+test("findBankBrand resolves digital, traditional, credit union, and fallback placeholder", () => {
+  assert.equal(findBankBrand("Nubank")?.id, "nubank");
+  assert.equal(findBankBrand("Maré Shopee")?.id, "maree");
+  assert.equal(findBankBrand("Banco Maree")?.id, "maree");
+  assert.equal(findBankBrand("Itaú Unibanco")?.id, "itau");
+  assert.equal(findBankBrand("Banco do Brasil")?.id, "bb");
+  assert.equal(findBankBrand("Sicredi")?.id, "sicredi");
+  assert.equal(findBankBrand("Sicoob")?.id, "sicoob");
+  assert.equal(bankIconPath(findBankBrand("PicPay")), "/banks/picpay.svg");
+  assert.equal(findBankBrand("Carteira Física"), null);
 });
