@@ -7,6 +7,7 @@ import {maskToCents,maskToDecimal} from "../../lib/money-input";
 import {isSeries} from "../../lib/cancel-scope";
 import {findMatchingSpendingPlans,computePlanRemainingCents} from "../../lib/spending-plans";
 import {simulateGoalPurchase} from "../../lib/goal-planner";
+import {computeCapitalPace} from "../../lib/capital-pace";
 
 const fdate=d=>{const s=isoDate(d).split("-");return s.length===3?`${s[2]}/${s[1]}/${s[0]}`:"—";};
 
@@ -110,6 +111,7 @@ export default function EntryDrawer({
   drawer==="transfer_capital"?"Aporte para Carteira de Capital":
   drawer==="loan"?"Novo empréstimo / financiamento":
   drawer==="goal_sim"?"Novo planejamento de compra":
+  drawer==="capital_goal"?"Nova meta de capital":
   drawer==="settle"?"Confirmar pagamento":
   drawer==="detail"?"Detalhes do lançamento":
   drawer==="budget"?"Configurar orçamento":
@@ -366,6 +368,26 @@ export default function EntryDrawer({
           <small>{goalPreview.bottleneckDate?`Gargalo em ${fdate(goalPreview.bottleneckDate)} (falta de ${money(goalPreview.bottleneckShortfallCents)}).`:`Todas as ${goalPreview.installmentCountVerified||1} parcela(s) verificadas sem comprometer o piso protegido.`}</small>
         </div>
       </div>}
+    </>}
+
+    {drawer==="capital_goal"&&<>
+      <p className="hint">Defina quanto de capital ou reserva quer acumular até uma data para acompanhar se está no ritmo certo.</p>
+      <label>Nome da meta<input required maxLength={120} placeholder="Ex.: Reserva de emergência, Capital de giro" value={form.description} onChange={e=>field("description",e.target.value)}/></label>
+      <div className="form-grid">
+        <label>Quanto quero ter (R$)<MoneyInput value={form.goalTarget||"0,00"} onChange={v=>field("goalTarget",v)} ariaLabel="Valor da meta de capital"/></label>
+        <label>Até qual data<input required type="date" min={brDay()} value={form.goalDesiredOn||brDay()} onChange={e=>field("goalDesiredOn",e.target.value)}/></label>
+      </div>
+      {(()=>{
+        const safeC=v=>{try{return maskToCents(v||"0,00");}catch{return 0;}};
+        const pace=computeCapitalPace({targetCents:safeC(form.goalTarget),targetDate:form.goalDesiredOn||brDay(),currentCapitalCents:Number(form.currentCapitalCents||0),monthlyContributionCents:Number(form.monthlyCapitalContributionCents||0),today:brDay()});
+        return pace.targetCents>0?<div className={`goal-verdict ${pace.onPace?"ok":"warn"}`}>
+          <Compass size={18}/>
+          <div>
+            <strong>{pace.onPace?"No ritmo com seu aporte atual":`Aporte necessário: ${money(pace.requiredMonthlyCents)}/mês`}</strong>
+            <small>{pace.onPace?`Em ${pace.monthsLeft} mês(es), seu ritmo atual de ${money(pace.monthlyContributionCents)}/mês atinge a meta.`:`Faltam ${money(pace.remainingCents)} em ${pace.monthsLeft} mês(es). Aumente ${money(pace.monthlyGapCents)}/mês no orçamento de Capital.`}</small>
+          </div>
+        </div>:null;
+      })()}
     </>}
    </form>}
    {budgetPicker&&<div className="nested-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setBudgetPicker(false);}}>

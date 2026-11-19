@@ -21,6 +21,9 @@ import {
   Bell,
   Compass,
   Trash2,
+  Scissors,
+  Eye,
+  Target,
 } from "lucide-react";
 import { authClient } from "../../lib/auth/client";
 import { money, cents, brDay, isoDate } from "../../lib/finance";
@@ -28,6 +31,8 @@ import { computeRange, lastDayOfMonth, firstDayOfMonth, moveMonth, inRange } fro
 import { computeMonthlyIncomeCeilingCents, computeProjectedBalanceWithBudgetsCents, computeTotalDebtCents } from "../../lib/budgets";
 import { buildNotifications } from "../../lib/notifications";
 import { simulateGoalPurchase } from "../../lib/goal-planner";
+import { computeCapitalPace } from "../../lib/capital-pace";
+import { analyzeConsumptionHabits } from "../../lib/habit-analyzer";
 import { maskToDecimal, centsToMask } from "../../lib/money-input";
 import { expandRecurring } from "../../lib/recurring";
 import { buildFinancialHealthPlan } from "../../lib/financial-health";
@@ -43,7 +48,7 @@ const TABS = [
   ["overview", "Visão geral"],
   ["movements", "Movimentos"],
   ["planning", "Planejamento"],
-  ["patrimony", "Patrimônio"],
+  ["patrimony", "Meu Capital"],
   ["health", "Saúde financeira"],
   ["profile", "Perfil"],
 ];
@@ -321,6 +326,21 @@ export default function Dashboard({ user }) {
     [summary, healthPlan, data, budgetItems]
   );
   const debtDisplay = totalDebtCents === null ? "A calcular" : money(totalDebtCents);
+  const capitalGoals = (data?.goals || []).filter((g) => g.category === "capital_goal");
+  const purchaseGoals = (data?.goals || []).filter((g) => g.category !== "capital_goal");
+  const capitalProjectedAtDateCents =
+    capitalBalanceCents + (capitalBudget?.limitCents > 0 ? capitalBudget.limitCents * Math.max(1, months.length) : 0);
+  const netWorthAtDateCents =
+    summary.projectedCash === null ? null : summary.projectedCash + summary.assets - (totalDebtCents ?? 0);
+  const habits = useMemo(
+    () =>
+      analyzeConsumptionHabits({
+        rows,
+        recurringRules: data?.recurringRules || [],
+        budgetSummary: budgetItems,
+      }),
+    [rows, data, budgetItems]
+  );
 
   function open(kind, id, intentOverride = null) {
     const t = titles.find((item) => item.id === id);
@@ -337,6 +357,8 @@ export default function Dashboard({ user }) {
           ? centsToMask(Math.max(0, cents(t.amount_cents) - cents(t.settled_cents)))
           : "",
       direction: dir,
+      currentCapitalCents: capitalBalanceCents,
+      monthlyCapitalContributionCents: capitalBudget?.limitCents || 0,
       idempotencyKey: crypto.randomUUID(),
     });
     setSelectedTitle(id || null);
@@ -552,6 +574,16 @@ export default function Dashboard({ user }) {
           target: maskToDecimal(form.goalTarget || "0,00"),
           downPayment: maskToDecimal(form.goalDownPayment || "0,00"),
           installmentCount: Number(form.goalInstallments || 1),
+          desiredOn: form.goalDesiredOn || TODAY,
+        });
+      } else if (drawer === "capital_goal") {
+        await request("POST", {
+          action: "goal",
+          category: "capital_goal",
+          title: form.description || "Meta de capital",
+          target: maskToDecimal(form.goalTarget || "0,00"),
+          downPayment: "0.00",
+          installmentCount: 1,
           desiredOn: form.goalDesiredOn || TODAY,
         });
       } else if (drawer === "budget") {
@@ -1127,9 +1159,9 @@ export default function Dashboard({ user }) {
                     <Plus size={14} /> Simular compra
                   </button>
                 </div>
-                {(data?.goals || []).length ? (
+                {purchaseGoals.length ? (
                   <div className="goals-bento-grid">
-                    {(data?.goals || [])
+                    {purchaseGoals
                       .map((g, idx) => ({
                         g,
                         idx,
@@ -1300,27 +1332,93 @@ export default function Dashboard({ user }) {
           <div className="workspace">
             <div className="planning-stats">
               <div className="card kpi-panel">
-                <span className="metric-label">Patrimônio líquido projetado</span>
-                <strong className="kpi-value">{display(summary.netWorthPartial)}</strong>
-                <span className="metric-sub">Em {fmtDate(date)} · contratual</span>
+                <span className="metric-label">Capital formado hoje</span>
+                <strong className="kpi-value">{summary.knownCash ? money(capitalBalanceCents) : "A calcular"}</strong>
+                <span className="metric-sub">Carteiras de Capital e Reserva</span>
               </div>
               <div className="card kpi-panel">
-                <span className="metric-label">Saldos em conta</span>
-                <strong className="kpi-value">{display(summary.liveCash)}</strong>
-                <span className="metric-sub">{wallets.length} conta(s) cadastrada(s)</span>
+                <span className="metric-label">Capital projetado em {fmtDate(date)}</span>
+                <strong className="kpi-value">{summary.knownCash ? money(capitalProjectedAtDateCents) : "A calcular"}</strong>
+                <span className="metric-sub">Considerando aportes previstos no período</span>
               </div>
               <div className="card kpi-panel">
-                <span className="metric-label">Endividamento contratado</span>
+                <span className="metric-label">Endividamento total</span>
                 <strong className="kpi-value">{debtDisplay}</strong>
-                <span className="metric-sub">Obrigações de capital ativas</span>
+                <span className="metric-sub">Soma até a última parcela</span>
               </div>
             </div>
 
             <section className="card panel">
               <div className="card-heading" style={{ marginBottom: 14 }}>
                 <div>
-                  <div className="eyebrow">EVOLUÇÃO ATÉ A DATA</div>
-                  <h2 className="card-title">Saldo e patrimônio projetado</h2>
+                  <div className="eyebrow">RITMO DE FORMAÇÃO DE CAPITAL</div>
+                  <h2 className="card-title">Metas de capital</h2>
+                </div>
+                <button type="button" className="mini-pill" onClick={() => open("capital_goal")}>
+                  <Target size={14} /> Nova meta de capital
+                </button>
+              </div>
+              {capitalGoals.length ? (
+                <div className="budget-list">
+                  {capitalGoals.map((g) => {
+                    const pace = computeCapitalPace({
+                      targetCents: cents(g.target_cents),
+                      targetDate: isoDate(g.desired_on) || END,
+                      currentCapitalCents: capitalBalanceCents,
+                      monthlyContributionCents: capitalBudget?.limitCents || 0,
+                      today: TODAY,
+                    });
+                    return (
+                      <article className="budget-card" key={g.id}>
+                        <div className="budget-row-top">
+                          <div className="budget-expand">
+                            <strong>{g.title}</strong>
+                            <span className={`status ${pace.onPace ? "done" : "late"}`}>
+                              {pace.onPace ? "No ritmo" : "Abaixo do ritmo"}
+                            </span>
+                          </div>
+                          <div className="budget-right">
+                            <span className="budget-remaining">
+                              Meta: <strong>{money(pace.targetCents)}</strong> até {fmtDate(g.desired_on)}
+                            </span>
+                            <button
+                              type="button"
+                              className="tiny-btn"
+                              aria-label={`Remover meta ${g.title}`}
+                              onClick={() => cancelGoal(g.id)}
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="budget-bar" role="progressbar" aria-valuenow={pace.progressPct} aria-valuemin={0} aria-valuemax={100}>
+                          <div className="budget-fill" style={{ width: `${pace.progressPct}%` }} />
+                        </div>
+                        <div className="budget-meta">
+                          <span>
+                            Acumulado: <strong>{money(pace.currentCapitalCents)}</strong> ({pace.progressPct}%) ·{" "}
+                            {pace.onPace
+                              ? `Aporte atual (${money(pace.monthlyContributionCents)}/mês) bate a meta`
+                              : `Precisa de ${money(pace.requiredMonthlyCents)}/mês (faltam +${money(pace.monthlyGapCents)}/mês)`}
+                          </span>
+                          <span>Faltam: {money(pace.remainingCents)}</span>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <Empty>
+                  Defina uma meta de capital (ex.: R$ 5.000 até dezembro) para acompanhar se seus aportes estão no ritmo certo.
+                </Empty>
+              )}
+            </section>
+
+            <section className="card panel">
+              <div className="card-heading" style={{ marginBottom: 14 }}>
+                <div>
+                  <div className="eyebrow">EVOLUÇÃO NO PERÍODO FILTRADO</div>
+                  <h2 className="card-title">Projeção de caixa e capital até {fmtDate(date)}</h2>
                 </div>
               </div>
               {summary.knownCash && charts.length ? (
@@ -1360,25 +1458,25 @@ export default function Dashboard({ user }) {
                       return true;
                     })
                     .map((w) => {
-                    const isCap = w.is_reserved || w.wallet_kind === "reserve" || w.wallet_kind === "investment";
-                    return (
-                      <article className="account-panel-row" key={w.id}>
-                        <div className="account-icon">
-                          <Wallet size={20} />
-                        </div>
-                        <div className="account-info">
-                          <h3>
-                            {w.name}{" "}
-                            <span className="small-flag" style={{ marginLeft: 6, fontSize: 10 }}>
-                              {isCap ? "Capital / Reserva" : "Uso diário"}
-                            </span>
-                          </h3>
-                          <p>Saldo inicial em {w.opening_at ? fmtDate(w.opening_at) : "data não informada"}</p>
-                        </div>
-                        <strong>{display(walletBalance(w))}</strong>
-                      </article>
-                    );
-                  })
+                      const isCap = w.is_reserved || w.wallet_kind === "reserve" || w.wallet_kind === "investment";
+                      return (
+                        <article className="account-panel-row" key={w.id}>
+                          <div className="account-icon">
+                            <Wallet size={20} />
+                          </div>
+                          <div className="account-info">
+                            <h3>
+                              {w.name}{" "}
+                              <span className="small-flag" style={{ marginLeft: 6, fontSize: 10 }}>
+                                {isCap ? "Capital / Reserva" : "Uso diário"}
+                              </span>
+                            </h3>
+                            <p>Saldo inicial em {w.opening_at ? fmtDate(w.opening_at) : "data não informada"}</p>
+                          </div>
+                          <strong>{display(walletBalance(w))}</strong>
+                        </article>
+                      );
+                    })
                 ) : (
                   <Empty>Nenhuma conta cadastrada.</Empty>
                 )}
@@ -1386,25 +1484,25 @@ export default function Dashboard({ user }) {
             </section>
 
             <div className="register-grid">
-              <section className="card panel">
+              <section className="card panel" style={{ opacity: 0.92 }}>
                 <div className="card-heading">
-                  <h2 className="card-title">Bens e investimentos</h2>
+                  <div>
+                    <div className="eyebrow">VISÃO COMPLEMENTAR</div>
+                    <h2 className="card-title">Patrimônio líquido em {fmtDate(date)}</h2>
+                  </div>
+                </div>
+                <div className="large-line">{display(netWorthAtDateCents)}</div>
+                <p className="hint">Caixa total projetado + bens declarados − endividamento restante.</p>
+              </section>
+              <section className="card panel" style={{ opacity: 0.92 }}>
+                <div className="card-heading">
+                  <h2 className="card-title">Bens e imóveis (secundário)</h2>
                   <button type="button" className="tiny-btn" onClick={() => open("asset")}>
                     <Plus size={15} /> Adicionar
                   </button>
                 </div>
                 <div className="large-line">{money(summary.assets)}</div>
-                <p className="hint">Ativos fora dos saldos de conta.</p>
-              </section>
-              <section className="card panel">
-                <div className="card-heading">
-                  <h2 className="card-title">Dívidas declaradas</h2>
-                  <button type="button" className="tiny-btn" onClick={() => open("liability")}>
-                    <Plus size={15} /> Adicionar
-                  </button>
-                </div>
-                <div className="large-line">{money(summary.liabilities)}</div>
-                <p className="hint">Passivos declarados. Evolução automática de contratos financeiros será uma etapa própria.</p>
+                <p className="hint">Bens imobilizados fora do capital líquido.</p>
               </section>
             </div>
           </div>
@@ -1413,6 +1511,101 @@ export default function Dashboard({ user }) {
         {active === "health" && (
           <div className="workspace">
             <HealthDiagnosisCard healthPlan={healthPlan} onOpenPlanning={() => setTab("planning")} />
+
+            <div className="register-grid">
+              <section className="card panel">
+                <div className="card-heading" style={{ marginBottom: 14 }}>
+                  <div>
+                    <div className="eyebrow">DEDO DURO · PADRÕES DE CONSUMO</div>
+                    <h2 className="card-title">Onde o dinheiro escoa</h2>
+                  </div>
+                  <Eye size={18} />
+                </div>
+                {habits.smallLeaks.detected ? (
+                  <div className="alert" style={{ marginBottom: 12 }}>
+                    <AlertTriangle size={16} />
+                    <span>
+                      <strong>Efeito Formiguinha:</strong> {habits.smallLeaks.count} gastos pequenos (≤ R$ 50) somaram{" "}
+                      <strong>{money(habits.smallLeaks.monthlyTotalCents)}</strong> no período ({money(habits.smallLeaks.annualizedCents)}/ano).
+                    </span>
+                  </div>
+                ) : (
+                  <p className="hint" style={{ marginBottom: 12 }}>
+                    Nenhum padrão crítico de gastos formiguinha detectado neste período.
+                  </p>
+                )}
+
+                {habits.topLeaks.length > 0 ? (
+                  <div className="budget-list">
+                    {habits.topLeaks.map((l) => (
+                      <div className="budget-card" key={l.category} style={{ padding: "10px 14px" }}>
+                        <div className="budget-row-top">
+                          <strong>{l.category}</strong>
+                          <span>
+                            <strong>{money(l.amountCents)}</strong> ({l.sharePct}% dos gastos)
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <Empty>Sem despesas registradas no período para mapear hábitos.</Empty>
+                )}
+
+                {habits.weekend.count > 0 && (
+                  <p className="hint" style={{ marginTop: 12 }}>
+                    Fins de semana concentram <strong>{habits.weekend.sharePct}%</strong> das suas saídas ({money(habits.weekend.amountCents)}).
+                  </p>
+                )}
+              </section>
+
+              <section className="card panel">
+                <div className="card-heading" style={{ marginBottom: 14 }}>
+                  <div>
+                    <div className="eyebrow">TESOURAÇO · REEDUCAÇÃO</div>
+                    <h2 className="card-title">Plano de corte imediato</h2>
+                  </div>
+                  <Scissors size={18} />
+                </div>
+                {habits.tesouraco.potentialMonthlySavingsCents > 0 ? (
+                  <div className="goal-verdict ok" style={{ marginBottom: 14 }}>
+                    <Scissors size={18} />
+                    <div>
+                      <strong>
+                        Economia potencial: +{money(habits.tesouraco.potentialMonthlySavingsCents)}/mês
+                      </strong>
+                      <small>
+                        Cortando 25% de {habits.tesouraco.topTargetCategory || "gastos variáveis"} e metade dos gastos pequenos, você libera{" "}
+                        {money(habits.tesouraco.potentialAnnualSavingsCents)} em 12 meses.
+                      </small>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="hint" style={{ marginBottom: 12 }}>
+                    Registre seus gastos para receber recomendações de corte personalizadas.
+                  </p>
+                )}
+
+                {habits.recurringItems.length > 0 && (
+                  <div className="budget-list">
+                    {habits.recurringItems.slice(0, 4).map((r) => (
+                      <div className="budget-card" key={r.id} style={{ padding: "10px 14px" }}>
+                        <div className="budget-row-top">
+                          <span>
+                            <strong>{r.description}</strong> <small className="hint">({r.category})</small>
+                          </span>
+                          <span>
+                            <strong>{money(r.monthlyCents)}/mês</strong>{" "}
+                            <small className="hint">({money(r.annualCents)}/ano)</small>
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </div>
+
             <PlanningGoalsPanel rawData={data} healthPlan={healthPlan} busy={busy} section="health" />
           </div>
         )}
@@ -1562,6 +1755,19 @@ export default function Dashboard({ user }) {
                   <span>
                     Novo planejamento de compra
                     <small>Descobrir o melhor momento para comprar sem gerar cobrança</small>
+                  </span>
+                  <span>›</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActionMenu(null);
+                    open("capital_goal");
+                  }}
+                >
+                  <span>
+                    Nova meta de capital
+                    <small>Definir quanto quer acumular até uma data e acompanhar o ritmo</small>
                   </span>
                   <span>›</span>
                 </button>
