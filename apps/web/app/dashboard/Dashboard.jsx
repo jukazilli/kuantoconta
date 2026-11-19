@@ -2193,7 +2193,7 @@ export default function Dashboard({ user }) {
             </div>
             <div style={{ maxHeight: "65vh", overflowY: "auto", display: "grid", gap: 14 }}>
               {healthModal === "diagnosis" && (
-                <HealthDiagnosisCard healthPlan={healthPlan} onOpenPlanning={() => { setHealthModal(null); setTab("planning"); }} />
+                <HealthDiagnosisCard healthPlan={healthPlan} />
               )}
               {healthModal === "dedoduro" && (
                 <>
