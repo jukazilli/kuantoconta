@@ -500,13 +500,23 @@ export function computeProjectedBalanceWithBudgetsCents({
  * across the entire future horizon (2028, 2029, etc.), excluding open-ended recurring bills
  * without an end date, plus active liabilities not already linked to a title series.
  */
-export function computeTotalDebtCents({ titles = [], liabilities = [], knownCash = false }) {
+export function computeTotalDebtCents({ titles = [], liabilities = [], knownCash = false, mode = "all_commitments" }) {
+  const isFinancialDebtTitle = (t) => {
+    const kind = t.entry_kind || "standard";
+    if (kind === "debt_payment" || t.liability_id) return true;
+    if (Number(t.installment_total || 1) > 1) return true;
+    const cat = normalizeCategoryName(t.category || "");
+    return cat.includes("emprestimo") || cat.includes("cartao") || cat.includes("financiamento") || cat.includes("divida");
+  };
+
   const pendingTitles = titles.filter(
     (t) =>
       !t.cancelled_at &&
       t.direction === "expense" &&
       (t.entry_kind || "standard") !== "reserve_transfer" &&
-      !t.virtual // open-ended virtual recurrences are excluded; materialized & finite installments are included
+      (t.entry_kind || "standard") !== "loan_out" &&
+      !t.virtual && // open-ended virtual recurrences are excluded; materialized & finite installments are included
+      (mode !== "financial_only" || isFinancialDebtTitle(t))
   );
   const titleSeriesIds = new Set(
     pendingTitles.filter((t) => t.series_id).map((t) => String(t.series_id))

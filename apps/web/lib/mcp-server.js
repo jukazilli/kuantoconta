@@ -108,7 +108,8 @@ export function createKuantoContaMcpServer(ownerId, deps = {}) {
         const data = await getPortfolio(ownerId);
         const expanded = expandRecurring(data, start < today ? start : today, end < today ? today : end);
         const summary = computeRange(expanded, start, end, today);
-        const totalDebtCents = computeTotalDebtCents(data, today);
+        const totalDebtCents = computeTotalDebtCents({ ...data, mode: "all_commitments" });
+        const financialDebtOnlyCents = computeTotalDebtCents({ ...data, mode: "financial_only" });
 
         return jsonText({
           period: { rangeStart: start, date: end, today },
@@ -122,13 +123,19 @@ export function createKuantoContaMcpServer(ownerId, deps = {}) {
           toReceiveFormatted: money(summary.openIncome),
           totalDebtCents,
           totalDebtFormatted: money(totalDebtCents),
+          totalCommitmentsCents: totalDebtCents,
+          totalCommitmentsFormatted: money(totalDebtCents),
+          financialDebtOnlyCents,
+          financialDebtOnlyFormatted: money(financialDebtOnlyCents),
           minCashCents: summary.minCash,
-          wallets: (data.wallets || []).map((w) => ({
-            id: w.id,
-            name: w.name,
-            walletKind: w.wallet_kind,
-            isReserved: Boolean(w.is_reserved),
-          })),
+          wallets: (data.wallets || [])
+            .filter((w) => !w.archived_at)
+            .map((w) => ({
+              id: w.id,
+              name: w.name,
+              walletKind: w.wallet_kind,
+              isReserved: Boolean(w.is_reserved),
+            })),
         });
       })
   );
