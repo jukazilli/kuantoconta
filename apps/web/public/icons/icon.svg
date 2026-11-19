@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="kuantoconta">
+  <defs>
+    <linearGradient id="kc-bg" x1="20%" y1="0%" x2="80%" y2="100%">
+      <stop offset="0%" stop-color="#ffa123"/>
+      <stop offset="60%" stop-color="#ff6a0c"/>
+      <stop offset="100%" stop-color="#f14c10"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="116" fill="url(#kc-bg)"/>
+  <g stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <line x1="182" y1="126" x2="182" y2="386" stroke-width="68"/>
+    <line x1="198" y1="284" x2="330" y2="202" stroke-width="64"/>
+    <line x1="238" y1="264" x2="340" y2="386" stroke-width="66"/>
+  </g>
+</svg>

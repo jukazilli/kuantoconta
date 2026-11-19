@@ -1812,3 +1812,171 @@ input:not([type=checkbox]):not([type=radio]), select, textarea { font-size: 16px
 .tour-dots span.done { background: #ffb085; }
 .tour-dots span.active { width: 22px; background: var(--kc-orange); }
 .tour-actions { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 2px; }
+
+/* PWA — Standalone mode, Offline shell, Status banners & Install card */
+@media (display-mode: standalone) {
+  html, body {
+    overscroll-behavior-y: contain;
+  }
+  .app {
+    padding-top: max(10px, env(safe-area-inset-top, 0px));
+    padding-left: max(14px, env(safe-area-inset-left, 0px));
+    padding-right: max(14px, env(safe-area-inset-right, 0px));
+  }
+}
+
+.pwa-banner {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(82px + env(safe-area-inset-bottom, 0px));
+  z-index: 130;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100vw - 28px);
+  padding: 10px 14px;
+  border-radius: var(--kc-radius-pill);
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 12px 32px rgba(22, 23, 28, .18);
+}
+
+.pwa-banner-offline {
+  background: var(--kc-ink);
+  color: #ffffff;
+}
+
+.pwa-banner-update {
+  background: var(--kc-surface);
+  color: var(--kc-ink);
+  border: 1px solid var(--kc-line);
+}
+
+.pwa-banner-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--kc-radius-pill);
+  background: var(--kc-orange);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pwa-banner-btn:active {
+  transform: scale(0.97);
+}
+
+.pwa-install-card {
+  display: grid;
+  gap: 14px;
+}
+
+.pwa-install-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.pwa-install-icon {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: var(--kc-orange-pale);
+  color: var(--kc-orange);
+}
+
+.pwa-install-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.pwa-install-status {
+  display: flex;
+  align-items: center;
+}
+
+.pwa-status-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: var(--kc-radius-pill);
+  background: rgba(22, 153, 102, 0.12);
+  color: var(--kc-green);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pwa-ios-steps {
+  padding: 12px 14px;
+  border-radius: var(--kc-radius-inner);
+  background: var(--kc-surface-inner);
+}
+
+.pwa-ios-step {
+  margin: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--kc-muted-dark);
+}
+
+.pwa-ios-step svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--kc-orange);
+}
+
+.offline-shell {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: max(24px, env(safe-area-inset-top, 0px)) 20px max(24px, env(safe-area-inset-bottom, 0px));
+}
+
+.offline-card {
+  width: min(440px, 100%);
+  padding: 28px 24px;
+  display: grid;
+  gap: 14px;
+  text-align: center;
+  justify-items: center;
+}
+
+.offline-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.offline-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 18px;
+  display: grid;
+  place-items: center;
+  background: var(--kc-orange-pale);
+  color: var(--kc-orange);
+}
+
+.offline-card h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.offline-actions {
+  margin-top: 4px;
+  display: flex;
+  justify-content: center;
+}
