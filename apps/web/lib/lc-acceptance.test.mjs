@@ -141,7 +141,7 @@ test("LC-12, LC-13, LC-14, LC-15, LC-25: dated plan hits 01/12 (not 31/12), unda
 });
 
 test("LC-18 & LC-23: API isolates spending plans by owner.id and EntryDrawer avoids technical jargon", () => {
-  const routeSrc = readFileSync(path.join(__dirname, "../app/api/portfolio/route.js"), "utf8");
+  const routeSrc = readFileSync(path.join(__dirname, "./portfolio-service.js"), "utf8");
   assert.match(routeSrc, /FROM public\.kc_spending_plans WHERE user_id=\$\{owner\.id\}/);
   assert.match(routeSrc, /FROM public\.kc_spending_plan_applications WHERE user_id=\$\{owner\.id\}/);
   assert.match(routeSrc, /UPDATE public\.kc_spending_plans SET status='cancelled'.*AND user_id=\$\{owner\.id\}/);

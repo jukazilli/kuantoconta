@@ -50,6 +50,7 @@ import HealthDiagnosisCard from "./HealthDiagnosisCard";
 import PlanningGoalsPanel from "./PlanningGoalsPanel";
 import GuidedTour from "./GuidedTour";
 import BankIcon from "./BankIcon";
+import McpConnectionsCard from "./McpConnectionsCard";
 
 const TABS = [
   ["overview", "Visão geral"],
@@ -1755,6 +1756,7 @@ export default function Dashboard({ user }) {
                 </div>
               </div>
             </section>
+            <McpConnectionsCard />
           </div>
         )}
       </main>
