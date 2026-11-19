@@ -390,27 +390,28 @@ export default function EntryDrawer({
       })()}
     </>}
    </form>}
-   {budgetPicker&&<div className="nested-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setBudgetPicker(false);}}>
-     <div className="quick-category budget-picker-dialog" role="dialog" aria-modal="true" aria-label="Selecionar orçamento">
-       <div className="quick-head">
-         <h3>Selecionar orçamento</h3>
-         <button type="button" aria-label="Fechar" onClick={()=>setBudgetPicker(false)}><X size={20}/></button>
-       </div>
-       <div className="action-menu">
-         {roots.map(c=>{
-           const meta=formatBudgetMeta(c.name);
-           const isOver=meta.startsWith("Estourado");
-           return <button type="button" key={c.id} className={form.category===c.name?"selected":""} onClick={()=>{setForm(old=>({...old,category:c.name,spendingPlanId:""}));setBudgetPicker(false);}}>
-             <span>{c.name}<small className={isOver?"red":""}>{meta}</small></span>
-             <span>{form.category===c.name?<Check size={16}/>:"›"}</span>
-           </button>;
-         })}
-       </div>
-       <button type="button" className="light-button" onClick={()=>{setBudgetPicker(false);setQuick("category");setNewName("");setQuickError("");}}>
-         <Plus size={16}/> Novo orçamento
-       </button>
+ </section>
+ {budgetPicker&&<div className="nested-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setBudgetPicker(false);}}>
+   <div className="quick-category budget-picker-dialog" role="dialog" aria-modal="true" aria-label="Selecionar orçamento">
+     <div className="quick-head">
+       <h3>Selecionar orçamento</h3>
+       <button type="button" aria-label="Fechar" onClick={()=>setBudgetPicker(false)}><X size={20}/></button>
      </div>
-   </div>}
-   {quick&&<div className="nested-overlay"><form className="quick-category" onSubmit={createCategory}><div className="quick-head"><h3>{form.direction==="income"?"Nova origem de receita":"Novo orçamento"}</h3><button type="button" aria-label="Fechar" onClick={()=>{setQuick(null);setTrackBudget(false);setQuickLimit("");}}><X size={20}/></button></div><label>Nome<input required maxLength={80} autoFocus value={newName} onChange={e=>setNewName(e.target.value)} placeholder={form.direction==="income"?"Ex.: Freelance":"Ex.: Transporte"}/></label>{form.direction==="expense"&&<><label className="kc-check"><input type="checkbox" checked={trackBudget} onChange={e=>setTrackBudget(e.target.checked)}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Controlar limite mensal</span></label>{trackBudget&&<label>Limite mensal (R$)<MoneyInput value={quickLimit} onChange={setQuickLimit} ariaLabel="Limite mensal em reais"/></label>}</>}{quickError&&<div className="notice error" role="alert">{quickError}</div>}<button type="submit" className="dark-button" disabled={quickBusy}>{quickBusy?"Salvando...":"Adicionar"}</button></form></div>}
- </section></div>;
+     <div className="action-menu">
+       {roots.map(c=>{
+         const meta=formatBudgetMeta(c.name);
+         const isOver=meta.startsWith("Estourado");
+         return <button type="button" key={c.id} className={form.category===c.name?"selected":""} onClick={()=>{setForm(old=>({...old,category:c.name,spendingPlanId:""}));setBudgetPicker(false);}}>
+           <span>{c.name}<small className={isOver?"red":""}>{meta}</small></span>
+           <span>{form.category===c.name?<Check size={16}/>:"›"}</span>
+         </button>;
+       })}
+     </div>
+     <button type="button" className="light-button" onClick={()=>{setBudgetPicker(false);setQuick("category");setNewName("");setQuickError("");}}>
+       <Plus size={16}/> Novo orçamento
+     </button>
+   </div>
+ </div>}
+ {quick&&<div className="nested-overlay" onMouseDown={e=>{if(e.target===e.currentTarget){setQuick(null);setTrackBudget(false);setQuickLimit("");}}}><form className="quick-category" onSubmit={createCategory}><div className="quick-head"><h3>{form.direction==="income"?"Nova origem de receita":"Novo orçamento"}</h3><button type="button" aria-label="Fechar" onClick={()=>{setQuick(null);setTrackBudget(false);setQuickLimit("");}}><X size={20}/></button></div><label>Nome<input required maxLength={80} autoFocus value={newName} onChange={e=>setNewName(e.target.value)} placeholder={form.direction==="income"?"Ex.: Freelance":"Ex.: Transporte"}/></label>{form.direction==="expense"&&<><label className="kc-check"><input type="checkbox" checked={trackBudget} onChange={e=>setTrackBudget(e.target.checked)}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Controlar limite mensal</span></label>{trackBudget&&<label>Limite mensal (R$)<MoneyInput value={quickLimit} onChange={setQuickLimit} ariaLabel="Limite mensal em reais"/></label>}</>}{quickError&&<div className="notice error" role="alert">{quickError}</div>}<button type="submit" className="dark-button" disabled={quickBusy}>{quickBusy?"Salvando...":"Adicionar"}</button></form></div>}
+ </div>;
 }
