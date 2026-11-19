@@ -1,0 +1,56 @@
+{
+  "project": "Kuantoconta",
+  "reference": "Visão geral — direção aprovada em 18/11/2026",
+  "reference_image_px": {"width": 1448, "height": 1086},
+  "fidelity_note": "Tokens estimados a partir de imagem raster gerada. A fonte original não pode ser identificada de modo conclusivo apenas pela imagem; Poppins é a opção de reprodução visual escolhida com base na referência Moniex.",
+  "type": {
+    "family": "Poppins",
+    "fallback": ["Inter", "system-ui", "sans-serif"],
+    "weights": {"regular": 400, "medium": 500, "semibold": 600, "bold": 700},
+    "sizes_px": {"logo": 24, "card_heading": 20, "metric_value": 21, "metric_label": 15, "body": 14, "eyebrow": 12, "small_metadata": 12},
+    "letter_spacing": {"logo_px": -1.35, "card_heading_px": -0.8, "eyebrow_px": 1.5}
+  },
+  "colors": {
+    "canvas": "#F2F3FB",
+    "card_surface": "#F8F9FE",
+    "card_surface_inner": "#F3F4F9",
+    "ink": "#16171C",
+    "muted": "#737789",
+    "muted_dark": "#51576A",
+    "border": "#E7E8EF",
+    "orange_reference_sample": "#FE6803",
+    "orange_light": "#FF9652",
+    "orange_pale": "#FFF1E8",
+    "bank_logo_exception": "#9D08EB"
+  },
+  "layout_px_at_reference_size": {
+    "outer_left": 36,
+    "outer_right": 72,
+    "logo_top": 9,
+    "toolbar_top": 91,
+    "cards_top": 178,
+    "main_column_gap": 18,
+    "summary_cards_height": 91,
+    "commitments_height": 202,
+    "top_left_column_width": 784,
+    "top_right_column_width": 539,
+    "charts_row_top": 520,
+    "charts_height": 321,
+    "charts_widths": [527, 400, 377],
+    "dock_width": 812,
+    "dock_height": 58,
+    "dock_bottom": 66,
+    "card_radius": 20,
+    "inner_radius": 16,
+    "pill_radius": 999
+  },
+  "navigation": ["Visão geral", "Movimentos", "Planejamento", "Patrimônio", "Saúde financeira", "Perfil"],
+  "interaction_contract": {
+    "add": ["Gastei", "Vou gastar", "Tenho uma conta"],
+    "create": ["Nova conta", "Novo limite", "Nova meta"],
+    "month_picker": "Chevrons que mudam o mês exibido; inicialmente novembro de 2026",
+    "filter": "Botão separado do seletor de mês",
+    "main_navigation": "Dock centralizado no rodapé, com Visão geral ativa"
+  },
+  "finance_guardrail": "Os valores dos gráficos e cartões são reprodução da imagem, não uma demonstração de cálculos conciliados; na implementação devem ser provenientes exclusivamente do motor financeiro do Kuantoconta."
+}
