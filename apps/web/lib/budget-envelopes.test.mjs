@@ -6,7 +6,9 @@ import {
   suggestBudgetsFromIncome,
   computeBudgetSummary,
   computeProjectedBalanceWithBudgetsCents,
+  computeTotalDebtCents,
 } from "./budgets.js";
+import { buildNotifications } from "./notifications.js";
 
 test("blocks active budget limit when monthly income is zero", () => {
   const res = validateBudgetAllocationCeiling({
@@ -149,4 +151,70 @@ test("computeProjectedBalanceWithBudgetsCents commits budget limits without doub
     ],
   });
   assert.equal(afterOverrun, 126000);
+});
+
+test("computeProjectedBalanceWithBudgetsCents carries forward operational cash and excludes settled budget expenses", () => {
+  // Month 10 left R$ 300 in checking (after R$ 700 went to Capital).
+  // Month 11 has R$ 2400 pending salary and R$ 300 Transporte budget (R$ 17 already settled in checking).
+  // Live checking = 300 - 17 = 283. Remaining Transporte commitment = 300 - 17 = 283.
+  // Projected = 283 + 2400 - 283 = 2400.
+  const projected = computeProjectedBalanceWithBudgetsCents({
+    openingOperationalCents: 28300,
+    rows: [
+      { id: "inc", direction: "income", amount_cents: 240000, settled_cents: 0 },
+      { id: "exp", direction: "expense", category: "Transporte", category_id: "cat-trans", amount_cents: 1700, settled_cents: 1700 },
+    ],
+    budgetSummary: [
+      { categoryId: "cat-trans", categoryName: "Transporte", limitCents: 30000, usedCents: 1700 },
+    ],
+  });
+  assert.equal(projected, 240000);
+});
+
+test("computeMonthlyIncomeCeilingCents excludes loan principal inflows", () => {
+  const income = computeMonthlyIncomeCeilingCents({
+    month: "2026-11",
+    titles: [
+      { id: "1", direction: "income", amount_cents: 240000, due_on: "2026-11-05", entry_kind: "standard" },
+      { id: "2", direction: "income", amount_cents: 1000000, due_on: "2026-11-10", entry_kind: "debt_payment", liability_id: "liab-1" },
+    ],
+  });
+  assert.equal(income, 240000);
+});
+
+test("computeTotalDebtCents sums all future finite installments (including 2028) without counting open-ended rent or double-counting linked liabilities", () => {
+  const debt = computeTotalDebtCents({
+    knownCash: true,
+    titles: [
+      { id: "1", direction: "expense", amount_cents: 50000, settled_cents: 0, due_on: "2026-12-10", series_id: "s-loan" },
+      { id: "2", direction: "expense", amount_cents: 50000, settled_cents: 0, due_on: "2028-05-10", series_id: "s-loan" },
+      { id: "3", direction: "expense", amount_cents: 79000, settled_cents: 0, due_on: "2026-12-05", virtual: true }, // open-ended rent
+    ],
+    liabilities: [
+      { id: "l-1", principal_cents: 100000, status: "active", series_id: "s-loan" }, // linked -> not double-counted
+      { id: "l-2", principal_cents: 25000, status: "active" }, // unlinked -> summed
+    ],
+  });
+  assert.equal(debt, 125000);
+});
+
+test("buildNotifications surfaces planned goals, due bills, budget overruns, capital reminders, and cash risk", () => {
+  const alerts = buildNotifications({
+    today: "2026-11-19",
+    summary: { firstNegative: "2026-11-28" },
+    healthPlan: { goals: { items: [{ title: "Notebook", targetCents: 250000, desiredOn: "2026-11-25" }] } },
+    titles: [
+      { id: "1", direction: "income", description: "Salário", amount_cents: 240000, settled_cents: 240000, due_on: "2026-11-05", entry_kind: "standard" },
+      { id: "2", direction: "expense", description: "Aluguel", amount_cents: 79000, settled_cents: 0, due_on: "2026-11-20" },
+    ],
+    budgetSummary: [
+      { categoryId: "c1", categoryName: "Transporte", limitCents: 30000, remainingLimitCents: -1700, utilizationPct: 106 },
+      { categoryId: "c2", categoryName: "Reserva e Capital", limitCents: 48000, remainingLimitCents: 48000, utilizationPct: 0 },
+    ],
+  });
+  assert.equal(alerts.some((a) => a.id.startsWith("goal-")), true);
+  assert.equal(alerts.some((a) => a.id === "bills-soon"), true);
+  assert.equal(alerts.some((a) => a.id === "budget-over-c1"), true);
+  assert.equal(alerts.some((a) => a.id === "capital-pending"), true);
+  assert.equal(alerts.some((a) => a.id === "negative-cash"), true);
 });
