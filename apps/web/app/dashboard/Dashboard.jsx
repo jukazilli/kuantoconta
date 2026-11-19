@@ -569,12 +569,17 @@ export default function Dashboard({ user }) {
           firstDueOn: form.dueOn || TODAY,
         });
       } else if (drawer === "goal_sim") {
+        const interestBps = Math.min(
+          10000,
+          Math.max(0, Math.round(Number(String(form.goalInterestPct || "0").replace(",", ".")) * 100) || 0)
+        );
         await request("POST", {
           action: "goal",
           title: form.description || "Compra planejada",
           target: maskToDecimal(form.goalTarget || "0,00"),
           downPayment: maskToDecimal(form.goalDownPayment || "0,00"),
           installmentCount: Number(form.goalInstallments || 1),
+          interestBps,
           desiredOn: form.goalDesiredOn || TODAY,
         });
       } else if (drawer === "capital_goal") {
@@ -1174,6 +1179,7 @@ export default function Dashboard({ user }) {
                             downPaymentCents: cents(g.down_payment_cents),
                             installmentCount: Number(g.installment_count || 1),
                             installmentCents: cents(g.installment_cents),
+                            interestBps: Number(g.interest_bps || 0),
                             desiredOn: isoDate(g.desired_on) || TODAY,
                           },
                           { today: TODAY }
@@ -2190,6 +2196,33 @@ export default function Dashboard({ user }) {
                   </small>
                 </div>
               </div>
+
+              {selectedGoal.sim.twoStepVerdict && (
+                <div className="repeat-config">
+                  <div className="repeat-preview" style={{ borderTop: 0, paddingTop: 0 }}>
+                    <span>
+                      <strong>1. Entrada ({money(selectedGoal.sim.twoStepVerdict.downPaymentCents)}):</strong>{" "}
+                      {selectedGoal.sim.twoStepVerdict.hasDownPaymentNow
+                        ? "Disponível hoje"
+                        : selectedGoal.sim.twoStepVerdict.downPaymentReadyDate
+                          ? `Pronta em ${fmtDate(selectedGoal.sim.twoStepVerdict.downPaymentReadyDate)}`
+                          : "Insuficiente no horizonte"}
+                    </span>
+                    <span>
+                      <strong>2. Parcela ({money(selectedGoal.sim.twoStepVerdict.perInstallmentCents)}/mês):</strong>{" "}
+                      {selectedGoal.sim.twoStepVerdict.installmentFitsMonthly
+                        ? `Cabe na sobra mensal (${money(selectedGoal.sim.twoStepVerdict.monthlyFreeSurplusCents)}/mês)`
+                        : `Não cabe (${money(selectedGoal.sim.twoStepVerdict.monthlyFreeSurplusCents)}/mês · faltam ${money(selectedGoal.sim.twoStepVerdict.monthlyGapCents)}/mês)`}
+                    </span>
+                    {selectedGoal.sim.totalInterestCents > 0 && (
+                      <span>
+                        <strong>Juros totais:</strong> {money(selectedGoal.sim.totalInterestCents)} · Custo final:{" "}
+                        {money(selectedGoal.sim.totalCostCents)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {selectedGoal.sim.scenarios?.length > 0 && (
                 <div className="goal-scenarios">

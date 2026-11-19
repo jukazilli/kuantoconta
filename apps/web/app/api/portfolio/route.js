@@ -4,6 +4,7 @@ import {DEFAULT_CATEGORIES,allowedRoot,canonicalCategoryKey,normalizeCategoryNam
 import {isValidMonth,computeMonthlyIncomeCeilingCents,validateBudgetAllocationCeiling,suggestBudgetsFromIncome} from "../../../lib/budgets";
 import {decodeOccurrenceId,occurrenceForMonth} from "../../../lib/recurring";
 import {validScope} from "../../../lib/cancel-scope";
+import {computePriceInstallmentCents} from "../../../lib/goal-planner";
 import {getIdentity,legalAccepted,sameOrigin,PRIVATE_HEADERS} from "../../../lib/authorization";
 export const runtime="nodejs";
 export const dynamic="force-dynamic";
@@ -360,10 +361,11 @@ export async function POST(request){
    if(downPaymentCents>targetCents)return error("Entrada não pode superar o valor total.");
    const installmentCount=Number(x.installmentCount||1);
    if(!Number.isInteger(installmentCount)||installmentCount<1||installmentCount>120)return error("Quantidade de parcelas inválida.");
-   const installmentCents=x.installmentAmount?amount(x.installmentAmount,true):Math.ceil((targetCents-downPaymentCents)/installmentCount);
+   const interestBps=Math.min(10000,Math.max(0,Math.round(Number(x.interestBps||0))));
+   const installmentCents=x.installmentAmount?amount(x.installmentAmount,true):computePriceInstallmentCents({financedCents:targetCents-downPaymentCents,installmentCount,monthlyInterestBps:interestBps});
    const desiredOn=x.desiredOn&&day(x.desiredOn)?x.desiredOn:null;
    const category=textValue(x.category,60)||null;
-   const rows=await sql`INSERT INTO public.kc_financial_goals(user_id,title,category,target_cents,down_payment_cents,installment_count,installment_cents,desired_on,status) VALUES(${owner.id},${title},${category},${targetCents},${downPaymentCents},${installmentCount},${installmentCents},${desiredOn}::date,'simulated') RETURNING id`;
+   const rows=await sql`INSERT INTO public.kc_financial_goals(user_id,title,category,target_cents,down_payment_cents,installment_count,installment_cents,interest_bps,desired_on,status) VALUES(${owner.id},${title},${category},${targetCents},${downPaymentCents},${installmentCount},${installmentCents},${interestBps},${desiredOn}::date,'simulated') RETURNING id`;
    return send({saved:true,id:rows[0]?.id},201);
   }
   return error("Ação não reconhecida.");
