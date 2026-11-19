@@ -1561,11 +1561,39 @@ export default function Dashboard({ user }) {
 
                 <div className="card kpi-panel health-kpi-gauge">
                   <span className="metric-label">Comprometimento da renda</span>
-                  <FinanceChart type="gauge" data={[{ value: commitPct, name: "Comprometido" }]} height={115} />
+                  <FinanceChart type="gauge" data={[{ value: commitPct, name: "Comprometido" }]} height={145} />
                 </div>
               </div>
 
-              {/* Linha 2: Dedo Duro & Tesouraço com Gráficos */}
+              {/* Linha 2: Stepper Horizontal de Recuperação (acima da dobra) */}
+              <section className="card panel health-milestones-hero">
+                <div className="card-heading" style={{ marginBottom: 14 }}>
+                  <div>
+                    <div className="eyebrow">LINHA DO TEMPO · HORIZONTE 12 MESES</div>
+                    <h2 className="card-title">Marcos de recuperação</h2>
+                  </div>
+                  <button type="button" className="mini-pill" onClick={() => setHealthModal("milestones")}>
+                    Capacidade alocável <ChevronRight size={14} />
+                  </button>
+                </div>
+                <div className="health-stepper">
+                  {[
+                    ["1. Contas cobertas", fmtM(miles.firstCoveredMonth), Boolean(miles.firstCoveredMonth)],
+                    ["2. Início dos aportes", fmtM(miles.firstSavingMonth), Boolean(miles.firstSavingMonth)],
+                    ["3. Estabilidade", fmtM(miles.firstStableMonth), Boolean(miles.firstStableMonth)],
+                  ].map(([title, when, reached]) => (
+                    <div className={`health-step${reached ? " reached" : ""}`} key={title}>
+                      <span className="health-step-dot" aria-hidden="true" />
+                      <div>
+                        <span>{title}</span>
+                        <strong>{when}</strong>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              {/* Linha 3: Dedo Duro & Tesouraço com Gráficos */}
               <div className="register-grid">
                 <section className="card panel">
                   <div className="card-heading" style={{ marginBottom: 10 }}>
@@ -1629,34 +1657,6 @@ export default function Dashboard({ user }) {
                   )}
                 </section>
               </div>
-
-              {/* Linha 3: Stepper Horizontal de Recuperação */}
-              <section className="card panel">
-                <div className="card-heading" style={{ marginBottom: 16 }}>
-                  <div>
-                    <div className="eyebrow">LINHA DO TEMPO · HORIZONTE 12 MESES</div>
-                    <h2 className="card-title">Marcos de recuperação</h2>
-                  </div>
-                  <button type="button" className="mini-pill" onClick={() => setHealthModal("milestones")}>
-                    Capacidade alocável <ChevronRight size={14} />
-                  </button>
-                </div>
-                <div className="health-stepper">
-                  {[
-                    ["1. Contas cobertas", fmtM(miles.firstCoveredMonth), Boolean(miles.firstCoveredMonth)],
-                    ["2. Início dos aportes", fmtM(miles.firstSavingMonth), Boolean(miles.firstSavingMonth)],
-                    ["3. Estabilidade", fmtM(miles.firstStableMonth), Boolean(miles.firstStableMonth)],
-                  ].map(([title, when, reached]) => (
-                    <div className={`health-step${reached ? " reached" : ""}`} key={title}>
-                      <span className="health-step-dot" aria-hidden="true" />
-                      <div>
-                        <span>{title}</span>
-                        <strong>{when}</strong>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
             </div>
           );
         })()}
@@ -2094,7 +2094,7 @@ export default function Dashboard({ user }) {
             if (e.target === e.currentTarget) setHealthModal(null);
           }}
         >
-          <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="healthModalTitle" style={{ maxWidth: 560 }}>
+          <div className="dialog dialog-wide" role="dialog" aria-modal="true" aria-labelledby="healthModalTitle">
             <div className="dialog-head">
               <h2 id="healthModalTitle">
                 {healthModal === "diagnosis"
