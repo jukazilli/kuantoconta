@@ -186,7 +186,116 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
   border-color: rgba(242, 92, 5, .24);
   background: linear-gradient(180deg, rgba(255, 246, 237, .55) 0%, #fff 100%);
 }
+.pill-compact { padding: 8px 14px; font-size: 13px; display: inline-flex; align-items: center; gap: 4px; }
 .health-chips-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+
+/* Horizontal Recovery Timeline */
+.health-timeline {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  position: relative;
+  padding-top: 6px;
+}
+.health-timeline::before {
+  content: "";
+  position: absolute;
+  top: 20px;
+  left: 16%;
+  right: 16%;
+  height: 3px;
+  background: #e4e6ef;
+  border-radius: 999px;
+  z-index: 0;
+}
+.health-timeline-node {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 14px;
+  cursor: pointer;
+  outline: none;
+}
+.health-timeline-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  background: #e4e6ef;
+  color: #6b7085;
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 1px #d3d6e2;
+  transition: transform .2s ease;
+}
+.health-timeline-node.is-done .health-timeline-dot {
+  background: #ffd7c2;
+  color: #b84404;
+  box-shadow: 0 0 0 1px #f8a477;
+}
+.health-timeline-node.is-current .health-timeline-dot {
+  background: var(--kc-orange);
+  color: #fff;
+  box-shadow: 0 0 0 0 rgba(242, 92, 5, .55);
+  animation: kcMilestonePulse 1.7s infinite;
+}
+.health-timeline-node.is-pending .health-timeline-dot {
+  background: #e8eaef;
+  color: #82879b;
+}
+.health-timeline-meta { display: grid; gap: 2px; }
+.health-timeline-title { font-size: 12px; color: var(--kc-muted); font-weight: 500; }
+.health-timeline-date { font-size: 15px; font-weight: 700; color: var(--kc-ink); text-transform: capitalize; }
+.health-timeline-node.is-pending .health-timeline-date { color: var(--kc-muted); font-weight: 600; }
+.health-timeline-tip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  width: min(240px, 72vw);
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #1b1d28;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.45;
+  box-shadow: 0 10px 28px rgba(17, 20, 45, .22);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .16s ease, transform .16s ease;
+  z-index: 20;
+}
+.health-timeline-node:focus-visible .health-timeline-tip,
+.health-timeline-node.tip-open .health-timeline-tip {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+@media (hover: hover) {
+  .health-timeline-node:hover .health-timeline-tip {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+@keyframes kcMilestonePulse {
+  0% { box-shadow: 0 0 0 0 rgba(242, 92, 5, .55); }
+  70% { box-shadow: 0 0 0 10px rgba(242, 92, 5, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(242, 92, 5, 0); }
+}
+@media (max-width: 720px) {
+  .health-timeline { grid-template-columns: 1fr; gap: 10px; }
+  .health-timeline::before { display: none; }
+  .health-timeline-node { flex-direction: row; text-align: left; padding: 8px 10px; background: var(--kc-surface-inner); border: 1px solid var(--kc-line); }
+  .health-timeline-tip { bottom: auto; top: calc(100% + 6px); left: 12px; transform: translateX(0); }
+  .health-timeline-node:focus-visible .health-timeline-tip,
+  .health-timeline-node.tip-open .health-timeline-tip { transform: translateX(0); }
+}
 .health-stepper { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; position: relative; }
 .health-step { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 14px; background: var(--kc-surface-inner); border: 1px solid var(--kc-line); }
 .health-step-dot { width: 12px; height: 12px; border-radius: 50%; background: #cfd2dc; flex-shrink: 0; }
