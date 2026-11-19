@@ -158,33 +158,8 @@ export default function EntryDrawer({
    </div>:<form id="entry-form" className="entry-form" onSubmit={onSave}>
     {newTitle&&<div className="intent-tabs" role="tablist" aria-label="Tipo de registro">
       <button type="button" role="tab" aria-selected={intent==="spent"} className={intent==="spent"?"active":""} onClick={()=>selectIntent("spent")}>Gastei</button>
-      <button type="button" role="tab" aria-selected={intent==="plan"} className={intent==="plan"?"active":""} onClick={()=>selectIntent("plan")}>Vou gastar</button>
       <button type="button" role="tab" aria-selected={intent==="bill"} className={intent==="bill"?"active":""} onClick={()=>selectIntent("bill")}>Tenho uma conta</button>
     </div>}
-
-    {/* ACTION 2: VOU GASTAR (spending plan) */}
-    {newTitle&&intent==="plan"&&<>
-      <p className="hint">Apenas uma previsão de gasto. Não cria conta a pagar nem reduz seu saldo.</p>
-      <div className="field-row money-input"><CircleDollarSign/><span>R$</span><MoneyInput ariaLabel="Valor estimado em reais" value={form.amount} onChange={v=>field("amount",v)}/></div>
-      <div className="field-row major"><ReceiptText/><input aria-label="O que pretende gastar" placeholder="Ex.: Mercado, Presente" required value={form.description} maxLength={120} onChange={e=>field("description",e.target.value)}/></div>
-      <div className="form-group">
-        <div className="controlled-classification">
-          <div className="budget-picker-field">
-            <span className="field-caption">Orçamento</span>
-            <input className="sr-only-input" tabIndex={-1} aria-hidden="true" required value={form.category} onChange={()=>{}}/>
-            <button type="button" className="budget-picker-trigger" onClick={()=>setBudgetPicker(true)}>
-              <span>{form.category||"Selecione o orçamento"}</span>
-              <small>{form.category?formatBudgetMeta(form.category):"Escolher da lista ›"}</small>
-            </button>
-          </div>
-          <button type="button" className="inline-plus" aria-label="Criar orçamento" onClick={()=>{setQuick("category");setNewName("");setQuickError("");}}><Plus size={20}/></button>
-        </div>
-        <div className="form-grid">
-          <label>Mês previsto<input required type="month" value={form.plannedMonth||brDay().slice(0,7)} onChange={e=>setForm(old=>({...old,plannedMonth:e.target.value,plannedFor:""}))}/></label>
-          <label>Dia previsto (opcional)<input type="date" value={form.plannedFor||""} onChange={e=>setForm(old=>({...old,plannedFor:e.target.value,plannedMonth:e.target.value?e.target.value.slice(0,7):old.plannedMonth}))}/></label>
-        </div>
-      </div>
-    </>}
 
     {/* ACTION 1: GASTEI (Valor + Descrição + Orçamento + Conta) */}
     {newTitle&&intent==="spent"&&<>

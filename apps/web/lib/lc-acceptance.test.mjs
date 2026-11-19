@@ -148,7 +148,6 @@ test("LC-18 & LC-23: API isolates spending plans by owner.id and EntryDrawer avo
 
   const drawerSrc = readFileSync(path.join(__dirname, "../app/dashboard/EntryDrawer.jsx"), "utf8");
   assert.match(drawerSrc, />Gastei</);
-  assert.match(drawerSrc, />Vou gastar</);
   assert.match(drawerSrc, />Tenho uma conta</);
   assert.match(drawerSrc, /selectBillDirection\("expense"\)/);
   assert.match(drawerSrc, /selectBillDirection\("income"\)/);

@@ -1695,19 +1695,6 @@ export default function Dashboard({ user }) {
                   type="button"
                   onClick={() => {
                     setActionMenu(null);
-                    open("title", null, "plan");
-                  }}
-                >
-                  <span>
-                    Vou gastar
-                    <small>Planejar uma compra futura sem gerar dívida</small>
-                  </span>
-                  <span>›</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActionMenu(null);
                     open("title", null, "bill");
                   }}
                 >
