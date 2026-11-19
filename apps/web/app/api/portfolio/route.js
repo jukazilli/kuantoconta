@@ -57,6 +57,13 @@ async function loadBudgetCeilingInputs(userId){
  ]);
  return {categories,budgetRules,budgetPeriods,titles,recurringRules,cancelledRecurring};
 }
+async function upsertBudgetSafe(ownerId, categoryId, limitCents, targetMonth, active, expectedVersion = null) {
+ if (!active) {
+  await sql`UPDATE public.kc_budget_rules SET active=false, ends_month=starts_month, updated_at=now() WHERE user_id=${ownerId} AND category_id=${categoryId}::uuid AND active=true AND starts_month > ${targetMonth}`;
+ }
+ return sql`SELECT public.kc_upsert_budget_rule(${ownerId},${categoryId}::uuid,${limitCents},${targetMonth},${active},${expectedVersion}) AS info`;
+}
+
 export async function GET(){
  const owner=await authenticate();if(!owner.id)return error(owner.error,owner.status);
  try{
@@ -143,7 +150,7 @@ export async function POST(request){
    const check=validateBudgetAllocationCeiling({month:targetMonth,targetCategoryId:x.categoryId,newLimitCents:limitCents,active,...inputs});
    if(!check.ok)return error(check.error,400);
    const expectedVersion=Number.isInteger(x.expectedVersion)?x.expectedVersion:null;
-   const rows=await sql`SELECT public.kc_upsert_budget_rule(${owner.id},${x.categoryId}::uuid,${limitCents},${targetMonth},${active},${expectedVersion}) AS info`;
+   const rows=await upsertBudgetSafe(owner.id,x.categoryId,limitCents,targetMonth,active,expectedVersion);
    return send({saved:true,...rows[0]?.info},201);
   }
   if(x.action==="suggest_budgets"){
@@ -167,7 +174,7 @@ export async function POST(request){
      if(catId)catByNorm.set(normalizeCategoryName(s.categoryName),catId);
     }
     if(catId){
-     await sql`SELECT public.kc_upsert_budget_rule(${owner.id},${catId}::uuid,${s.controlsLimit?s.limitCents:0},${targetMonth},${s.controlsLimit},NULL)`;
+     await upsertBudgetSafe(owner.id,catId,s.controlsLimit?s.limitCents:0,targetMonth,s.controlsLimit,null);
     }
    }
    const existingCapital=await sql`SELECT id FROM public.kc_wallets WHERE user_id=${owner.id} AND (is_reserved=true OR wallet_kind IN ('reserve','investment')) LIMIT 1`;
