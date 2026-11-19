@@ -70,34 +70,26 @@ export default function FinanceChart({ type = "line", data = [], height = 240 })
               data: series,
             },
           ],
-          graphic: totalCents
-            ? [
-                {
-                  type: "text",
-                  left: "34%",
-                  top: "43%",
-                  style: {
-                    text: money(totalCents),
-                    textAlign: "center",
-                    fill: "#16171C",
-                    fontSize: 14,
-                    fontWeight: 700,
-                    fontFamily: "Poppins, Inter, system-ui, sans-serif",
-                  },
+          title: totalCents
+            ? {
+                text: money(totalCents),
+                subtext: "Total de despesas",
+                left: "33.5%",
+                top: "39%",
+                textAlign: "center",
+                itemGap: 4,
+                textStyle: {
+                  color: "#16171C",
+                  fontSize: 15,
+                  fontWeight: 700,
+                  fontFamily: "Poppins, Inter, system-ui, sans-serif",
                 },
-                {
-                  type: "text",
-                  left: "34%",
-                  top: "54%",
-                  style: {
-                    text: "Total de despesas",
-                    textAlign: "center",
-                    fill: "#737789",
-                    fontSize: 11,
-                    fontFamily: "Poppins, Inter, system-ui, sans-serif",
-                  },
+                subtextStyle: {
+                  color: "#737789",
+                  fontSize: 11,
+                  fontFamily: "Poppins, Inter, system-ui, sans-serif",
                 },
-              ]
+              }
             : undefined,
         };
       } else {

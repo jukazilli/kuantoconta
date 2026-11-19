@@ -426,3 +426,42 @@ export function suggestBudgetsFromIncome({ incomeCents }) {
 
   return rows;
 }
+
+/**
+ * Computes "Saldo previsto" for the selected period/month:
+ * - Controlled budgets commit max(usedCents, limitCents) so creating a budget immediately
+ *   reduces Saldo previsto, and spending within that budget does not double-count.
+ * - Expenses in categories without a controlled limit (e.g. Moradia) reduce Saldo previsto normally.
+ */
+export function computeProjectedBalanceWithBudgetsCents({
+  receivableCents = 0,
+  rows = [],
+  budgetSummary = []
+}) {
+  const controlledById = new Map();
+  const controlledByNorm = new Map();
+  let controlledCommitmentCents = 0;
+
+  for (const b of budgetSummary) {
+    if (b.limitCents === null || b.limitCents === undefined) continue;
+    const used = Math.max(0, cents(b.usedCents));
+    const limit = Math.max(0, cents(b.limitCents));
+    controlledCommitmentCents += Math.max(used, limit);
+    if (b.categoryId) controlledById.set(String(b.categoryId), true);
+    if (b.categoryName) controlledByNorm.set(normalizeCategoryName(b.categoryName), true);
+  }
+
+  let uncappedExpenseCents = 0;
+  for (const t of rows) {
+    if (t.direction !== "expense" || t.cancelled_at) continue;
+    if ((t.entry_kind || "standard") === "reserve_transfer") continue;
+    const inControlled =
+      (t.category_id && controlledById.has(String(t.category_id))) ||
+      controlledByNorm.has(normalizeCategoryName(t.category || ""));
+    if (!inControlled) {
+      uncappedExpenseCents += Math.max(0, cents(t.amount_cents));
+    }
+  }
+
+  return cents(receivableCents) - (controlledCommitmentCents + uncappedExpenseCents);
+}
