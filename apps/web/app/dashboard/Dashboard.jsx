@@ -1565,32 +1565,73 @@ export default function Dashboard({ user }) {
                 </div>
               </div>
 
-              {/* Linha 2: Stepper Horizontal de Recuperação (acima da dobra) */}
+              {/* Linha 2: Linha do Tempo Horizontal de Recuperação (acima da dobra) */}
               <section className="card panel health-milestones-hero">
-                <div className="card-heading" style={{ marginBottom: 14 }}>
+                <div className="card-heading" style={{ marginBottom: 12 }}>
                   <div>
                     <div className="eyebrow">LINHA DO TEMPO · HORIZONTE 12 MESES</div>
                     <h2 className="card-title">Marcos de recuperação</h2>
                   </div>
-                  <button type="button" className="mini-pill" onClick={() => setHealthModal("milestones")}>
-                    Capacidade alocável <ChevronRight size={14} />
+                  <button type="button" className="pill pill-primary pill-compact" onClick={() => setHealthModal("milestones")}>
+                    Ver detalhes <ChevronRight size={14} />
                   </button>
                 </div>
-                <div className="health-stepper">
-                  {[
-                    ["1. Contas cobertas", fmtM(miles.firstCoveredMonth), Boolean(miles.firstCoveredMonth)],
-                    ["2. Início dos aportes", fmtM(miles.firstSavingMonth), Boolean(miles.firstSavingMonth)],
-                    ["3. Estabilidade", fmtM(miles.firstStableMonth), Boolean(miles.firstStableMonth)],
-                  ].map(([title, when, reached]) => (
-                    <div className={`health-step${reached ? " reached" : ""}`} key={title}>
-                      <span className="health-step-dot" aria-hidden="true" />
-                      <div>
-                        <span>{title}</span>
-                        <strong>{when}</strong>
-                      </div>
+                {(() => {
+                  const currentYm = today.slice(0, 7);
+                  const rawSteps = [
+                    {
+                      num: "1",
+                      title: "1. Contas cobertas",
+                      ym: miles.firstCoveredMonth,
+                      tip: "Todas as contas essenciais do mês cabem no que entra, sem atrasos.",
+                    },
+                    {
+                      num: "2",
+                      title: "2. Início dos aportes",
+                      ym: miles.firstSavingMonth,
+                      tip: "Primeiro mês em que sobra dinheiro livre para guardar ou investir.",
+                    },
+                    {
+                      num: "3",
+                      title: "3. Estabilidade",
+                      ym: miles.firstStableMonth,
+                      tip: "Contas em dia, reserva formada e sobra constante por vários meses seguidos.",
+                    },
+                  ];
+                  let currentAssigned = false;
+                  const steps = rawSteps.map((s) => {
+                    if (s.ym && s.ym <= currentYm) {
+                      return { ...s, state: "done" };
+                    }
+                    if (!currentAssigned) {
+                      currentAssigned = true;
+                      return { ...s, state: "current" };
+                    }
+                    return { ...s, state: "pending" };
+                  });
+                  return (
+                    <div className="health-timeline" role="list" aria-label="Marcos de recuperação financeira">
+                      {steps.map((s) => (
+                        <div
+                          key={s.num}
+                          role="listitem"
+                          tabIndex={0}
+                          className={`health-timeline-node is-${s.state}`}
+                          aria-label={`${s.title}: ${fmtM(s.ym)}. ${s.tip}`}
+                        >
+                          <span className="health-timeline-dot" aria-hidden="true">{s.num}</span>
+                          <div className="health-timeline-meta">
+                            <span className="health-timeline-title">{s.title}</span>
+                            <strong className="health-timeline-date">{fmtM(s.ym)}</strong>
+                          </div>
+                          <div className="health-timeline-tip" role="tooltip">
+                            {s.tip}
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  );
+                })()}
               </section>
 
               {/* Linha 3: Dedo Duro & Tesouraço com Gráficos */}
@@ -2103,7 +2144,7 @@ export default function Dashboard({ user }) {
                     ? "Dedo Duro · Detalhes de consumo"
                     : healthModal === "tesouraco"
                       ? "Tesouraço · Onde cortar"
-                      : "Capacidade alocável e prioridades"}
+                      : "Seu plano de recuperação"}
               </h2>
               <button type="button" className="dialog-close" onClick={() => setHealthModal(null)} aria-label="Fechar">
                 <X size={17} />

@@ -25,6 +25,33 @@ function toCents(mask) {
   return Number.isFinite(num) ? Math.round(num * 100) : 0;
 }
 
+const HUMAN_PROPOSALS = {
+  preserve_cash: (p) => ({
+    title: "Segure esse dinheiro para as próximas contas",
+    copy: "O saldo que você tem hoje na conta precisa ficar livre para pagar os boletos e despesas dos próximos dias, sem depender do que ainda vai receber.",
+  }),
+  cover_overdue: (p) => ({
+    title: "Coloque as contas atrasadas em dia primeiro",
+    copy: `Você tem contas pendentes ou sem cobertura nos próximos dias. Use até ${money(p.recommendedCents)} para regularizar antes de guardar.`,
+  }),
+  compare_debt_vs_cushion: (p) => ({
+    title: "Escolha: abater dívida cara ou montar reserva",
+    copy: `Você tem ${money(p.recommendedCents)} livres hoje. Pode usar para diminuir sua dívida com juros altos ou começar sua reserva de emergência.`,
+  }),
+  amortize_debt: (p) => ({
+    title: "Abater dívida com juros altos",
+    copy: `Sua reserva inicial já está garantida. Use ${money(p.recommendedCents)} para reduzir a dívida mais cara e pagar menos juros.`,
+  }),
+  build_reserve: (p) => ({
+    title: "Guardar na sua reserva de emergência",
+    copy: `Suas contas estão em dia. Direcione ${money(p.recommendedCents)} para completar seu colchão de segurança.`,
+  }),
+  capital_or_goals: (p) => ({
+    title: "Livre para suas metas e investimentos",
+    copy: `Contas em dia e reserva protegida. Você pode aplicar ${money(p.recommendedCents)} no seu capital ou nas suas metas.`,
+  }),
+};
+
 export default function PlanningGoalsPanel({ rawData, healthPlan, onSaveGoal, onCancelGoal, busy, section = "all" }) {
   const today = brDay();
   const [goalForm, setGoalForm] = useState({
@@ -65,26 +92,30 @@ export default function PlanningGoalsPanel({ rawData, healthPlan, onSaveGoal, on
       {showHealth && <section className="panel">
         <div className="section-header">
           <div>
-            <div className="eyebrow">PROJEÇÃO DE RECUPERAÇÃO</div>
-            <h2>Marcos do plano</h2>
+            <div className="eyebrow">QUANDO VOCÊ SAI DO APERTO</div>
+            <h2>Etapas para ficar no azul</h2>
           </div>
-          <span className="badge">Horizonte 12 meses</span>
+          <span className="badge">Próximos 12 meses</span>
         </div>
         <div className="milestones-grid">
           <article className="milestone-box">
-            <span>1. Obrigações cobertas</span>
+            <span>1. Contas em dia</span>
             <strong>{fmtMonth(milestones.firstCoveredMonth)}</strong>
-            <small>Contas prioritárias cobertas nas datas de vencimento.</small>
+            <small>Suas contas essenciais cabem no que você ganha, sem atrasar vencimentos.</small>
           </article>
           <article className="milestone-box">
-            <span>2. Início dos aportes</span>
+            <span>2. Começar a guardar</span>
             <strong>{fmtMonth(milestones.firstSavingMonth)}</strong>
-            <small>Primeiro mês com capacidade projetada para guardar.</small>
+            <small>Primeiro mês em que vai sobrar dinheiro livre para você guardar.</small>
           </article>
           <article className="milestone-box">
-            <span>3. Estabilidade sustentada</span>
+            <span>3. Vida tranquila</span>
             <strong>{fmtMonth(milestones.firstStableMonth)}</strong>
-            <small>Cobertura e margem mantidas de forma consecutiva.</small>
+            <small>
+              {milestones.firstStableMonth
+                ? "Reserva formada e dinheiro sobrando todo mês com segurança."
+                : "Ainda não fecha em 12 meses. Reduza gastos variáveis ou aumente sua sobra mensal."}
+            </small>
           </article>
         </div>
       </section>}
@@ -93,45 +124,50 @@ export default function PlanningGoalsPanel({ rawData, healthPlan, onSaveGoal, on
       {showHealth && <section className="panel">
         <div className="section-header">
           <div>
-            <div className="eyebrow">MOTOR DE PRIORIDADES</div>
-            <h2>Capacidade alocável e recomendações</h2>
+            <div className="eyebrow">O QUE FAZER AGORA</div>
+            <h2>Quanto você pode usar e para onde vai</h2>
           </div>
           <Layers size={18} />
         </div>
         <div className="allocation-summary">
           <div>
-            <span>Alocável hoje (caixa confirmado)</span>
+            <span>Livre para usar hoje</span>
             <strong>
               {allocation.eligibleTodayCents === null ? "A calcular" : money(allocation.eligibleTodayCents)}
             </strong>
+            <small className="hint" style={{ marginTop: 2 }}>Dinheiro já na conta que não está preso em contas próximas.</small>
           </div>
           <div>
-            <span>Capacidade mensal projetada</span>
+            <span>Sobra prevista por mês</span>
             <strong>
               {allocation.projectedMonthlyCents === null ? "A calcular" : money(allocation.projectedMonthlyCents)}
             </strong>
+            <small className="hint" style={{ marginTop: 2 }}>Quanto deve sobrar todo mês depois de pagar suas contas.</small>
           </div>
         </div>
         <div className="priority-list">
-          {(allocation.proposals || []).map((p, idx) => (
-            <article className="priority-item" key={`${p.kind}-${idx}`}>
-              <div className="priority-item-head">
-                <strong>{p.title}</strong>
-                <span>{money(p.recommendedCents)}</span>
-              </div>
-              <p>{p.rationale}</p>
-              {p.options && (
-                <div className="priority-options">
-                  {p.options.map((opt) => (
-                    <div className="priority-option" key={opt.id}>
-                      <strong>{opt.label} ({money(opt.amountCents)})</strong>
-                      <small>{opt.rationale}</small>
-                    </div>
-                  ))}
+          {(allocation.proposals || []).map((p, idx) => {
+            const human = HUMAN_PROPOSALS[p.kind]?.(p);
+            return (
+              <article className="priority-item" key={`${p.kind}-${idx}`}>
+                <div className="priority-item-head">
+                  <strong>{human?.title || p.title}</strong>
+                  <span>{money(p.recommendedCents)}</span>
                 </div>
-              )}
-            </article>
-          ))}
+                <p>{human?.copy || p.rationale}</p>
+                {p.options && (
+                  <div className="priority-options">
+                    {p.options.map((opt) => (
+                      <div className="priority-option" key={opt.id}>
+                        <strong>{opt.label} ({money(opt.amountCents)})</strong>
+                        <small>{opt.rationale}</small>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </article>
+            );
+          })}
         </div>
       </section>}
 
