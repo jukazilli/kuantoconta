@@ -280,3 +280,149 @@ export function computeMultiMonthBudgets({ months = [], ...rest }) {
     categories: computeBudgetSummary({ month, ...rest })
   }));
 }
+
+/**
+ * Total expected + confirmed income for a calendar month (YYYY-MM),
+ * excluding internal reserve transfers.
+ */
+export function computeMonthlyIncomeCeilingCents({
+  month,
+  titles = [],
+  recurringRules = [],
+  cancelledRecurring = []
+}) {
+  if (!isValidMonth(month)) return 0;
+  const expanded = expandRecurring(
+    { titles, recurringRules, cancelledRecurring },
+    `${month}-01`,
+    `${month}-31`
+  );
+  return (expanded.titles || []).reduce((sum, t) => {
+    if (t.cancelled_at || t.direction !== "income") return sum;
+    if ((t.entry_kind || "standard") === "reserve_transfer") return sum;
+    if (monthOf(t.due_on) !== month) return sum;
+    return sum + Math.max(0, cents(t.amount_cents));
+  }, 0);
+}
+
+/**
+ * Enforces zero-based envelope ceiling:
+ * - Active budget limits require monthly income > 0.
+ * - Sum of active monthly budget limits cannot exceed monthly income.
+ * - Budgets marked inactive (controlsLimit=false) do not consume the ceiling.
+ */
+export function validateBudgetAllocationCeiling({
+  month,
+  targetCategoryId,
+  newLimitCents,
+  active = true,
+  categories = [],
+  budgetRules = [],
+  budgetPeriods = [],
+  titles = [],
+  recurringRules = [],
+  cancelledRecurring = []
+}) {
+  if (!isValidMonth(month)) {
+    return { ok: false, code: "INVALID_MONTH", error: "Competência inválida." };
+  }
+  const monthlyIncomeCents = computeMonthlyIncomeCeilingCents({
+    month,
+    titles,
+    recurringRules,
+    cancelledRecurring
+  });
+  const configured = listConfiguredBudgets({
+    month,
+    categories,
+    budgetRules,
+    budgetPeriods
+  });
+  const otherAllocatedCents = configured
+    .filter(b => String(b.categoryId) !== String(targetCategoryId || ""))
+    .reduce((sum, b) => sum + Math.max(0, cents(b.limitCents)), 0);
+
+  if (!active || cents(newLimitCents) <= 0) {
+    return {
+      ok: true,
+      monthlyIncomeCents,
+      otherAllocatedCents,
+      totalAllocatedCents: otherAllocatedCents,
+      remainingAllocableCents: Math.max(0, monthlyIncomeCents - otherAllocatedCents)
+    };
+  }
+
+  if (monthlyIncomeCents <= 0) {
+    return {
+      ok: false,
+      code: "NO_INCOME",
+      error: "Cadastre seus valores a receber deste mês antes de definir limites de orçamento.",
+      monthlyIncomeCents: 0,
+      otherAllocatedCents,
+      remainingAllocableCents: 0
+    };
+  }
+
+  const nextTotal = otherAllocatedCents + cents(newLimitCents);
+  if (nextTotal > monthlyIncomeCents) {
+    return {
+      ok: false,
+      code: "EXCEEDS_INCOME",
+      error: "A soma dos orçamentos ultrapassa o total a receber deste mês.",
+      monthlyIncomeCents,
+      otherAllocatedCents,
+      totalAllocatedCents: nextTotal,
+      remainingAllocableCents: Math.max(0, monthlyIncomeCents - otherAllocatedCents)
+    };
+  }
+
+  return {
+    ok: true,
+    monthlyIncomeCents,
+    otherAllocatedCents,
+    totalAllocatedCents: nextTotal,
+    remainingAllocableCents: monthlyIncomeCents - nextTotal
+  };
+}
+
+/**
+ * Generates an initial 50-30-20 personal-finance budget split from monthly income.
+ * Fixed contractual categories (Moradia, Educação, Assinaturas, Empréstimos) default to
+ * controlsLimit=false so variable daily envelopes (Alimentação, Transporte, Lazer, etc.)
+ * carry active spending limits, while 20% is earmarked for Reserva e Capital.
+ */
+export function suggestBudgetsFromIncome({ incomeCents }) {
+  const total = Math.max(0, cents(incomeCents));
+  if (total <= 0) return [];
+
+  const template = [
+    // 50% Essenciais (Moradia sem limite variável; variáveis com controle)
+    { categoryName: "Moradia", bucket: "essential", share: 0, controlsLimit: false },
+    { categoryName: "Alimentação", bucket: "essential", share: 0.25, controlsLimit: true },
+    { categoryName: "Transporte", bucket: "essential", share: 0.15, controlsLimit: true },
+    { categoryName: "Saúde", bucket: "essential", share: 0.10, controlsLimit: true },
+    // 30% Estilo de Vida
+    { categoryName: "Lazer", bucket: "lifestyle", share: 0.15, controlsLimit: true },
+    { categoryName: "Outros", bucket: "lifestyle", share: 0.15, controlsLimit: true },
+    { categoryName: "Assinaturas", bucket: "lifestyle", share: 0, controlsLimit: false },
+    { categoryName: "Educação", bucket: "essential", share: 0, controlsLimit: false },
+    // 20% Futuro / Capital (Pague-se primeiro)
+    { categoryName: "Reserva e Capital", bucket: "capital", share: 0.20, controlsLimit: true, isCapital: true }
+  ];
+
+  let allocated = 0;
+  const rows = template.map(item => {
+    const limitCents = item.controlsLimit ? Math.floor(total * item.share) : 0;
+    allocated += limitCents;
+    return { ...item, limitCents };
+  });
+
+  // Distribute integer rounding remainder (at most a few cents) to Reserva e Capital
+  const remainder = total - allocated;
+  if (remainder > 0) {
+    const capitalRow = rows.find(r => r.isCapital);
+    if (capitalRow) capitalRow.limitCents += remainder;
+  }
+
+  return rows;
+}
