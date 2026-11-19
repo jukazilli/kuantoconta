@@ -1,6 +1,6 @@
 "use client";
 import {useMemo,useState} from "react";
-import {X,Plus,CalendarDays,ReceiptText,CircleDollarSign,Repeat2,CheckCircle2,Clock3,ChevronDown,ChevronRight,Sparkles,Check,Compass} from "lucide-react";
+import {X,Plus,CalendarDays,ReceiptText,CircleDollarSign,Repeat2,CheckCircle2,Clock3,ChevronDown,ChevronRight,Sparkles,Check,Compass,ArrowDownCircle,ArrowUpCircle} from "lucide-react";
 import MoneyInput from "./MoneyInput";
 import {cents,money,isoDate,brDay} from "../../lib/finance";
 import {maskToCents,maskToDecimal} from "../../lib/money-input";
@@ -214,9 +214,15 @@ export default function EntryDrawer({
 
     {/* ACTION 3: TENHO UMA CONTA (A pagar | A receber) or edit */}
     {titleEntry&&(!newTitle||intent==="bill")&&<>
-      {newTitle&&<div className="form-grid" role="group" aria-label="Tipo da conta">
-        <label className="tick"><input type="radio" name="billDirection" checked={form.direction!=="income"} onChange={()=>selectBillDirection("expense")}/> A pagar</label>
-        <label className="tick"><input type="radio" name="billDirection" checked={form.direction==="income"} onChange={()=>selectBillDirection("income")}/> A receber</label>
+      {newTitle&&<div className="direction-cards" role="group" aria-label="Tipo da conta">
+        <button type="button" className={`direction-card expense${form.direction!=="income"?" active":""}`} aria-pressed={form.direction!=="income"} onClick={()=>selectBillDirection("expense")}>
+          <ArrowDownCircle size={22} aria-hidden="true"/>
+          <div><strong>A pagar</strong><small>Conta ou despesa</small></div>
+        </button>
+        <button type="button" className={`direction-card income${form.direction==="income"?" active":""}`} aria-pressed={form.direction==="income"} onClick={()=>selectBillDirection("income")}>
+          <ArrowUpCircle size={22} aria-hidden="true"/>
+          <div><strong>A receber</strong><small>Salário ou entrada</small></div>
+        </button>
       </div>}
       <div className="field-row major"><ReceiptText/><input aria-label="Descrição do lançamento" placeholder={form.direction==="income"?"Ex.: Salário, Reembolso":"Ex.: Aluguel, Energia"} required value={form.description} maxLength={120} onChange={e=>field("description",e.target.value)}/></div>
       <div className="field-row money-input"><CircleDollarSign/><span>R$</span><MoneyInput ariaLabel="Valor em reais" value={form.amount} onChange={v=>field("amount",v)}/></div>
@@ -228,9 +234,15 @@ export default function EntryDrawer({
       <div className="repeat-preview"><strong>{Math.max(0,Number(form.count)-Number(form.startIndex)+1)||0} parcelas futuras</strong><span>{form.valueMode==="installment"?"Valor mensal: "+money(amountValue()):"Valor total: "+money(amountValue())}</span></div></div>}
       {form.mode==="monthly"&&<div className="repeat-config"><strong>Conta recorrente</strong><p>As próximas ocorrências são projetadas automaticamente sem precisar recadastrar.</p><label>Encerrar em (opcional)<input type="date" min={form.dueOn} max="2099-12-31" value={form.endsOn||""} onChange={ev=>field("endsOn",ev.target.value)}/></label></div>}
       </>}
-      {newTitle&&form.direction==="income"&&form.mode==="single"&&<div className="form-grid" role="group" aria-label="Situação da receita">
-        <label className="tick"><input type="radio" name="settlementState" checked={form.settlementState!=="paid"} onChange={()=>field("settlementState","pending")}/> A receber</label>
-        <label className="tick"><input type="radio" name="settlementState" checked={form.settlementState==="paid"} onChange={()=>field("settlementState","paid")}/> Já recebido</label>
+      {newTitle&&form.direction==="income"&&form.mode==="single"&&<div className="direction-cards compact" role="group" aria-label="Situação da receita">
+        <button type="button" className={`direction-card neutral${form.settlementState!=="paid"?" active":""}`} aria-pressed={form.settlementState!=="paid"} onClick={()=>field("settlementState","pending")}>
+          <Clock3 size={18} aria-hidden="true"/>
+          <div><strong>A receber</strong></div>
+        </button>
+        <button type="button" className={`direction-card income${form.settlementState==="paid"?" active":""}`} aria-pressed={form.settlementState==="paid"} onClick={()=>field("settlementState","paid")}>
+          <CheckCircle2 size={18} aria-hidden="true"/>
+          <div><strong>Já recebido</strong></div>
+        </button>
       </div>}
       {newTitle&&form.direction==="income"&&form.mode==="single"&&form.settlementState==="paid"?
         <div className="field-row"><CalendarDays/><label><small>Data do recebimento</small><input required type="date" max={brDay()} value={form.settledOn||brDay()} onChange={e=>field("settledOn",e.target.value)}/></label></div>:

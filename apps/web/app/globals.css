@@ -567,7 +567,7 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
 
 .popover-dates {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
 }
 
@@ -577,6 +577,7 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
   font-size: 11px;
   color: var(--kc-muted);
   font-weight: 600;
+  min-width: 0;
 }
 
 .popover-dates input {
@@ -587,7 +588,56 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
   color: var(--kc-ink);
   background: var(--kc-surface-inner);
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
+
+.filter-dialog { overflow-x: hidden; max-width: 100%; }
+.filter-dialog-body > * { min-width: 0; max-width: 100%; }
+
+.direction-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.direction-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  min-height: 56px;
+  border-radius: 14px;
+  border: 2px solid var(--kc-line);
+  background: #fafafd;
+  color: var(--kc-muted-dark);
+  text-align: left;
+  transition: border-color .15s ease, background-color .15s ease, transform .1s ease;
+}
+.direction-card:active { transform: scale(.98); }
+.direction-card div { display: grid; gap: 2px; min-width: 0; }
+.direction-card strong { font-size: 15px; color: var(--kc-ink); line-height: 1.2; }
+.direction-card small { font-size: 11px; color: var(--kc-muted); line-height: 1.25; }
+.direction-card.expense.active {
+  border-color: var(--kc-orange);
+  background: #fff4ed;
+  color: var(--kc-orange);
+}
+.direction-card.expense.active strong { color: #b84404; }
+.direction-card.income.active {
+  border-color: #16a34a;
+  background: #ecfdf3;
+  color: #16a34a;
+}
+.direction-card.income.active strong { color: #067647; }
+.direction-card.neutral.active {
+  border-color: var(--kc-ink);
+  background: #f4f5f8;
+  color: var(--kc-ink);
+}
+.direction-cards.compact .direction-card { min-height: 44px; padding: 9px 12px; }
+.direction-cards.compact .direction-card strong { font-size: 13px; }
+.dock-icon { display: none; }
 
 .popover-shortcuts {
   display: flex;
@@ -1549,19 +1599,21 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
 }
 
 @media (max-width: 670px) {
-  .app { padding: 14px 16px 116px; }
-  .brand-name { font-size: 20px; }
-  .topbar { height: 58px; }
-  .preview-pill { font-size: 11px; padding: 7px 11px; }
-  .toolbar { align-items: stretch; gap: 12px; }
+  .app { padding: 10px 14px 96px; }
+  .brand-mark { width: 34px; height: 34px; font-size: 17px; }
+  .brand-name { font-size: 18px; }
+  .topbar { height: 48px; }
+  .preview-pill { display: none; }
+  .toolbar { align-items: stretch; gap: 8px; margin-top: 8px; }
   .toolbar-left, .toolbar-right { width: 100%; gap: 8px; justify-content: space-between; }
-  .pill { flex: 1; height: 42px; }
+  .pill { flex: 1; height: 38px; font-size: 13px; padding: 0 12px; }
   .date-range { min-width: 0; flex: 1; gap: 6px; padding: 0 10px; }
   .date-range .field-label { display: none; }
   .date-range strong { font-size: 11px; }
-  .month-nav { min-width: 140px; flex-shrink: 0; }
-  .month-nav strong { min-width: 70px; font-size: 12px; }
-  .filter-btn { width: 42px; height: 43px; }
+  .month-nav { min-width: 132px; height: 38px; flex-shrink: 0; }
+  .month-nav strong { min-width: 68px; font-size: 12px; }
+  .filter-btn { width: 38px; height: 38px; }
+  .popover-dates { grid-template-columns: 1fr; }
   .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .metric-card { padding: 12px 9px; flex-direction: column; align-items: flex-start; gap: 7px; }
   .metric-icon { width: 32px; height: 32px; flex-basis: 32px; border-radius: 10px; }
@@ -1569,9 +1621,23 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
   .metric-value { font-size: 14px; }
   .bottom-grid { grid-template-columns: 1fr; gap: 12px; margin-top: 12px; }
   .chart-card, .bank-card { min-height: 280px; }
-  .bottom-dock { bottom: 0; border-radius: 16px 16px 0 0; width: 100%; max-width: 100%; height: 64px; overflow-x: auto; justify-content: flex-start; padding: 6px 10px; }
-  .dock-item { font-size: 11px; flex-shrink: 0; padding: 0 12px; }
-  .dock-item.active { padding: 0 14px; }
+  .bottom-dock {
+    bottom: 0;
+    border-radius: 18px 18px 0 0;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    min-height: 58px;
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 4px;
+    overflow: visible;
+    padding: 6px 10px calc(6px + env(safe-area-inset-bottom, 0px));
+  }
+  .dock-icon { display: block; }
+  .dock-label { display: none; }
+  .dock-item { width: 100%; height: 44px; padding: 0; display: grid; place-items: center; border-radius: 14px; }
+  .dock-item.active { padding: 0; }
   .drawer { width: 100%; max-height: 92vh; margin-top: auto; border-radius: 24px 24px 0 0; }
   .overlay { align-items: flex-end; padding: 0; }
   .cancel-dialog-backdrop { align-items: end; padding: 0; }

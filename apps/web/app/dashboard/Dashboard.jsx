@@ -24,6 +24,10 @@ import {
   Scissors,
   Eye,
   Target,
+  LayoutGrid,
+  ArrowLeftRight,
+  CalendarRange,
+  User,
 } from "lucide-react";
 import { authClient } from "../../lib/auth/client";
 import { money, cents, brDay, isoDate } from "../../lib/finance";
@@ -52,6 +56,15 @@ const TABS = [
   ["health", "Saúde financeira"],
   ["profile", "Perfil"],
 ];
+
+const TAB_ICONS = {
+  overview: LayoutGrid,
+  movements: ArrowLeftRight,
+  planning: CalendarRange,
+  patrimony: Landmark,
+  health: HeartPulse,
+  profile: User,
+};
 
 const CATS = {
   expense: ["Moradia", "Alimentação", "Transporte", "Saúde", "Lazer", "Educação", "Assinaturas", "Empréstimos", "Outros"],
@@ -259,9 +272,9 @@ export default function Dashboard({ user }) {
     w.opening_balance_cents === null
       ? null
       : cents(w.opening_balance_cents) +
-        (data?.settlements || [])
-          .filter((x) => !x.reversed_at && x.wallet_id === w.id && w.opening_at && new Date(x.created_at) > new Date(w.opening_at))
-          .reduce((a, x) => a + (x.direction === "income" ? 1 : -1) * cents(x.amount_cents), 0);
+      (data?.settlements || [])
+        .filter((x) => !x.reversed_at && x.wallet_id === w.id && w.opening_at && new Date(x.created_at) > new Date(w.opening_at))
+        .reduce((a, x) => a + (x.direction === "income" ? 1 : -1) * cents(x.amount_cents), 0);
 
   const selectedMonth = summary.targetMonth;
   const monthDate = new Date(`${selectedMonth}-15T12:00:00Z`);
@@ -1734,17 +1747,23 @@ export default function Dashboard({ user }) {
       </main>
 
       <nav className="bottom-dock" aria-label="Navegação principal">
-        {TABS.map(([key, label]) => (
-          <button
-            key={key}
-            type="button"
-            className={`dock-item${active === key ? " active" : ""}${key === "profile" ? " profile" : ""}`}
-            aria-current={active === key ? "page" : undefined}
-            onClick={() => setTab(key)}
-          >
-            {label}
-          </button>
-        ))}
+        {TABS.map(([key, label]) => {
+          const TabIcon = TAB_ICONS[key] || LayoutGrid;
+          return (
+            <button
+              key={key}
+              type="button"
+              className={`dock-item${active === key ? " active" : ""}${key === "profile" ? " profile" : ""}`}
+              aria-current={active === key ? "page" : undefined}
+              aria-label={label}
+              title={label}
+              onClick={() => setTab(key)}
+            >
+              <TabIcon size={20} className="dock-icon" aria-hidden="true" />
+              <span className="dock-label">{label}</span>
+            </button>
+          );
+        })}
       </nav>
 
       {actionMenu && (
