@@ -2,6 +2,8 @@
 import {useMemo,useState} from "react";
 import {X,Plus,CalendarDays,ReceiptText,CircleDollarSign,Repeat2,CheckCircle2,Clock3,ChevronDown,ChevronRight,Sparkles,Check,Compass,ArrowDownCircle,ArrowUpCircle} from "lucide-react";
 import MoneyInput from "./MoneyInput";
+import BankIcon from "./BankIcon";
+import {BANK_BRANDS} from "../../lib/bank-brands";
 import {cents,money,isoDate,brDay} from "../../lib/finance";
 import {maskToCents,maskToDecimal} from "../../lib/money-input";
 import {isSeries} from "../../lib/cancel-scope";
@@ -282,7 +284,17 @@ export default function EntryDrawer({
 
     {drawer==="wallet"&&<>
       <p className="hint">O saldo de abertura representa a posição real da conta na data do cadastro.</p>
-      <label>Nome da conta<input required maxLength={90} value={form.name} onChange={e=>field("name",e.target.value)} placeholder="Ex.: Conta principal ou Carteira de Capital"/></label>
+      <div className="bank-picker-preview">
+        <BankIcon name={form.name} size={40}/>
+        <label style={{flex:1}}>Nome da conta<input required maxLength={90} value={form.name} onChange={e=>field("name",e.target.value)} placeholder="Ex.: Nubank, Itaú, Sicredi ou Maré"/></label>
+      </div>
+      <div className="bank-picker-row" aria-label="Atalhos de bancos">
+        {["nubank","itau","bradesco","bb","caixa","santander","inter","c6","picpay","mercado_pago","pagbank","neon","maree","sicredi","sicoob"].map(bid=>{
+          const b=BANK_BRANDS.find(x=>x.id===bid);
+          if(!b)return null;
+          return <button key={b.id} type="button" className="bank-pick-chip" onClick={()=>field("name",b.name)} title={b.name}><BankIcon name={b.name} size={22}/><span>{b.name}</span></button>;
+        })}
+      </div>
       <label>Finalidade da conta<select value={form.walletKind||"checking"} onChange={e=>field("walletKind",e.target.value)}>
         <option value="checking">Conta corrente (uso diário)</option>
         <option value="reserve">Reserva de emergência</option>

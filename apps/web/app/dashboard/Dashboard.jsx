@@ -49,6 +49,7 @@ import FinanceChart from "./FinanceChart";
 import HealthDiagnosisCard from "./HealthDiagnosisCard";
 import PlanningGoalsPanel from "./PlanningGoalsPanel";
 import GuidedTour from "./GuidedTour";
+import BankIcon from "./BankIcon";
 
 const TABS = [
   ["overview", "Visão geral"],
@@ -1073,15 +1074,7 @@ export default function Dashboard({ user }) {
                     <div className="bank-rows">
                       {wallets.slice(0, 3).map((w) => (
                         <div className="account-row" key={w.id}>
-                          {/nubank/i.test(w.name) ? (
-                            <span className="nubank-symbol" aria-label={w.name}>
-                              nu
-                            </span>
-                          ) : (
-                            <span className="account-badge" aria-hidden="true">
-                              <Wallet size={18} />
-                            </span>
-                          )}
+                          <BankIcon name={w.name} size={36} />
                           <span className="account-name">{w.name}</span>
                           <span className="account-balance">
                             <strong>{display(walletBalance(w))}</strong>
@@ -1495,9 +1488,7 @@ export default function Dashboard({ user }) {
                       const isCap = w.is_reserved || w.wallet_kind === "reserve" || w.wallet_kind === "investment";
                       return (
                         <article className="account-panel-row" key={w.id}>
-                          <div className="account-icon">
-                            <Wallet size={20} />
-                          </div>
+                          <BankIcon name={w.name} size={40} />
                           <div className="account-info">
                             <h3>
                               {w.name}{" "}
