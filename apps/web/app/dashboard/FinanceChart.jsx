@@ -28,7 +28,7 @@ export default function FinanceChart({ type = "line", data = [], height = 240 })
         backgroundColor: "transparent",
         textStyle: { fontFamily: "Poppins, Inter, system-ui, sans-serif", fontSize: 12 },
         tooltip: {
-          trigger: type === "donut" ? "item" : "axis",
+          trigger: type === "donut" || type === "gauge" ? "item" : "axis",
           backgroundColor: "#ffffff",
           borderColor: "#E7E8EF",
           borderWidth: 1,
@@ -91,6 +91,124 @@ export default function FinanceChart({ type = "line", data = [], height = 240 })
                 },
               }
             : undefined,
+        };
+      } else if (type === "gauge") {
+        const pct = Math.min(100, Math.max(0, Number(data?.[0]?.value ?? 0)));
+        const label = data?.[0]?.name || "Comprometido";
+        options = {
+          ...options,
+          tooltip: { show: false },
+          series: [
+            {
+              type: "gauge",
+              startAngle: 200,
+              endAngle: -20,
+              min: 0,
+              max: 100,
+              radius: "92%",
+              center: ["50%", "64%"],
+              progress: { show: true, width: 12, roundCap: true, itemStyle: { color: pct > 35 ? "#D65A50" : palette.coral } },
+              axisLine: { roundCap: true, lineStyle: { width: 12, color: [[1, "#E7E8EF"]] } },
+              pointer: { show: false },
+              axisTick: { show: false },
+              splitLine: { show: false },
+              axisLabel: { show: false },
+              title: { offsetCenter: [0, "18%"], fontSize: 11, color: "#737789" },
+              detail: {
+                valueAnimation: true,
+                fontSize: 22,
+                fontWeight: 700,
+                fontFamily: "Poppins, Inter, system-ui, sans-serif",
+                color: "#16171C",
+                offsetCenter: [0, "-12%"],
+                formatter: "{value}%",
+              },
+              data: [{ value: pct, name: label }],
+            },
+          ],
+        };
+      } else if (type === "hbar") {
+        const items = [...data].reverse();
+        options = {
+          ...options,
+          grid: { left: 8, right: 64, top: 8, bottom: 8, containLabel: true },
+          tooltip: {
+            trigger: "axis",
+            axisPointer: { type: "none" },
+            formatter: (p) => {
+              const item = items[p[0]?.dataIndex];
+              return item ? `<b>${item.name}</b>: ${money(cents(item.value))} (${item.sharePct}%)` : "";
+            },
+          },
+          xAxis: { type: "value", show: false },
+          yAxis: {
+            type: "category",
+            data: items.map((i) => i.name),
+            axisTick: { show: false },
+            axisLine: { show: false },
+            axisLabel: { color: "#16171C", fontSize: 12, fontWeight: 500 },
+          },
+          series: [
+            {
+              type: "bar",
+              barMaxWidth: 16,
+              data: items.map((i, idx) => ({
+                value: cents(i.value) / 100,
+                itemStyle: {
+                  color: idx === items.length - 1 ? palette.coral : "#D8DAE4",
+                  borderRadius: [0, 6, 6, 0],
+                },
+              })),
+              label: {
+                show: true,
+                position: "right",
+                color: "#51576A",
+                fontSize: 11,
+                fontWeight: 600,
+                formatter: (p) => `${items[p.dataIndex]?.sharePct ?? 0}%`,
+              },
+            },
+          ],
+        };
+      } else if (type === "compare") {
+        options = {
+          ...options,
+          grid: { left: 10, right: 10, top: 24, bottom: 26, containLabel: true },
+          tooltip: {
+            trigger: "axis",
+            formatter: (p) => `${p[0]?.name || ""}: <b>${money(Math.round(Number(p[0]?.data) * 100))}</b>`,
+          },
+          xAxis: {
+            type: "category",
+            data: data.map((d) => d.label),
+            axisTick: { show: false },
+            axisLine: { show: false },
+            axisLabel: { color: "#51576A", fontSize: 12, fontWeight: 500 },
+          },
+          yAxis: {
+            type: "value",
+            axisTick: { show: false },
+            axisLine: { show: false },
+            splitLine: { show: true, lineStyle: { color: "#E7E8EF", type: "dashed" } },
+            axisLabel: {
+              color: "#737789",
+              fontSize: 11,
+              formatter: (v) => (Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(0)} mil` : String(v)),
+            },
+          },
+          series: [
+            {
+              type: "bar",
+              barMaxWidth: 28,
+              data: data.map((d, idx) => ({
+                value: cents(d.value) / 100,
+                itemStyle: {
+                  color: idx === 0 ? palette.dark : palette.coral,
+                  borderRadius: [6, 6, 0, 0],
+                },
+              })),
+            },
+          ],
         };
       } else {
         const months = data.map((i) => i.label);
@@ -226,7 +344,13 @@ export default function FinanceChart({ type = "line", data = [], height = 240 })
           ? "Gráfico de saldo projetado"
           : type === "donut"
             ? "Distribuição de despesas por categoria"
-            : "Receitas e despesas mensais"
+            : type === "gauge"
+              ? "Comprometimento da renda"
+              : type === "hbar"
+                ? "Ranking de gastos por categoria"
+                : type === "compare"
+                  ? "Comparativo de economia potencial"
+                  : "Receitas e despesas mensais"
       }
     />
   );
