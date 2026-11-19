@@ -47,6 +47,8 @@ import CancelScopeDialog from "./CancelScopeDialog";
 import FinanceChart from "./FinanceChart";
 import HealthDiagnosisCard from "./HealthDiagnosisCard";
 import PlanningGoalsPanel from "./PlanningGoalsPanel";
+import OnboardingModal from "./OnboardingModal";
+import GuidedTour from "./GuidedTour";
 
 const TABS = [
   ["overview", "Visão geral"],
@@ -169,7 +171,18 @@ export default function Dashboard({ user }) {
   const [selectedGoal, setSelectedGoal] = useState(null);
   const [healthModal, setHealthModal] = useState(null); // "diagnosis" | "dedoduro" | "tesouraco" | "milestones" | null
   const [planningView, setPlanningView] = useState("goals"); // "goals" | "budgets"
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [tourOpen, setTourOpen] = useState(false);
   const filterRef = useRef(null);
+
+  useEffect(() => {
+    if (!data || loading) return;
+    const hasEntries = (data.titles?.length || 0) > 0 || (data.recurringRules?.length || 0) > 0;
+    const key = `kc_onboarding_done_${user?.email || "user"}`;
+    if (!hasEntries && typeof window !== "undefined" && !window.localStorage.getItem(key)) {
+      setOnboardingOpen(true);
+    }
+  }, [data, loading, user?.email]);
 
   const curFilter = screenFilters[active] || screenFilters.overview;
   const rangeStart = curFilter.rangeStart || TODAY;
@@ -830,7 +843,7 @@ export default function Dashboard({ user }) {
 
       {active !== "profile" && (
         <section className="toolbar" aria-label="Ações e período">
-          <div className="toolbar-left">
+          <div className="toolbar-left" data-tour="actions">
             <button type="button" className="pill pill-primary" onClick={() => setActionMenu("add")}>
               <Plus size={17} aria-hidden="true" />
               Lançamento
@@ -861,7 +874,7 @@ export default function Dashboard({ user }) {
               </div>
             )}
           </div>
-          <div className="toolbar-right">
+          <div className="toolbar-right" data-tour="filters">
             {isCustomRange && (
               <button
                 type="button"
@@ -913,7 +926,7 @@ export default function Dashboard({ user }) {
         </div>
       )}
 
-      <main className="dashboard" aria-label="Conteúdo principal">
+      <main className="dashboard" aria-label="Conteúdo principal" data-tour="workspace">
         {active === "overview" && (
           <>
             <section className="summary-grid" aria-label="Indicadores principais">
@@ -1729,24 +1742,39 @@ export default function Dashboard({ user }) {
                 <p className="hint">
                   Prévia restrita. Dados financeiros protegidos por autenticação. Não informe dados reais até a homologação legal.
                 </p>
-                <button
-                  type="button"
-                  className="pill pill-primary"
-                  style={{ marginTop: 14 }}
-                  onClick={async () => {
-                    await authClient.signOut();
-                    window.location.replace("/auth/sign-in");
-                  }}
-                >
-                  <LogOut size={16} /> Sair da conta
-                </button>
+                <div className="toolbar-buttons" style={{ marginTop: 14 }}>
+                  <button
+                    type="button"
+                    className="pill pill-secondary"
+                    onClick={() => setTourOpen(true)}
+                  >
+                    <Compass size={16} /> Tutorial guiado (&lt; 2 min)
+                  </button>
+                  <button
+                    type="button"
+                    className="pill pill-secondary"
+                    onClick={() => setOnboardingOpen(true)}
+                  >
+                    <Plus size={16} /> Configurar 1ª receita e despesa
+                  </button>
+                  <button
+                    type="button"
+                    className="pill pill-primary"
+                    onClick={async () => {
+                      await authClient.signOut();
+                      window.location.replace("/auth/sign-in");
+                    }}
+                  >
+                    <LogOut size={16} /> Sair da conta
+                  </button>
+                </div>
               </div>
             </section>
           </div>
         )}
       </main>
 
-      <nav className="bottom-dock" aria-label="Navegação principal">
+      <nav className="bottom-dock" aria-label="Navegação principal" data-tour="dock">
         {TABS.map(([key, label]) => {
           const TabIcon = TAB_ICONS[key] || LayoutGrid;
           return (
@@ -2353,6 +2381,42 @@ export default function Dashboard({ user }) {
           onConfirm={confirmCancel}
         />
       )}
+
+      <OnboardingModal
+        open={onboardingOpen}
+        wallets={wallets}
+        onClose={() => {
+          setOnboardingOpen(false);
+          const obKey = `kc_onboarding_done_${user?.email || "user"}`;
+          const tourKey = `kc_tour_done_${user?.email || "user"}`;
+          if (typeof window !== "undefined") {
+            window.localStorage.setItem(obKey, "skipped");
+            if (!window.localStorage.getItem(tourKey)) setTourOpen(true);
+          }
+        }}
+        onCompleted={async () => {
+          const obKey = `kc_onboarding_done_${user?.email || "user"}`;
+          const tourKey = `kc_tour_done_${user?.email || "user"}`;
+          if (typeof window !== "undefined") {
+            window.localStorage.setItem(obKey, "done");
+          }
+          setOnboardingOpen(false);
+          await refresh();
+          if (typeof window !== "undefined" && !window.localStorage.getItem(tourKey)) {
+            setTourOpen(true);
+          }
+        }}
+      />
+
+      <GuidedTour
+        open={tourOpen}
+        onSelectTab={setTab}
+        onClose={() => {
+          setTourOpen(false);
+          const tourKey = `kc_tour_done_${user?.email || "user"}`;
+          if (typeof window !== "undefined") window.localStorage.setItem(tourKey, "done");
+        }}
+      />
     </div>
   );
 }
