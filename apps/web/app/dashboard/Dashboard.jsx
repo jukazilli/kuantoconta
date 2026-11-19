@@ -1577,7 +1577,7 @@ export default function Dashboard({ user }) {
                   </button>
                 </div>
                 {(() => {
-                  const currentYm = today.slice(0, 7);
+                  const currentYm = TODAY.slice(0, 7);
                   const rawSteps = [
                     {
                       num: "1",
