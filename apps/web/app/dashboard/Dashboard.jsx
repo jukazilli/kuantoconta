@@ -53,6 +53,9 @@ import PlanningGoalsPanel from "./PlanningGoalsPanel";
 import GuidedTour from "./GuidedTour";
 import BankIcon from "./BankIcon";
 import McpConnectionsCard from "./McpConnectionsCard";
+import ManageWalletsModal from "./ManageWalletsModal";
+import InstallAppCard from "../components/InstallAppCard";
+import { usePwa } from "../components/PwaProvider";
 
 const TABS = [
   ["overview", "Visão geral"],
@@ -148,7 +151,7 @@ function Empty({ children }) {
 }
 
 const defaultScreenFilters = () => ({
-  overview: { rangeStart: TODAY, date: lastDayOfMonth(TODAY), showPlanned: true, showRealized: true, showCategories: true },
+  overview: { rangeStart: TODAY, date: lastDayOfMonth(TODAY), showPlanned: true, showRealized: true, showCategories: true, debtMode: "all_commitments" },
   movements: { rangeStart: TODAY, date: lastDayOfMonth(TODAY), direction: "all", status: "all" },
   planning: { rangeStart: TODAY, date: lastDayOfMonth(TODAY), onlyFeasible: false },
   patrimony: { rangeStart: TODAY, date: lastDayOfMonth(TODAY), walletKind: "all" },
@@ -156,6 +159,7 @@ const defaultScreenFilters = () => ({
 });
 
 export default function Dashboard({ user }) {
+  const { clearCachesOnSignOut } = usePwa();
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -177,6 +181,7 @@ export default function Dashboard({ user }) {
   const [planningView, setPlanningView] = useState("goals"); // "goals" | "budgets"
   const [tourOpen, setTourOpen] = useState(false);
   const [budgetSuggestionResult, setBudgetSuggestionResult] = useState(null);
+  const [manageWalletsOpen, setManageWalletsOpen] = useState(false);
   const filterRef = useRef(null);
 
   useEffect(() => {
@@ -254,7 +259,10 @@ export default function Dashboard({ user }) {
     [data]
   );
 
-  const wallets = data?.wallets || [];
+  const allWallets = data?.wallets || [];
+  const wallets = allWallets.filter((w) => !w.archived_at);
+  const debtMode = screenFilters.overview.debtMode || "all_commitments";
+  const setDebtMode = (v) => setScreenFilter("overview", { debtMode: v });
   const titles = expanded?.titles || [];
   const selectedTitleObj = titles.find((x) => x.id === selectedTitle);
   const months = summary.months.map((m) => ({ ...m, label: ymLabel(m.month) }));
@@ -346,8 +354,9 @@ export default function Dashboard({ user }) {
         titles: expanded?.titles || [],
         liabilities: data?.liabilities || [],
         knownCash: summary.knownCash,
+        mode: debtMode,
       }),
-    [expanded, data, summary.knownCash]
+    [expanded, data, summary.knownCash, debtMode]
   );
   const notifications = useMemo(
     () =>
@@ -381,6 +390,30 @@ export default function Dashboard({ user }) {
     const res = await request("POST", { action: "person", ...personPayload });
     await refresh();
     return res?.person || { id: res?.id, ...personPayload };
+  }
+
+  async function archiveWallet({ sourceWalletId, targetWalletId, balanceAction }) {
+    setBusy(true);
+    setError("");
+    try {
+      await request("PATCH", { action: "archive_wallet", sourceWalletId, targetWalletId, balanceAction });
+      await refresh();
+      setNotice("Conta arquivada e compromissos migrados para a conta destino.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function unarchiveWallet(walletId) {
+    setBusy(true);
+    setError("");
+    try {
+      await request("PATCH", { action: "unarchive_wallet", walletId });
+      await refresh();
+      setNotice("Conta desarquivada com saldo zerado (R$ 0,00).");
+    } finally {
+      setBusy(false);
+    }
   }
 
   function open(kind, id, intentOverride = null) {
@@ -1078,9 +1111,14 @@ export default function Dashboard({ user }) {
                     <div className="eyebrow">CONTAS BANCÁRIAS</div>
                     <h2 className="chart-title">Saldos em conta</h2>
                   </div>
-                  <button type="button" className="icon-ghost-btn" aria-label="Nova conta" title="Nova conta" onClick={() => open("wallet")}>
-                    <Plus size={19} aria-hidden="true" />
-                  </button>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    <button type="button" className="icon-ghost-btn" aria-label="Gerenciar contas" title="Gerenciar contas" onClick={() => setManageWalletsOpen(true)}>
+                      <SlidersHorizontal size={17} aria-hidden="true" />
+                    </button>
+                    <button type="button" className="icon-ghost-btn" aria-label="Nova conta" title="Nova conta" onClick={() => open("wallet")}>
+                      <Plus size={19} aria-hidden="true" />
+                    </button>
+                  </div>
                 </div>
                 <div className="bank-box">
                   <div className="bank-box-header">
@@ -1487,6 +1525,9 @@ export default function Dashboard({ user }) {
                       <TrendingUp size={18} aria-hidden="true" />
                     </button>
                   )}
+                  <button type="button" className="icon-ghost-btn" aria-label="Gerenciar contas" title="Gerenciar contas" onClick={() => setManageWalletsOpen(true)}>
+                    <SlidersHorizontal size={17} aria-hidden="true" />
+                  </button>
                   <button type="button" className="icon-ghost-btn" aria-label="Nova conta" title="Nova conta" onClick={() => open("wallet")}>
                     <Plus size={19} aria-hidden="true" />
                   </button>
@@ -1807,6 +1848,13 @@ export default function Dashboard({ user }) {
                   <button
                     type="button"
                     className="pill pill-secondary"
+                    onClick={() => setManageWalletsOpen(true)}
+                  >
+                    <Wallet size={16} /> Gerenciar contas
+                  </button>
+                  <button
+                    type="button"
+                    className="pill pill-secondary"
                     onClick={() => setTourOpen(true)}
                   >
                     <Compass size={16} /> Tutorial guiado (&lt; 2 min)
@@ -1815,6 +1863,7 @@ export default function Dashboard({ user }) {
                     type="button"
                     className="pill pill-primary"
                     onClick={async () => {
+                      await clearCachesOnSignOut();
                       await authClient.signOut();
                       window.location.replace("/auth/sign-in");
                     }}
@@ -1824,6 +1873,7 @@ export default function Dashboard({ user }) {
                 </div>
               </div>
             </section>
+            <InstallAppCard />
             <McpConnectionsCard />
           </div>
         )}
@@ -2119,6 +2169,24 @@ export default function Dashboard({ user }) {
                     <span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3} /></span>
                     <span>Exibir despesas por categoria</span>
                   </label>
+                  <div style={{ marginTop: 6, display: "grid", gap: 6 }}>
+                    <span className="field-caption">Composição do endividamento</span>
+                    <div className="filter-pills">
+                      {[
+                        ["all_commitments", "Todos os compromissos"],
+                        ["financial_only", "Apenas dívidas financeiras"],
+                      ].map(([k, l]) => (
+                        <button
+                          key={k}
+                          type="button"
+                          className={`filter-pill${debtMode === k ? " active" : ""}`}
+                          onClick={() => setDebtMode(k)}
+                        >
+                          {l}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -2438,6 +2506,17 @@ export default function Dashboard({ user }) {
           onConfirm={confirmCancel}
         />
       )}
+
+      <ManageWalletsModal
+        open={manageWalletsOpen}
+        allWallets={allWallets}
+        walletBalance={walletBalance}
+        busy={busy}
+        onClose={() => setManageWalletsOpen(false)}
+        onNewWallet={() => open("wallet")}
+        onArchiveWallet={archiveWallet}
+        onUnarchiveWallet={unarchiveWallet}
+      />
 
       <GuidedTour
         open={tourOpen}

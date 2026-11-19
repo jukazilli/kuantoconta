@@ -93,7 +93,7 @@ export async function loadPortfolio(ownerId) {
     spendingPlans,
     spendingPlanApplications,
   ] = await Promise.all([
-    sql`SELECT id,name,opening_balance_cents::text,opening_at,wallet_kind,liquidity_kind,is_reserved,created_at FROM public.kc_wallets WHERE user_id=${owner.id} ORDER BY created_at LIMIT 100`,
+    sql`SELECT id,name,opening_balance_cents::text,opening_at,wallet_kind,liquidity_kind,is_reserved,archived_at,created_at FROM public.kc_wallets WHERE user_id=${owner.id} ORDER BY created_at LIMIT 100`,
     sql`SELECT id,wallet_id,description,direction,category,subcategory,category_id,subcategory_id,economic_event_id,amount_cents::text,settled_cents::text,due_on::text,recurrence,installment_index,installment_total,series_id,is_essential,income_confidence,entry_kind,liability_id,person_id,created_at FROM public.kc_titles WHERE user_id=${owner.id} AND cancelled_at IS NULL ORDER BY due_on,id LIMIT 4000`,
     sql`SELECT s.id,s.title_id,s.wallet_id,s.amount_cents::text,s.settled_on::text,s.created_at,s.reversed_at,s.reversal_reason,t.direction,t.category FROM public.kc_settlements s JOIN public.kc_titles t ON t.id=s.title_id AND t.user_id=s.user_id WHERE s.user_id=${owner.id} ORDER BY s.settled_on,s.created_at LIMIT 7000`,
     sql`SELECT id,label,value_cents::text,valued_on::text,asset_kind,liquidity_kind,linked_wallet_id FROM public.kc_assets WHERE user_id=${owner.id} ORDER BY label LIMIT 200`,
@@ -639,6 +639,19 @@ export async function executePortfolioPatch(ownerId, x) {
   if (x.action === "cancel_goal") {
     if (!uuid(x.goalId)) return fail("Objetivo inválido.");
     await sql`UPDATE public.kc_financial_goals SET status='cancelled' WHERE id=${x.goalId}::uuid AND user_id=${owner.id}`;
+    return ok({ saved: true });
+  }
+
+  if (x.action === "archive_wallet") {
+    if (!uuid(x.sourceWalletId) || !uuid(x.targetWalletId)) return fail("Selecione a conta a arquivar e a conta destino.");
+    const balanceAction = x.balanceAction === "discard" ? "discard" : "transfer";
+    const rows = await sql`SELECT public.kc_archive_wallet(${owner.id},${x.sourceWalletId}::uuid,${x.targetWalletId}::uuid,${balanceAction}) AS info`;
+    return ok({ saved: true, ...rows[0]?.info });
+  }
+
+  if (x.action === "unarchive_wallet") {
+    if (!uuid(x.walletId)) return fail("Conta inválida.");
+    await sql`UPDATE public.kc_wallets SET archived_at=NULL, opening_balance_cents=0, opening_at=now() WHERE id=${x.walletId}::uuid AND user_id=${owner.id}`;
     return ok({ saved: true });
   }
 
