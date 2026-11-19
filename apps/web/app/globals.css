@@ -1646,3 +1646,97 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
 
 input:not([type=checkbox]):not([type=radio]), select, textarea { font-size: 16px !important; }
 @media (prefers-reduced-motion: reduce) { *, *:before, *:after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+
+/* Onboarding & Guided Tour */
+.onboarding-dialog { display: grid; gap: 12px; }
+.onboarding-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: #eceef4;
+  overflow: hidden;
+}
+.onboarding-progress-fill {
+  height: 100%;
+  background: var(--kc-orange);
+  border-radius: 999px;
+  transition: width .22s ease;
+}
+.onboarding-error {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #fff1f0;
+  border: 1px solid #f9cac6;
+  color: #b42318;
+  font-size: 13px;
+}
+.onboarding-body { display: grid; gap: 14px; }
+.onboarding-body label {
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--kc-muted-dark);
+}
+.onboarding-body input,
+.onboarding-body select {
+  border: 1px solid var(--kc-line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #fff;
+  color: var(--kc-ink);
+  width: 100%;
+  box-sizing: border-box;
+}
+.onboarding-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.onboarding-chips .mini-pill { display: inline-flex; align-items: center; gap: 5px; }
+.onboarding-chips .mini-pill.active {
+  background: #fff4ed;
+  border-color: var(--kc-orange);
+  color: #b84404;
+}
+.onboarding-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.tour-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  background: rgba(17, 20, 45, .42);
+  display: grid;
+  place-items: end center;
+  padding: 16px 16px 84px;
+}
+.tour-spotlight {
+  position: fixed;
+  border-radius: 18px;
+  border: 2.5px solid var(--kc-orange);
+  box-shadow: 0 0 0 9999px rgba(17, 20, 45, .36), 0 0 0 6px rgba(242, 92, 5, .22);
+  pointer-events: none;
+  transition: all .22s ease;
+  z-index: 121;
+}
+.tour-card {
+  position: relative;
+  z-index: 122;
+  width: min(440px, 100%);
+  background: #fff;
+  border-radius: 22px;
+  padding: 20px 22px;
+  box-shadow: 0 22px 60px rgba(17, 20, 45, .28);
+  display: grid;
+  gap: 10px;
+  animation: kcPopIn .18s ease-out;
+}
+.tour-card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.tour-card h3 { margin: 0; font-size: 17px; color: var(--kc-ink); letter-spacing: -.3px; }
+.tour-card p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--kc-muted-dark); }
+.tour-dots { display: flex; gap: 6px; padding: 2px 0; }
+.tour-dots span { width: 8px; height: 8px; border-radius: 999px; background: #dfe2ec; transition: width .2s ease, background .2s ease; }
+.tour-dots span.done { background: #ffb085; }
+.tour-dots span.active { width: 22px; background: var(--kc-orange); }
+.tour-actions { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 2px; }
