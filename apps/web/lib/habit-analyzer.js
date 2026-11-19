@@ -81,11 +81,12 @@ export function analyzeConsumptionHabits({ rows = [], recurringRules = [], budge
       overrunCents: Math.abs(b.remainingLimitCents),
     }));
 
-  // Potencial de economia sugerido (25% do maior vazamento variável + 50% dos gastos formiguinha)
+  // Potencial de economia sugerido (25% do maior vazamento variável >= R$ 50 + 50% dos gastos formiguinha)
   const topVariable = topLeaks.find((c) => !/moradia|aluguel|empr[eé]stimo/i.test(c.category)) || topLeaks[0];
-  const variableTrimCents = topVariable ? Math.round(topVariable.amountCents * 0.25) : 0;
+  const variableTrimCents = topVariable && topVariable.amountCents >= 5000 ? Math.round(topVariable.amountCents * 0.25) : 0;
   const smallTrimCents = smallLeaks.detected ? Math.round(smallMonthlyCents * 0.5) : 0;
   const potentialMonthlySavingsCents = variableTrimCents + smallTrimCents;
+  const afterTrimMonthlyCents = Math.max(0, totalExpenseCents - potentialMonthlySavingsCents);
 
   return {
     totalExpenseCents,
@@ -105,6 +106,7 @@ export function analyzeConsumptionHabits({ rows = [], recurringRules = [], budge
       smallTrimCents,
       potentialMonthlySavingsCents,
       potentialAnnualSavingsCents: potentialMonthlySavingsCents * 12,
+      afterTrimMonthlyCents,
     },
   };
 }

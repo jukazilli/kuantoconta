@@ -154,6 +154,7 @@ export default function Dashboard({ user }) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [selectedGoal, setSelectedGoal] = useState(null);
+  const [healthModal, setHealthModal] = useState(null); // "diagnosis" | "dedoduro" | "tesouraco" | "milestones" | null
   const [planningView, setPlanningView] = useState("goals"); // "goals" | "budgets"
   const filterRef = useRef(null);
 
@@ -1508,107 +1509,151 @@ export default function Dashboard({ user }) {
           </div>
         )}
 
-        {active === "health" && (
-          <div className="workspace">
-            <HealthDiagnosisCard healthPlan={healthPlan} onOpenPlanning={() => setTab("planning")} />
+        {active === "health" && healthPlan && (() => {
+          const diag = healthPlan.diagnosis;
+          const ind = diag.indicators;
+          const miles = healthPlan.milestones;
+          const STATE_LABELS = {
+            red: ["Contas em risco", "late"],
+            orange: ["Reorganizando", "review"],
+            blue: ["Em equilíbrio", "pending"],
+            green: ["Protegido", "done"],
+            unknown: ["Dados para completar", "pending"],
+          };
+          const [stateLabel, stateCls] = STATE_LABELS[diag.state] || STATE_LABELS.unknown;
+          const reserveMonths = ind.emergencyCoverageMonths ?? 0;
+          const reservePct = Math.min(100, Math.round((reserveMonths / 6) * 100));
+          const commitPct = ind.incomeCommitmentRatio === null ? 0 : Math.round(ind.incomeCommitmentRatio * 100);
+          const fmtM = (ym) =>
+            ym ? new Date(`${ym}-15T12:00:00Z`).toLocaleDateString("pt-BR", { month: "short", year: "2-digit", timeZone: "UTC" }).replace(".", "") : "A definir";
 
-            <div className="register-grid">
-              <section className="card panel">
-                <div className="card-heading" style={{ marginBottom: 14 }}>
-                  <div>
-                    <div className="eyebrow">DEDO DURO · PADRÕES DE CONSUMO</div>
-                    <h2 className="card-title">Onde o dinheiro escoa</h2>
+          return (
+            <div className="workspace">
+              {/* Linha 1: 3 Cards de Pulso */}
+              <div className="planning-stats">
+                <button type="button" className="card kpi-panel clickable-card" onClick={() => setHealthModal("diagnosis")}>
+                  <div className="card-heading">
+                    <span className="metric-label">Estado financeiro</span>
+                    <span className={`status ${stateCls}`}>{stateLabel}</span>
                   </div>
-                  <Eye size={18} />
+                  <strong className="kpi-value">{money(ind.outstandingDebtCents)}</strong>
+                  <span className="metric-sub">Dívida restante · Ver diagnóstico ›</span>
+                </button>
+
+                <div className="card kpi-panel">
+                  <div className="card-heading">
+                    <span className="metric-label">Reserva líquida</span>
+                    <span className="small-flag">Meta: 6 meses</span>
+                  </div>
+                  <strong className="kpi-value">
+                    {ind.emergencyCoverageMonths === null ? "A calcular" : `${reserveMonths.toFixed(1)} meses`}
+                  </strong>
+                  <div className="budget-bar" role="progressbar" aria-valuenow={reservePct} aria-valuemin={0} aria-valuemax={100}>
+                    <div className="budget-fill" style={{ width: `${reservePct}%` }} />
+                  </div>
                 </div>
-                {habits.smallLeaks.detected ? (
-                  <div className="alert" style={{ marginBottom: 12 }}>
-                    <AlertTriangle size={16} />
-                    <span>
-                      <strong>Efeito Formiguinha:</strong> {habits.smallLeaks.count} gastos pequenos (≤ R$ 50) somaram{" "}
-                      <strong>{money(habits.smallLeaks.monthlyTotalCents)}</strong> no período ({money(habits.smallLeaks.annualizedCents)}/ano).
-                    </span>
-                  </div>
-                ) : (
-                  <p className="hint" style={{ marginBottom: 12 }}>
-                    Nenhum padrão crítico de gastos formiguinha detectado neste período.
-                  </p>
-                )}
 
-                {habits.topLeaks.length > 0 ? (
-                  <div className="budget-list">
-                    {habits.topLeaks.map((l) => (
-                      <div className="budget-card" key={l.category} style={{ padding: "10px 14px" }}>
-                        <div className="budget-row-top">
-                          <strong>{l.category}</strong>
-                          <span>
-                            <strong>{money(l.amountCents)}</strong> ({l.sharePct}% dos gastos)
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <Empty>Sem despesas registradas no período para mapear hábitos.</Empty>
-                )}
-
-                {habits.weekend.count > 0 && (
-                  <p className="hint" style={{ marginTop: 12 }}>
-                    Fins de semana concentram <strong>{habits.weekend.sharePct}%</strong> das suas saídas ({money(habits.weekend.amountCents)}).
-                  </p>
-                )}
-              </section>
-
-              <section className="card panel">
-                <div className="card-heading" style={{ marginBottom: 14 }}>
-                  <div>
-                    <div className="eyebrow">TESOURAÇO · REEDUCAÇÃO</div>
-                    <h2 className="card-title">Plano de corte imediato</h2>
-                  </div>
-                  <Scissors size={18} />
+                <div className="card kpi-panel health-kpi-gauge">
+                  <span className="metric-label">Comprometimento da renda</span>
+                  <FinanceChart type="gauge" data={[{ value: commitPct, name: "Comprometido" }]} height={115} />
                 </div>
-                {habits.tesouraco.potentialMonthlySavingsCents > 0 ? (
-                  <div className="goal-verdict ok" style={{ marginBottom: 14 }}>
-                    <Scissors size={18} />
+              </div>
+
+              {/* Linha 2: Dedo Duro & Tesouraço com Gráficos */}
+              <div className="register-grid">
+                <section className="card panel">
+                  <div className="card-heading" style={{ marginBottom: 10 }}>
                     <div>
-                      <strong>
-                        Economia potencial: +{money(habits.tesouraco.potentialMonthlySavingsCents)}/mês
-                      </strong>
-                      <small>
-                        Cortando 25% de {habits.tesouraco.topTargetCategory || "gastos variáveis"} e metade dos gastos pequenos, você libera{" "}
-                        {money(habits.tesouraco.potentialAnnualSavingsCents)} em 12 meses.
-                      </small>
+                      <div className="eyebrow">DEDO DURO · PADRÕES DE CONSUMO</div>
+                      <h2 className="card-title">Onde o dinheiro escoa</h2>
                     </div>
+                    <button type="button" className="mini-pill" onClick={() => setHealthModal("dedoduro")}>
+                      Detalhes <ChevronRight size={14} />
+                    </button>
                   </div>
-                ) : (
-                  <p className="hint" style={{ marginBottom: 12 }}>
-                    Registre seus gastos para receber recomendações de corte personalizadas.
-                  </p>
-                )}
+                  {habits.topLeaks.length > 0 ? (
+                    <FinanceChart
+                      type="hbar"
+                      data={habits.topLeaks.map((l) => ({ name: l.category, value: l.amountCents, sharePct: l.sharePct }))}
+                      height={170}
+                    />
+                  ) : (
+                    <Empty>Sem despesas no período para mapear.</Empty>
+                  )}
+                  <div className="health-chips-row">
+                    <span className={`status ${habits.smallLeaks.detected ? "late" : "pending"}`}>
+                      {habits.smallLeaks.detected
+                        ? `Formiguinha: ${habits.smallLeaks.count}x (${money(habits.smallLeaks.monthlyTotalCents)})`
+                        : "Sem gastos formiguinha"}
+                    </span>
+                    {habits.weekend.count > 0 && (
+                      <span className="small-flag">Fim de semana: {habits.weekend.sharePct}%</span>
+                    )}
+                  </div>
+                </section>
 
-                {habits.recurringItems.length > 0 && (
-                  <div className="budget-list">
-                    {habits.recurringItems.slice(0, 4).map((r) => (
-                      <div className="budget-card" key={r.id} style={{ padding: "10px 14px" }}>
-                        <div className="budget-row-top">
-                          <span>
-                            <strong>{r.description}</strong> <small className="hint">({r.category})</small>
-                          </span>
-                          <span>
-                            <strong>{money(r.monthlyCents)}/mês</strong>{" "}
-                            <small className="hint">({money(r.annualCents)}/ano)</small>
-                          </span>
-                        </div>
-                      </div>
-                    ))}
+                <section className="card panel">
+                  <div className="card-heading" style={{ marginBottom: 10 }}>
+                    <div>
+                      <div className="eyebrow">TESOURAÇO · REEDUCAÇÃO</div>
+                      <h2 className="card-title">Potencial de corte</h2>
+                    </div>
+                    <button type="button" className="mini-pill" onClick={() => setHealthModal("tesouraco")}>
+                      Onde cortar <ChevronRight size={14} />
+                    </button>
                   </div>
-                )}
+                  {habits.tesouraco.potentialMonthlySavingsCents > 0 ? (
+                    <>
+                      <FinanceChart
+                        type="compare"
+                        data={[
+                          { label: "Gasto atual", value: habits.totalExpenseCents },
+                          { label: "Com corte", value: habits.tesouraco.afterTrimMonthlyCents },
+                        ]}
+                        height={155}
+                      />
+                      <div className="health-chips-row">
+                        <span className="status done">
+                          Libera +{money(habits.tesouraco.potentialMonthlySavingsCents)}/mês ({money(habits.tesouraco.potentialAnnualSavingsCents)}/ano)
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <Empty>Consumo enxuto neste período. Nenhum vazamento variável relevante para cortar.</Empty>
+                  )}
+                </section>
+              </div>
+
+              {/* Linha 3: Stepper Horizontal de Recuperação */}
+              <section className="card panel">
+                <div className="card-heading" style={{ marginBottom: 16 }}>
+                  <div>
+                    <div className="eyebrow">LINHA DO TEMPO · HORIZONTE 12 MESES</div>
+                    <h2 className="card-title">Marcos de recuperação</h2>
+                  </div>
+                  <button type="button" className="mini-pill" onClick={() => setHealthModal("milestones")}>
+                    Capacidade alocável <ChevronRight size={14} />
+                  </button>
+                </div>
+                <div className="health-stepper">
+                  {[
+                    ["1. Contas cobertas", fmtM(miles.firstCoveredMonth), Boolean(miles.firstCoveredMonth)],
+                    ["2. Início dos aportes", fmtM(miles.firstSavingMonth), Boolean(miles.firstSavingMonth)],
+                    ["3. Estabilidade", fmtM(miles.firstStableMonth), Boolean(miles.firstStableMonth)],
+                  ].map(([title, when, reached]) => (
+                    <div className={`health-step${reached ? " reached" : ""}`} key={title}>
+                      <span className="health-step-dot" aria-hidden="true" />
+                      <div>
+                        <span>{title}</span>
+                        <strong>{when}</strong>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </section>
             </div>
-
-            <PlanningGoalsPanel rawData={data} healthPlan={healthPlan} busy={busy} section="health" />
-          </div>
-        )}
+          );
+        })()}
 
         {active === "profile" && (
           <div className="workspace">
@@ -2032,6 +2077,83 @@ export default function Dashboard({ user }) {
             ) : (
               <Empty>Tudo em ordem por aqui. Nenhum alerta no momento.</Empty>
             )}
+          </div>
+        </div>
+      )}
+
+      {healthModal && healthPlan && (
+        <div
+          className="action-overlay open"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setHealthModal(null);
+          }}
+        >
+          <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="healthModalTitle" style={{ maxWidth: 560 }}>
+            <div className="dialog-head">
+              <h2 id="healthModalTitle">
+                {healthModal === "diagnosis"
+                  ? "Diagnóstico financeiro"
+                  : healthModal === "dedoduro"
+                    ? "Dedo Duro · Detalhes de consumo"
+                    : healthModal === "tesouraco"
+                      ? "Tesouraço · Onde cortar"
+                      : "Capacidade alocável e prioridades"}
+              </h2>
+              <button type="button" className="dialog-close" onClick={() => setHealthModal(null)} aria-label="Fechar">
+                <X size={17} />
+              </button>
+            </div>
+            <div style={{ maxHeight: "65vh", overflowY: "auto", display: "grid", gap: 14 }}>
+              {healthModal === "diagnosis" && (
+                <HealthDiagnosisCard healthPlan={healthPlan} onOpenPlanning={() => { setHealthModal(null); setTab("planning"); }} />
+              )}
+              {healthModal === "dedoduro" && (
+                <>
+                  {habits.topLeaks.map((l) => (
+                    <div className="budget-card" key={l.category}>
+                      <div className="budget-row-top">
+                        <strong>{l.category}</strong>
+                        <strong>{money(l.amountCents)} ({l.sharePct}%)</strong>
+                      </div>
+                    </div>
+                  ))}
+                  {habits.smallLeaks.examples.length > 0 && (
+                    <div className="budget-card">
+                      <strong>Exemplos de gastos pequenos (≤ R$ 50)</strong>
+                      <ul className="budget-events" style={{ marginTop: 8 }}>
+                        {habits.smallLeaks.examples.map((ex, i) => (
+                          <li key={i}>
+                            <span>{fmtDate(ex.date)} · {ex.description}</span>
+                            <strong>{money(ex.amountCents)}</strong>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </>
+              )}
+              {healthModal === "tesouraco" && (
+                <>
+                  {habits.recurringItems.length > 0 ? (
+                    <div className="budget-list">
+                      {habits.recurringItems.map((r) => (
+                        <div className="budget-card" key={r.id}>
+                          <div className="budget-row-top">
+                            <span><strong>{r.description}</strong> <small className="hint">({r.category})</small></span>
+                            <strong>{money(r.monthlyCents)}/mês ({money(r.annualCents)}/ano)</strong>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <Empty>Nenhuma assinatura ou recorrência fixa encontrada para corte.</Empty>
+                  )}
+                </>
+              )}
+              {healthModal === "milestones" && (
+                <PlanningGoalsPanel rawData={data} healthPlan={healthPlan} busy={busy} section="health" />
+              )}
+            </div>
           </div>
         </div>
       )}
