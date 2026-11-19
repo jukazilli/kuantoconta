@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light" />
+  <title>Kuantoconta — Visão geral · Referência visual</title>
+  <!-- Tipografia: Poppins é a aproximação documentada da referência Moniex.
+       A fonte exata não pode ser recuperada com certeza de uma imagem raster. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    /* DESIGN TOKENS — extraídos/estimados da imagem homologada de 1448 x 1086.
+       As cores variam ligeiramente em razão de sombras/antialiasing no PNG. */
+    :root {
+      --kc-font: 'Poppins', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --kc-canvas: #f2f3fb;
+      --kc-surface: #fdfdff;
+      --kc-surface-inner: #f3f4f9;
+      --kc-ink: #16171c;
+      --kc-muted: #737789;
+      --kc-muted-dark: #51576a;
+      --kc-line: #e7e8ef;
+      --kc-orange: #fe6803;
+      --kc-orange-light: #ff9652;
+      --kc-orange-pale: #fff1e8;
+      --kc-purple-bank: #9d08eb; /* logotipo da conta, não cor do sistema */
+      --kc-radius-card: 20px;
+      --kc-radius-inner: 16px;
+      --kc-radius-pill: 999px;
+      --kc-card-shadow: 0 13px 29px rgba(69, 73, 114, 0.065), 0 2px 4px rgba(48, 53, 87, 0.025);
+      --kc-pill-shadow: 0 8px 22px rgba(80, 83, 122, .07), 0 2px 3px rgba(50,54,84,.025);
+      --kc-gap: 18px;
+    }
+    * { box-sizing: border-box; }
+    html { height:100%; }
+    body {
+      margin:0;
+      min-height:100%;
+      color:var(--kc-ink);
+      font-family: var(--kc-font);
+      font-size:14px;
+      font-weight:400;
+      -webkit-font-smoothing:antialiased;
+      background:
+        radial-gradient(ellipse 55% 40% at 90% 80%, rgba(255,255,255,.35), transparent 100%),
+        radial-gradient(ellipse 70% 70% at 50% 38%, rgba(255,255,255,.30), transparent 100%),
+        var(--kc-canvas);
+    }
+    button, input { font:inherit; }
+    button { cursor:pointer; }
+    button:focus-visible, a:focus-visible, input:focus-visible { outline:3px solid rgba(255,101,11,.40); outline-offset:3px; }
+    .app { width:100%; min-height:100vh; max-width:1448px; margin:0 auto; padding:8px 72px 132px 36px; }
+    .topbar {height:66px; display:flex; align-items:flex-start; justify-content:space-between;}
+    .brand { display:flex; gap:12px; align-items:center; margin-top:1px; margin-left:2px; text-decoration:none; color:inherit; }
+    .brand-mark {height:41px;width:41px;border-radius:50%;display:grid;place-items:center; background:linear-gradient(155deg,#ffa123 0%,#ff6a0c 60%,#f14c10 100%);box-shadow:0 4px 7px rgba(246,92,12,.13), inset 0 1px 2px rgba(255,255,255,.35);color:white;font-weight:700;font-size:29px;letter-spacing:-2px;padding-right:2px;line-height:1;}
+    .brand-name {font-size:24px;letter-spacing:-1.35px;font-weight:700;line-height:1;}
+    .topbar-right {display:flex;align-items:center;gap:18px;}
+    .preview-pill,.avatar,.soft-pill,.filter-btn {background:rgba(255,255,255,.64);box-shadow:var(--kc-pill-shadow);border:1px solid rgba(255,255,255,.8);}
+    .preview-pill {font-size:13px;color:var(--kc-muted-dark);border-radius:999px;padding:10px 16px;margin-top:2px;}
+    .avatar {margin-top:1px;width:41px;height:41px;border-radius:50%;display:grid;place-items:center;background:#ffe5db;border:4px solid white;font-size:16px;font-weight:500;}
+    .toolbar {margin-top:17px;display:flex;justify-content:space-between;align-items:center;min-height:48px;gap:16px;}
+    .toolbar-left,.toolbar-right{display:flex;align-items:center;gap:18px;}
+    .toolbar-right{gap:18px;}
+    .pill {border:0;border-radius:999px;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;gap:12px;height:44px;transition:transform .17s ease,background .17s ease,box-shadow .17s ease;}
+    .pill:active,.filter-btn:active {transform:translateY(1px);}
+    .pill-primary{padding:0 27px;min-width:151px;color:white;background:linear-gradient(110deg,#ff6c0e,#ff5907 80%);box-shadow:0 8px 16px rgba(255,101,11,.11);font-weight:500;font-size:14px;}
+    .pill-secondary{padding:0 29px;color:#1b1b20;background:rgba(255,255,255,.56);box-shadow:var(--kc-pill-shadow);border:1px solid rgba(255,255,255,.75);font-weight:500;font-size:14px;}
+    .pill-secondary:hover,.mini-pill:hover,.filter-btn:hover{background:#fff;}
+    .toolbar .soft-pill{border-radius:999px;height:45px;display:flex;align-items:center;justify-content:space-around;white-space:nowrap;}
+    .date-range{width:335px;gap:14px;padding:0 17px;}
+    .date-range .field-label{font-size:13px;color:var(--kc-muted-dark);}
+    .date-range strong{font-weight:600;font-size:14px;letter-spacing:-.2px;}
+    .date-range .divider{height:24px;width:1px;background:#cfd2dc;}
+    .month-nav{width:192px;gap:6px;padding:0 10px;}
+    .month-nav strong{font-size:15px;min-width:100px;text-align:center;font-weight:600;}
+    .month-nav button{padding:0;background:none;border:0;width:30px;height:35px;display:grid;place-items:center;color:var(--kc-ink);border-radius:50%;}
+    .month-nav button:hover{background:#f0f1f5;}
+    .filter-wrap{position:relative;}
+    .filter-btn{height:45px;width:57px;display:grid;place-items:center;border-radius:999px;color:var(--kc-ink);}
+    .icon{display:block;flex-shrink:0;stroke:currentColor;fill:none;stroke-width:2.15;stroke-linecap:round;stroke-linejoin:round;}
+    .dashboard { margin-top:39px; }
+    .top-grid{display:grid;grid-template-columns:minmax(0, 1.455fr) minmax(0, 1fr);gap:var(--kc-gap);align-items:stretch;}
+    .left-stack{display:grid;grid-template-rows:91px 202px;gap:20px;min-width:0;}
+    .summary-grid{display:grid;grid-template-columns:1.13fr 1fr .96fr;gap:16px;min-width:0;}
+    .card {min-width:0;background:linear-gradient(155deg,#f9fafe,#f8f9fe);border:1px solid rgba(255,255,255,.85);box-shadow:var(--kc-card-shadow);border-radius:var(--kc-radius-card);}
+    .metric-card{display:flex;align-items:center;gap:18px;padding:18px 19px;min-width:0;}
+    .metric-icon{width:49px;height:49px;border-radius:15px;background:linear-gradient(150deg,#fff7f0,#fff1e9);color:var(--kc-orange);display:grid;place-items:center;flex:0 0 49px;}
+    .metric-icon svg{height:28px;width:28px;stroke-width:2.15;}
+    .metric-text{display:flex;flex-direction:column;gap:4px;white-space:nowrap;}
+    .metric-label{color:#4a4f60;font-size:15px;line-height:1.15;letter-spacing:-.3px;}
+    .metric-value{font-weight:700;font-size:21px;line-height:1.15;letter-spacing:-.7px;font-variant-numeric:tabular-nums;}
+    .commitments{padding:21px 20px 20px 23px;display:flex;flex-direction:column;}
+    .card-title{font-weight:600;font-size:20px;letter-spacing:-.8px;line-height:1.25;margin:0;}
+    .card-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;}
+    .mini-pill{min-height:36px;border-radius:999px;background:linear-gradient(160deg,#fff,#f5f5fa);border:1px solid #e9eaf1;padding:0 14px;box-shadow:0 3px 8px rgba(31,35,62,.055);font-size:13px;color:#24252a;font-weight:500;display:inline-flex;align-items:center;justify-content:center;gap:7px;white-space:nowrap;}
+    .empty-state {margin-top:25px;min-height:104px;flex:1;background:linear-gradient(100deg,#f3f4f9 5%,#f8f9fd 80%);border-radius:var(--kc-radius-inner);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:4px;text-align:center;color:#656b7e;font-size:15px;line-height:1.5;}
+    .empty-state p{margin:0;}
+    .limits{height:313px;padding:26px 19px 20px;}
+    .eyebrow{text-transform:uppercase;letter-spacing:1.5px;font-size:12px;font-weight:600;line-height:1.3;}
+    .limits-heading{display:flex;align-items:center;justify-content:space-between;padding:0 4px 0 7px;}
+    .limits-heading .month-heading{font-weight:700;font-size:19px;letter-spacing:-.6px;margin-top:5px;line-height:1.3;}
+    .budget-box {border:1px solid #ececf2;border-radius:15px;margin-top:26px;padding:16px 16px 19px;min-height:165px;}
+    .budget-top{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+    .budget-category{display:flex;align-items:center;gap:11px;font-size:15px;font-weight:500;letter-spacing:-.5px;white-space:nowrap;}
+    .budget-icon{height:29px;width:29px;border-radius:9px;color:var(--kc-orange);display:grid;place-items:center;background:#fff5ed;}
+    .budget-right{display:flex;align-items:center;gap:13px;font-size:12px;white-space:nowrap;color:var(--kc-muted-dark);}
+    .budget-right strong{color:var(--kc-ink);font-weight:600;}
+    .small-flag{border-radius:999px;background:#f0f1f5;padding:5px 14px;font-size:12px;color:#26262a;font-weight:500;}
+    .progress-track{height:13px;border-radius:99px;background:#dedfe5;margin:17px 0 25px;overflow:hidden;}
+    .progress-bar{height:100%;width:24%;border-radius:99px;background:linear-gradient(90deg,#ff650b 72%,#ff9b56);}
+    .budget-bottom{display:grid;grid-template-columns:1.1fr 1px .9fr;align-items:start;gap:12px;line-height:1.38;color:#6b7080;font-size:14px;letter-spacing:-.2px;}
+    .budget-bottom strong{color:#15171b;font-weight:600;}
+    .budget-vertical{width:1px;height:40px;background:#bfc1ca;margin:0 auto;}
+    .budget-amount{text-align:right;}
+    .bottom-grid{display:grid;grid-template-columns:1.37fr 1.04fr .98fr;gap:var(--kc-gap);margin-top:29px;align-items:stretch;}
+    .chart-card,.bank-card{height:321px;padding:18px 24px;position:relative;}
+    .chart-title{font-size:20px;font-weight:600;letter-spacing:-.9px;line-height:1.2;margin:4px 0 0;}
+    .chart-content{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-top:20px;}
+    .donut {width:236px;height:236px;position:relative;flex:0 0 236px;margin-left:11px;margin-top:0;}
+    .donut svg{display:block;width:236px;height:236px;transform:rotate(-90deg);}
+    .donut .track{stroke:#e7e8ed;}
+    .donut-center{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;text-align:center;gap:1px;}
+    .donut-total{font-size:18px;font-weight:700;letter-spacing:-.65px;white-space:nowrap;}
+    .donut-subtitle{font-size:12px;color:#616678;}
+    .legend{flex:1;min-width:0;margin-right:3px;display:flex;flex-direction:column;gap:6px;margin-top:3px;}
+    .legend-row{display:flex;align-items:center;gap:12px;min-height:30px;border-bottom:1px solid rgba(225,226,234,.6);font-size:13px;letter-spacing:-.35px;white-space:nowrap;}
+    .legend-row:last-child{border:0;}
+    .legend-swatch{width:14px;height:16px;border-radius:4px;background:#e2e3e9;flex-shrink:0;}
+    .legend-row:first-child .legend-swatch{background:var(--kc-orange);}
+    .legend-name{flex:1;overflow:hidden;text-overflow:ellipsis;}
+    .legend-percent{font-size:14px;font-weight:500;color:#555a70;}
+    .cashflow{padding:18px 26px;}
+    .cashflow .plot{width:100%;height:222px;margin-top:12px;overflow:visible;}
+    .cashflow svg text{font-family:var(--kc-font);font-size:12px;fill:#424653;}
+    .bank-card{padding:18px 17px 20px;}
+    .bank-header{display:flex;align-items:center;justify-content:space-between;gap:12px;}
+    .bank-card .eyebrow,.bank-card .chart-title{margin-left:8px;}
+    .bank-box{background:linear-gradient(180deg,#f3f4f9,#f5f5fa);border-radius:15px;margin-top:26px;padding:14px 10px 13px;}
+    .bank-box-header{display:flex;align-items:center;gap:13px;color:#414759;font-size:13px;padding:0 10px 11px;}
+    .bank-box-header strong{font-weight:600;color:#22252a;}
+    .account-row{height:71px;background:rgba(255,255,255,.85);border-radius:15px;padding:13px 11px;display:flex;align-items:center;gap:14px;}
+    .nubank-symbol{color:var(--kc-purple-bank);font-weight:700;font-size:26px;letter-spacing:-3px;line-height:1;min-width:43px;text-align:center;}
+    .account-name{font-weight:500;font-size:14px;flex:1;}
+    .account-balance{text-align:right;display:flex;flex-direction:column;gap:3px;white-space:nowrap;}
+    .account-balance strong{font-size:16px;letter-spacing:-.5px;font-weight:700;}
+    .account-balance span{font-size:13px;color:#646b7d;line-height:1.1;}
+    .bottom-dock {height:58px;border-radius:999px;background:linear-gradient(110deg,rgba(255,255,255,.91),rgba(250,250,254,.91));border:1px solid rgba(255,255,255,.9);box-shadow:0 15px 26px rgba(78,83,118,.11),0 2px 4px rgba(70,75,112,.03);display:flex;align-items:center;justify-content:space-between;gap:7px;padding:8px 12px;position:fixed;bottom:66px;left:calc(50% - 20px);transform:translateX(-50%);z-index:20;width:812px;max-width:calc(100vw - 36px);}
+    .dock-item {height:42px;white-space:nowrap;border:0;border-radius:999px;background:transparent;padding:0 16px;display:flex;align-items:center;justify-content:center;color:#1e2029;font-size:13px;font-weight:500;letter-spacing:-.3px;transition:background .16s ease;}
+    .dock-item:hover:not(.active){background:#f1f1f7;}
+    .dock-item.active{background:linear-gradient(110deg,#ff700d,#ff570b);color:white;padding:0 29px;box-shadow:0 3px 10px rgba(251,97,12,.13);}
+    .dock-item.profile{background:#fbfbfd;border:1px solid #f1f1f5;padding:0 23px;}
+    .dock-item.profile.active{background:var(--kc-orange);color:#fff;}
+    .popover{position:absolute;right:0;top:57px;width:260px;background:white;border:1px solid #eaebf0;border-radius:15px;box-shadow:0 18px 50px rgba(33,36,57,.14);z-index:30;padding:14px;display:none;}
+    .popover.open{display:block;}
+    .popover h3{font-size:14px;margin:0 0 12px;}
+    .popover label{display:flex;gap:10px;align-items:center;margin:10px 0;color:#45485a;font-size:13px;}
+    .popover input{accent-color:var(--kc-orange);}
+    .popover .small-note{color:#868b9c;font-size:11px;line-height:1.5;}
+    .overlay{position:fixed;inset:0;background:rgba(19,22,35,.22);z-index:31;display:none;align-items:center;justify-content:center;padding:24px;}
+    .overlay.open{display:flex;}
+    .dialog{background:#fff;border-radius:22px;min-width:min(460px,100%);max-width:500px;box-shadow:0 22px 80px rgba(17,20,45,.17);padding:28px;}
+    .dialog-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:22px;}
+    .dialog h2{font-size:21px;margin:0;letter-spacing:-.7px;}
+    .dialog-close{border:0;background:#f4f4f8;border-radius:999px;width:33px;height:33px;display:grid;place-items:center;}
+    .action-menu{display:grid;gap:10px;}
+    .action-menu button{padding:15px 17px;text-align:left;border-radius:13px;border:1px solid #ededf2;background:#fafafd;color:#181a20;display:flex;justify-content:space-between;align-items:center;font-weight:500;}
+    .action-menu button:hover{border-color:#ffd7bd;background:#fff7f1;}
+    .action-menu small{display:block;font-size:11px;color:#787e91;font-weight:400;margin-top:3px;}
+    .dialog-copy{font-size:13px;color:#606579;line-height:1.7;margin-top:-8px;}
+    .toast{position:fixed;bottom:140px;left:50%;transform:translateX(-50%);background:#22242c;color:#fff;padding:12px 17px;border-radius:999px;box-shadow:0 12px 28px #3333;z-index:50;font-size:12px;opacity:0;pointer-events:none;transition:opacity .2s;}
+    .toast.show{opacity:1;}
+    @media (max-width:1200px){
+      .app{padding-left:26px;padding-right:26px;}
+      .top-grid{grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);}
+      .summary-grid{gap:10px;}
+      .metric-card{gap:10px;padding:12px;}
+      .metric-icon{width:40px;height:40px;flex-basis:40px;}
+      .metric-label{font-size:12px;}.metric-value{font-size:18px;}
+      .budget-right{font-size:11px;gap:8px;}
+      .bottom-grid{grid-template-columns:1.2fr 1fr 1fr;}
+      .chart-card{padding:18px;}
+      .donut{width:185px;height:185px;flex-basis:185px;margin-left:0;}
+      .donut svg{width:185px;height:185px;}
+      .donut-total{font-size:14px;}
+      .chart-content{gap:4px;margin-top:26px;}
+      .legend-row{font-size:11px;gap:6px;}.legend-percent{font-size:12px;}
+      .bank-card .chart-title,.chart-title{font-size:18px;}
+    }
+    @media (max-width:990px){
+      .toolbar{margin-top:8px;flex-wrap:wrap;}
+      .toolbar-right{margin-left:auto;}
+      .dashboard{margin-top:24px;}
+      .top-grid{grid-template-columns:1fr;}
+      .left-stack{grid-template-rows:90px minmax(170px,auto);}
+      .limits{height:auto;min-height:240px;}
+      .bottom-grid{grid-template-columns:1fr 1fr;}
+      .bank-card{grid-column:1 / -1;height:auto;min-height:190px;}
+      .bank-box{max-width:600px;}
+      .bottom-dock{bottom:20px;gap:1px;}
+      .dock-item{padding:0 9px;font-size:11px;}.dock-item.active{padding:0 16px;}
+      .app{padding-bottom:116px;}
+    }
+    @media (max-width:670px){
+      .app{padding:15px 16px 120px;}
+      .brand-name{font-size:20px;}
+      .topbar{height:60px;}.preview-pill{font-size:11px;padding:8px 10px;}
+      .toolbar{align-items:stretch;gap:14px;}
+      .toolbar-left{width:100%;gap:9px;}.toolbar-right{width:100%;gap:7px;justify-content:space-between;}
+      .date-range{width:auto;flex:1;gap:6px;padding:0 9px;}
+      .date-range .field-label{display:none;}.date-range strong{font-size:11px;}
+      .month-nav{width:145px;flex-shrink:0;}.month-nav strong{min-width:72px;font-size:12px;}
+      .filter-btn{width:42px;height:43px;}
+      .summary-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;}
+      .left-stack{grid-template-rows:auto auto;gap:12px;}
+      .budget-top{flex-wrap:wrap;row-gap:8px;}
+      .budget-right{width:100%;white-space:normal;justify-content:space-between;gap:8px;}
+      .budget-box{padding:12px;}
+      .budget-bottom{grid-template-columns:1fr;gap:8px;font-size:12px;}
+      .budget-vertical{display:none;}
+      .budget-amount{text-align:left;}
+      .metric-card{padding:12px 8px;min-height:93px;flex-direction:column;align-items:flex-start;gap:7px;}
+      .metric-icon{width:33px;height:33px;flex-basis:33px;border-radius:10px;}.metric-icon svg{width:21px;height:21px;}
+      .metric-label{font-size:11px;}.metric-value{font-size:15px;}
+      .card-title{font-size:17px;}
+      .commitments{padding:18px;min-height:190px;}.empty-state{font-size:12px;}
+      .bottom-grid{grid-template-columns:1fr;gap:12px;margin-top:12px;}
+      .chart-card,.bank-card{height:auto;min-height:305px;}
+      .chart-content{justify-content:flex-start;gap:22px;}
+      .donut,.donut svg{width:200px;height:200px;}.donut{flex-basis:200px;}
+      .bank-card{min-height:185px;}.cashflow{height:300px;}
+      .bottom-dock{bottom:0;left:50%;border-radius:16px 16px 0 0;width:100%;max-width:100%;height:69px;overflow-x:auto;justify-content:flex-start;padding:6px 10px;}
+      .dock-item{font-size:11px;flex-shrink:0;}.dock-item.active{padding:0 12px;}
+    }
+    @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;scroll-behavior:auto!important;}}
+  </style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <a class="brand" href="#" aria-label="Kuantoconta, página inicial"><span class="brand-mark">k</span><span class="brand-name">kuantoconta</span></a>
+    <div class="topbar-right"><span class="preview-pill">V1 · Preview</span><span class="avatar" aria-label="Perfil">V</span></div>
+  </header>
+
+  <section class="toolbar" aria-label="Ações e período">
+    <div class="toolbar-left">
+      <button class="pill pill-primary" id="addBtn" type="button"><svg class="icon" width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Adicionar</button>
+      <button class="pill pill-secondary" id="createBtn" type="button">Criar</button>
+    </div>
+    <div class="toolbar-right">
+      <div class="date-range soft-pill" aria-label="Período selecionado"><span class="field-label">Início</span><strong id="startDate">18/11/2026</strong><span class="divider" aria-hidden="true"></span><span class="field-label">Fim</span><strong id="endDate">30/11/2026</strong></div>
+      <div class="month-nav soft-pill" aria-label="Navegar por mês"><button aria-label="Mês anterior" id="prevMonth" type="button"><svg class="icon" width="21" height="21" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" stroke-width="3"/></svg></button><strong id="monthLabel">novembro</strong><button aria-label="Próximo mês" id="nextMonth" type="button"><svg class="icon" width="21" height="21" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" stroke-width="3"/></svg></button></div>
+      <div class="filter-wrap"><button class="filter-btn" id="filterBtn" aria-label="Abrir filtros" aria-expanded="false" type="button"><svg class="icon" width="22" height="22" viewBox="0 0 24 24"><path d="M4 5h16l-6.7 8v6l-2.6 1v-7z"/></svg></button>
+        <div class="popover" id="filterPop" role="dialog" aria-label="Filtros"><h3>Filtrar a visão geral</h3><label><input type="checkbox" checked /> Incluir previstos</label><label><input type="checkbox" checked /> Mostrar realizados</label><label><input type="checkbox" checked /> Exibir categorias</label><p class="small-note">Filtros visuais desta referência; não conectados a dados reais.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <main class="dashboard" aria-label="Visão geral financeira">
+    <section class="top-grid" aria-label="Resumo e compromissos">
+      <div class="left-stack">
+        <div class="summary-grid">
+          <article class="card metric-card" aria-label="A pagar, dez centavos">
+            <span class="metric-icon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18m0 0-7-7m7 7 7-7" /></svg></span><span class="metric-text"><span class="metric-label">A pagar</span><strong class="metric-value">R$ 0,10</strong></span>
+          </article>
+          <article class="card metric-card" aria-label="A receber, zero real">
+            <span class="metric-icon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21V3m0 0-7 7m7-7 7 7" /></svg></span><span class="metric-text"><span class="metric-label">A receber</span><strong class="metric-value">R$ 0,00</strong></span>
+          </article>
+          <article class="card metric-card" aria-label="Endividamento, zero real">
+            <span class="metric-icon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v5c0 1.7 3.2 3 7 3s7-1.3 7-3V6M5 11v5c0 1.7 3.2 3 7 3s7-1.3 7-3v-5M5 16v2c0 1.7 3.2 3 7 3s7-1.3 7-3v-2"/></svg></span><span class="metric-text"><span class="metric-label">Endividamento</span><strong class="metric-value">R$ 0,00</strong></span>
+          </article>
+        </div>
+        <article class="card commitments">
+          <div class="card-heading"><h2 class="card-title">Próximos compromissos</h2><button type="button" class="mini-pill" data-dialog="Carteira">Carteira<svg class="icon" width="16" height="16" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" stroke-width="2.5"/></svg></button></div>
+          <div class="empty-state"><p>Nenhum lançamento neste período.</p><p>Use + A pagar ou + A receber para começar.</p></div>
+        </article>
+      </div>
+      <article class="card limits">
+        <div class="limits-heading"><div><div class="eyebrow">LIMITES MENSAIS</div><div class="month-heading" id="budgetMonth">novembro de 2026</div></div><button class="mini-pill" type="button" data-dialog="Gerenciar limites">Gerenciar<svg class="icon" width="16" height="16" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" stroke-width="2.5"/></svg></button></div>
+        <div class="budget-box">
+          <div class="budget-top"><div class="budget-category"><span class="budget-icon"><svg class="icon" width="19" height="19" viewBox="0 0 24 24"><path d="M4 3v8m4-8v8m4-8v8m-8 0c0 2 2 3 4 3v7m0-10v10M18 3c-3 3-3 7-3 10h4M18 3v18"/></svg></span>Alimentação</div><div class="budget-right"><span>Ainda sem destino: <strong>R$ 199,90</strong></span><span class="small-flag">Limite</span></div></div>
+          <div class="progress-track" aria-label="Orçamento de alimentação: R$ 100,10 já destinado de R$ 300,00"><div class="progress-bar"></div></div>
+          <div class="budget-bottom"><div>Gasto até agora: <strong>R$ 0,10</strong> ·<br>R$ 100,00 já planejado</div><div class="budget-vertical"></div><div class="budget-amount">Limite: <strong>R$ 300,00</strong></div></div>
+        </div>
+      </article>
+    </section>
+
+    <section class="bottom-grid" aria-label="Análises e saldos">
+      <article class="card chart-card distribution">
+        <div class="eyebrow">DISTRIBUIÇÃO</div><h2 class="chart-title">Despesas por categoria</h2>
+        <div class="chart-content">
+          <div class="donut" aria-label="Distribuição ilustrativa das despesas por categoria">
+            <svg viewBox="0 0 236 236" role="img" aria-label="Gráfico de rosca"><circle cx="118" cy="118" r="92" fill="none" stroke="#eff0f5" stroke-width="31"/>
+              <circle cx="118" cy="118" r="92" fill="none" stroke="#ff660d" stroke-width="31" stroke-dasharray="158.5 578.1" stroke-dashoffset="0"/>
+              <circle cx="118" cy="118" r="92" fill="none" stroke="#e5e6ec" stroke-width="31" stroke-dasharray="131.8 578.1" stroke-dashoffset="-160.4"/>
+              <circle cx="118" cy="118" r="92" fill="none" stroke="#d5d7de" stroke-width="31" stroke-dasharray="66.8 578.1" stroke-dashoffset="-294.1"/>
+              <circle cx="118" cy="118" r="92" fill="none" stroke="#cfd1d8" stroke-width="31" stroke-dasharray="101.9 578.1" stroke-dashoffset="-362.8"/>
+              <circle cx="118" cy="118" r="92" fill="none" stroke="#e4e5eb" stroke-width="31" stroke-dasharray="89 578.1" stroke-dashoffset="-466.6"/>
+              <circle cx="118" cy="118" r="92" fill="none" stroke="#eeeff4" stroke-width="31" stroke-dasharray="14.1 578.1" stroke-dashoffset="-557.5"/>
+            </svg>
+            <div class="donut-center"><strong class="donut-total">R$ 6.420,00</strong><span class="donut-subtitle">Total de despesas</span></div>
+          </div>
+          <div class="legend">
+            <div class="legend-row"><span class="legend-swatch"></span><span class="legend-name">Alimentação</span><span class="legend-percent">27,9%</span></div>
+            <div class="legend-row"><span class="legend-swatch"></span><span class="legend-name">Outros</span><span class="legend-percent">23,3%</span></div>
+            <div class="legend-row"><span class="legend-swatch"></span><span class="legend-name">Entretenimento</span><span class="legend-percent">12,0%</span></div>
+            <div class="legend-row"><span class="legend-swatch"></span><span class="legend-name">Transporte</span><span class="legend-percent">18,0%</span></div>
+            <div class="legend-row"><span class="legend-swatch"></span><span class="legend-name">Compras</span><span class="legend-percent">16,0%</span></div>
+          </div>
+        </div>
+      </article>
+      <article class="card chart-card cashflow">
+        <div class="eyebrow">PERÍODO SELECIONADO</div><h2 class="chart-title">Receitas e despesas</h2>
+        <svg viewBox="0 0 350 220" class="plot" aria-label="Gráfico de barras ilustrativo, receitas próximas de zero e despesas de dez centavos" role="img">
+          <g stroke="#dadce5" stroke-width="1" stroke-dasharray="2 3">
+            <line x1="55" y1="22" x2="347" y2="22"/><line x1="55" y1="55" x2="347" y2="55"/><line x1="55" y1="88" x2="347" y2="88"/><line x1="55" y1="121" x2="347" y2="121"/><line x1="55" y1="154" x2="347" y2="154"/><line x1="55" y1="187" x2="347" y2="187"/>
+          </g>
+          <g text-anchor="end"><text x="44" y="25">0,10</text><text x="44" y="58">0,08</text><text x="44" y="91">0,06</text><text x="44" y="124">0,04</text><text x="44" y="157">0,02</text><text x="44" y="190">0,00</text></g>
+          <rect x="93" y="184" width="63" height="3" rx="2" fill="#d4d5df"/><rect x="223" y="55" width="66" height="132" rx="9" fill="#fe6803"/>
+          <text x="124" y="210" text-anchor="middle">Receitas</text><text x="256" y="210" text-anchor="middle">Despesas</text>
+        </svg>
+      </article>
+      <article class="card bank-card">
+        <div class="bank-header"><div><div class="eyebrow">CONTAS BANCÁRIAS</div><h2 class="chart-title">Saldos em conta</h2></div><button class="mini-pill" type="button" data-dialog="Nova conta"><svg class="icon" width="15" height="15" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Nova conta</button></div>
+        <div class="bank-box"><div class="bank-box-header"><strong>Suas contas</strong><span>1 cadastradas</span></div><div class="account-row"><span class="nubank-symbol" aria-label="Nubank">nu</span><span class="account-name">Nubank</span><span class="account-balance"><strong>R$ 4.987,60</strong><span>Saldo realizado</span></span></div></div>
+      </article>
+    </section>
+  </main>
+</div>
+
+<nav class="bottom-dock" aria-label="Navegação principal">
+  <button class="dock-item active" type="button" data-tab="Visão geral">Visão geral</button>
+  <button class="dock-item" type="button" data-tab="Movimentos">Movimentos</button>
+  <button class="dock-item" type="button" data-tab="Planejamento">Planejamento</button>
+  <button class="dock-item" type="button" data-tab="Patrimônio">Patrimônio</button>
+  <button class="dock-item" type="button" data-tab="Saúde financeira">Saúde financeira</button>
+  <button class="dock-item profile" type="button" data-tab="Perfil">Perfil</button>
+</nav>
+
+<div class="overlay" id="dialogOverlay" aria-hidden="true">
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialogTitle">
+    <div class="dialog-head"><h2 id="dialogTitle">Adicionar</h2><button class="dialog-close" type="button" id="dialogClose" aria-label="Fechar"><svg class="icon" width="17" height="17" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+    <div id="dialogBody"></div>
+  </div>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script>
+  // Comportamento apenas demonstrativo; nenhum dado é enviado ou salvo.
+  const $ = (sel) => document.querySelector(sel);
+  const months = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+  let selected = new Date(2026, 10, 1);
+  const pad = (n)=>String(n).padStart(2,'0');
+  function updateMonth(){
+    const y=selected.getFullYear(), m=selected.getMonth(), last=new Date(y,m+1,0).getDate();
+    $('#monthLabel').textContent=months[m];
+    $('#budgetMonth').textContent=`${months[m]} de ${y}`;
+    $('#startDate').textContent=`${pad(m===10&&y===2026?18:1)}/${pad(m+1)}/${y}`;
+    $('#endDate').textContent=`${pad(last)}/${pad(m+1)}/${y}`;
+  }
+  $('#prevMonth').addEventListener('click',()=>{selected.setMonth(selected.getMonth()-1);updateMonth();});
+  $('#nextMonth').addEventListener('click',()=>{selected.setMonth(selected.getMonth()+1);updateMonth();});
+  const pop=$('#filterPop'), filterBtn=$('#filterBtn');
+  filterBtn.addEventListener('click',(ev)=>{ev.stopPropagation();const opened=!pop.classList.contains('open');pop.classList.toggle('open',opened);filterBtn.setAttribute('aria-expanded',String(opened));});
+  document.addEventListener('click',(ev)=>{if(!ev.target.closest('.filter-wrap')){pop.classList.remove('open');filterBtn.setAttribute('aria-expanded','false');}});
+  const overlay=$('#dialogOverlay');
+  let timeout;
+  function toast(message){const el=$('#toast');el.textContent=message;el.classList.add('show');clearTimeout(timeout);timeout=setTimeout(()=>el.classList.remove('show'),2900);}
+  function openDialog(title,body){$('#dialogTitle').textContent=title;$('#dialogBody').innerHTML=body;overlay.classList.add('open');overlay.setAttribute('aria-hidden','false');$('#dialogClose').focus();}
+  function closeDialog(){overlay.classList.remove('open');overlay.setAttribute('aria-hidden','true');}
+  const actionHtml=(items)=>`<div class="action-menu">${items.map(([name,caption])=>`<button type="button" data-choice="${name}"><span>${name}<small>${caption}</small></span><span>›</span></button>`).join('')}</div>`;
+  $('#addBtn').addEventListener('click',()=>openDialog('Adicionar',actionHtml([['Gastei','Registrar uma despesa realizada'],['Vou gastar','Planejar uma compra futura'],['Tenho uma conta','Registrar um compromisso']])));
+  $('#createBtn').addEventListener('click',()=>openDialog('Criar',actionHtml([['Nova conta','Cadastrar uma conta ou carteira'],['Novo limite','Definir limite para uma categoria'],['Nova meta','Planejar uma reserva ou objetivo']])));
+  document.querySelectorAll('[data-dialog]').forEach(el=>el.addEventListener('click',()=>openDialog(el.dataset.dialog,`<p class="dialog-copy">Este é um HTML de referência visual. A funcionalidade “${el.dataset.dialog}” será conectada à aplicação na implementação.</p>`)));
+  $('#dialogClose').addEventListener('click',closeDialog);
+  overlay.addEventListener('click',(ev)=>{if(ev.target===overlay)closeDialog();});
+  document.addEventListener('keydown',(ev)=>{if(ev.key==='Escape'){closeDialog();pop.classList.remove('open');}});
+  $('#dialogBody').addEventListener('click',(ev)=>{const choice=ev.target.closest('[data-choice]');if(choice){closeDialog();toast(`${choice.dataset.choice}: ação disponível na aplicação real.`);}});
+  document.querySelectorAll('[data-tab]').forEach(btn=>btn.addEventListener('click',()=>{
+    const name=btn.dataset.tab;
+    if(name==='Visão geral')return;
+    toast(`${name}: esta referência contém somente a Visão geral.`);
+  }));
+</script>
+</body>
+</html>
