@@ -1,6 +1,6 @@
 "use client";
 import {useMemo,useState} from "react";
-import {X,Plus,CalendarDays,ReceiptText,CircleDollarSign,Repeat2,CheckCircle2,Clock3,ChevronDown,ChevronRight,Sparkles,Check,Compass,ArrowDownCircle,ArrowUpCircle} from "lucide-react";
+import {X,Plus,CalendarDays,ReceiptText,CircleDollarSign,Repeat2,CheckCircle2,Clock3,ChevronDown,ChevronRight,Sparkles,Check,Compass,ArrowDownCircle,ArrowUpCircle,HandCoins,Search,UserPlus} from "lucide-react";
 import MoneyInput from "./MoneyInput";
 import BankIcon from "./BankIcon";
 import {BANK_BRANDS} from "../../lib/bank-brands";
@@ -32,12 +32,31 @@ export default function EntryDrawer({
   onClose,
   onAction,
   onAddCategory,
+  people=[],
+  onAddPerson,
   cancellations=[]
 }){
- const [quick,setQuick]=useState(null),[budgetPicker,setBudgetPicker]=useState(false),[newName,setNewName]=useState(""),[trackBudget,setTrackBudget]=useState(false),[quickLimit,setQuickLimit]=useState(""),[quickError,setQuickError]=useState(""),[quickBusy,setQuickBusy]=useState(false),[showMore,setShowMore]=useState(false);
+ const [quick,setQuick]=useState(null),[budgetPicker,setBudgetPicker]=useState(false),[personPicker,setPersonPicker]=useState(false),[personQuery,setPersonQuery]=useState(""),[newPersonMode,setNewPersonMode]=useState(false),[personMore,setPersonMore]=useState(false),[pName,setPName]=useState(""),[pRel,setPRel]=useState("Amigo"),[pEmail,setPEmail]=useState(""),[pPhone,setPPhone]=useState(""),[pNotes,setPNotes]=useState(""),[pBusy,setPBusy]=useState(false),[pErr,setPErr]=useState(""),[newName,setNewName]=useState(""),[trackBudget,setTrackBudget]=useState(false),[quickLimit,setQuickLimit]=useState(""),[quickError,setQuickError]=useState(""),[quickBusy,setQuickBusy]=useState(false),[showMore,setShowMore]=useState(false);
  const field=(name,value)=>setForm(old=>({...old,[name]:value}));
  const edit=drawer==="edit",newTitle=drawer==="title",editPlan=drawer==="edit_plan",titleEntry=newTitle||edit;
- const intent=newTitle?(form.intent||"spent"):"bill";
+ const intent=newTitle?(form.intent==="lend"?"lend":"bill"):"bill";
+ const selectedPerson=people.find(p=>p.id===form.personId)||null;
+ const filteredPeople=useMemo(()=>{
+  const q=personQuery.trim().toLowerCase();
+  if(!q)return people;
+  return people.filter(p=>`${p.name} ${p.relationship||""} ${p.phone||""}`.toLowerCase().includes(q));
+ },[people,personQuery]);
+ async function createPerson(e){
+  e.preventDefault();
+  if(!pName.trim()||!onAddPerson)return;
+  setPBusy(true);setPErr("");
+  try{
+    const created=await onAddPerson({name:pName.trim(),relationship:pRel.trim()||"Outro",email:pEmail.trim()||null,phone:pPhone.trim()||null,notes:pNotes.trim()||null});
+    if(created?.id){field("personId",created.id);}
+    setNewPersonMode(false);setPersonPicker(false);setPName("");setPRel("Amigo");setPEmail("");setPPhone("");setPNotes("");setPersonMore(false);
+  }catch(ex){setPErr(ex?.message||"Não foi possível cadastrar a pessoa.");}
+  finally{setPBusy(false);}
+ }
  const roots=categories.filter(c=>c.direction===form.direction&&c.parent_id===null);
  const activeRoot=roots.find(c=>c.name===form.category);
  const balanceDue=selectedTitleObj?Math.max(0,cents(selectedTitleObj.amount_cents)-cents(selectedTitleObj.settled_cents)):0;
@@ -106,7 +125,7 @@ export default function EntryDrawer({
  }
 
  const formTitle=
-  newTitle?(intent==="spent"?"Gastei":intent==="plan"?"Vou gastar":form.direction==="income"?"Tenho uma conta a receber":"Tenho uma conta a pagar"):
+  newTitle?(intent==="lend"?"Tenho um empréstimo a fazer":form.direction==="income"?"Tenho uma conta a receber":"Tenho uma conta a pagar"):
   drawer==="edit"?"Editar lançamento":
   drawer==="edit_plan"?"Ajustar previsão de gasto":
   drawer==="wallet"?"Nova conta":
@@ -158,75 +177,49 @@ export default function EntryDrawer({
     <div className="detail-history"><h3>Histórico de pagamentos</h3>{settlements.filter(s=>s.title_id===selectedTitleObj?.id).length?settlements.filter(s=>s.title_id===selectedTitleObj?.id).map(s=><div className={"history-row"+(s.reversed_at?" reversed":"")} key={s.id}><p><CheckCircle2 size={15}/>{fdate(s.settled_on)} — {money(cents(s.amount_cents))} {s.reversed_at&&<span>• Revertido</span>}</p>{!s.reversed_at&&<button type="button" disabled={busy} onClick={()=>onAction("reverse",s.id)}>Desfazer pagamento</button>}</div>):<p><Clock3 size={15}/> Nenhum pagamento registrado.</p>}</div>
     <p className="hint">Ao editar este lançamento, as demais parcelas da série não serão alteradas.</p>
    </div>:<form id="entry-form" className="entry-form" onSubmit={onSave}>
-    {newTitle&&<div className="intent-tabs" role="tablist" aria-label="Tipo de registro">
-      <button type="button" role="tab" aria-selected={intent==="spent"} className={intent==="spent"?"active":""} onClick={()=>selectIntent("spent")}>Gastei</button>
-      <button type="button" role="tab" aria-selected={intent==="bill"} className={intent==="bill"?"active":""} onClick={()=>selectIntent("bill")}>Tenho uma conta</button>
+    {newTitle&&<div className="direction-cards three" role="group" aria-label="Tipo de lançamento">
+      <button type="button" className={`direction-card expense${intent!=="lend"&&form.direction!=="income"?" active":""}`} aria-pressed={intent!=="lend"&&form.direction!=="income"} onClick={()=>setForm(old=>({...old,intent:"bill",direction:"expense",category:old.direction==="expense"?old.category:""}))}>
+        <ArrowDownCircle size={20} aria-hidden="true"/>
+        <div><strong>A pagar</strong><small>Conta ou gasto</small></div>
+      </button>
+      <button type="button" className={`direction-card income${intent!=="lend"&&form.direction==="income"?" active":""}`} aria-pressed={intent!=="lend"&&form.direction==="income"} onClick={()=>setForm(old=>({...old,intent:"bill",direction:"income",category:old.direction==="income"?old.category:""}))}>
+        <ArrowUpCircle size={20} aria-hidden="true"/>
+        <div><strong>A receber</strong><small>Salário ou entrada</small></div>
+      </button>
+      <button type="button" className={`direction-card lend${intent==="lend"?" active":""}`} aria-pressed={intent==="lend"} onClick={()=>setForm(old=>({...old,intent:"lend",lentOn:old.lentOn||brDay(),expectedRepaymentOn:old.expectedRepaymentOn||old.dueOn||brDay()}))}>
+        <HandCoins size={20} aria-hidden="true"/>
+        <div><strong>Emprestar</strong><small>Para alguém</small></div>
+      </button>
     </div>}
 
-    {/* ACTION 1: GASTEI (Valor + Descrição + Orçamento + Conta) */}
-    {newTitle&&intent==="spent"&&<>
-      <div className="field-row money-input"><CircleDollarSign/><span>R$</span><MoneyInput ariaLabel="Valor em reais" value={form.amount} onChange={v=>field("amount",v)}/></div>
-      <div className="field-row major"><ReceiptText/><input aria-label="Onde ou com o quê" placeholder="Onde ou com o quê? (ex.: Uber, Padaria)" required value={form.description} maxLength={120} onChange={e=>field("description",e.target.value)}/></div>
+    {/* EMPRESTAR DINHEIRO */}
+    {newTitle&&intent==="lend"&&<>
+      <div className="field-row major"><ReceiptText/><input aria-label="Descrição do empréstimo" placeholder="Ex.: Ajuda conserto carro, Empréstimo" required value={form.description} maxLength={140} onChange={e=>field("description",e.target.value)}/></div>
+      <div className="field-row money-input"><CircleDollarSign/><span>R$</span><MoneyInput ariaLabel="Valor emprestado em reais" value={form.amount} onChange={v=>field("amount",v)}/></div>
       <div className="form-group">
+        <label>De qual conta saiu<select required value={form.walletId} onChange={e=>field("walletId",e.target.value)}><option value="">Selecione a conta</option>{wallets.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}</select></label>
         <div className="controlled-classification">
           <div className="budget-picker-field">
-            <span className="field-caption">De qual orçamento sai?</span>
-            <input className="sr-only-input" tabIndex={-1} aria-hidden="true" required value={form.category} onChange={()=>{}}/>
-            <button type="button" className="budget-picker-trigger" onClick={()=>setBudgetPicker(true)}>
-              <span>{form.category||"Selecione o orçamento"}</span>
-              <small>{form.category?formatBudgetMeta(form.category):"Escolher da lista ›"}</small>
+            <span className="field-caption">Para quem</span>
+            <input className="sr-only-input" tabIndex={-1} aria-hidden="true" required value={form.personId||""} onChange={()=>{}}/>
+            <button type="button" className="budget-picker-trigger" onClick={()=>{setNewPersonMode(false);setPersonQuery("");setPersonPicker(true);}}>
+              <span>{selectedPerson?selectedPerson.name:"Buscar ou cadastrar pessoa"}</span>
+              <small>{selectedPerson?selectedPerson.relationship:"Escolher da carteira de pessoas ›"}</small>
             </button>
           </div>
-          <button type="button" className="inline-plus" aria-label="Criar orçamento" onClick={()=>{setQuick("category");setNewName("");setQuickError("");}}><Plus size={20}/></button>
+          <button type="button" className="inline-plus" aria-label="Pesquisar ou cadastrar pessoa" onClick={()=>{setNewPersonMode(false);setPersonQuery("");setPersonPicker(true);}}><Search size={18}/></button>
         </div>
-        <div className="form-grid" role="group" aria-label="Como vai pagar">
-          <label className="tick"><input type="radio" name="settlementState" checked={form.settlementState==="paid"} onChange={()=>field("settlementState","paid")}/> Já paguei</label>
-          <label className="tick"><input type="radio" name="settlementState" checked={form.settlementState!=="paid"} onChange={()=>field("settlementState","pending")}/> Vou pagar depois</label>
+        <div className="form-grid">
+          <label>Data de saída<input required type="date" max={brDay()} value={form.lentOn||brDay()} onChange={e=>field("lentOn",e.target.value)}/></label>
+          <label>Previsão de pagamento<input required type="date" min={form.lentOn||brDay()} value={form.expectedRepaymentOn||brDay()} onChange={e=>field("expectedRepaymentOn",e.target.value)}/></label>
         </div>
-        {form.settlementState!=="paid"&&<div className="field-row"><CalendarDays/><label><small>Data do pagamento</small><input required type="date" value={form.dueOn} onChange={e=>field("dueOn",e.target.value)}/></label></div>}
-        <label>Conta<select required value={form.walletId} onChange={e=>field("walletId",e.target.value)}><option value="">Selecione uma conta</option>{wallets.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}</select></label>
+        <p className="hint" style={{margin:0}}>O valor sai da sua conta hoje e cria um recebível previsto na carteira dessa pessoa (aceita devoluções parciais e acompanha a cobrança se virar o mês).</p>
       </div>
-
-      {/* Discrete reconciliation suggestion (LC-21 / LC-03 / LC-04) */}
-      {(linkedPlan||suggestedPlan)&&<div className="plan-suggest-box">
-        <div className="plan-suggest-head"><Sparkles size={15}/><strong>Essa compra corresponde a "{(linkedPlan||suggestedPlan).description}" ({money(cents((linkedPlan||suggestedPlan).estimated_amount_cents))})?</strong></div>
-        <div className="plan-suggest-actions">
-          <button type="button" className={form.spendingPlanId?"active":""} onClick={()=>setForm(old=>({...old,spendingPlanId:(linkedPlan||suggestedPlan).id,closeSpendingPlan:true}))}>Sim, usar previsão</button>
-          <button type="button" className={!form.spendingPlanId?"active":""} onClick={()=>field("spendingPlanId","")}>Não, é outra compra</button>
-        </div>
-        {form.spendingPlanId&&<>
-          {partialLeftover>0&&<small style={{fontSize:12,color:"#4a5248"}}>Restariam {money(partialLeftover)} nessa previsão — escolha se deseja encerrar ou manter o restante:</small>}
-          <div className="form-grid" style={{marginTop:8}}>
-            <label className="tick"><input type="radio" name="closePlan" checked={form.closeSpendingPlan!==false} onChange={()=>field("closeSpendingPlan",true)}/> Encerrar previsão</label>
-            <label className="tick"><input type="radio" name="closePlan" checked={form.closeSpendingPlan===false} onChange={()=>field("closeSpendingPlan",false)}/> Ainda vou gastar o restante</label>
-          </div>
-        </>}
-      </div>}
-
-      <button type="button" className="text-button" onClick={()=>setShowMore(v=>!v)}>
-        {showMore?<ChevronDown size={15}/>:<ChevronRight size={15}/>} Mais opções (data, parcelas)
-      </button>
-      {showMore&&<div className="repeat-config">
-        <div className="field-row"><CalendarDays/><label><small>Data da compra</small><input type="date" value={form.occurredOn||brDay()} onChange={e=>field("occurredOn",e.target.value)}/></label></div>
-        {form.settlementState==="paid"&&<div className="field-row"><CalendarDays/><label><small>Data do pagamento</small><input type="date" max={brDay()} value={form.settledOn||brDay()} onChange={e=>field("settledOn",e.target.value)}/></label></div>}
-        {form.settlementState!=="paid"&&<div className="form-grid"><label>Total de parcelas<input type="number" min="1" max="60" value={form.mode==="installments"?form.count:"1"} onChange={e=>{const n=Number(e.target.value);setForm(old=>({...old,mode:n>1?"installments":"single",count:String(n)}));}}/></label><label>Valor informado<select value={form.valueMode} onChange={e=>field("valueMode",e.target.value)}><option value="total">Valor total</option><option value="installment">Por parcela</option></select></label></div>}
-      </div>}
-      {!wallets.length&&<p className="hint">Cadastre uma conta antes de registrar gastos.</p>}
     </>}
 
-    {/* ACTION 3: TENHO UMA CONTA (A pagar | A receber) or edit */}
+    {/* CONTA A PAGAR / A RECEBER (unificado) ou edição */}
     {titleEntry&&(!newTitle||intent==="bill")&&<>
-      {newTitle&&<div className="direction-cards" role="group" aria-label="Tipo da conta">
-        <button type="button" className={`direction-card expense${form.direction!=="income"?" active":""}`} aria-pressed={form.direction!=="income"} onClick={()=>selectBillDirection("expense")}>
-          <ArrowDownCircle size={22} aria-hidden="true"/>
-          <div><strong>A pagar</strong><small>Conta ou despesa</small></div>
-        </button>
-        <button type="button" className={`direction-card income${form.direction==="income"?" active":""}`} aria-pressed={form.direction==="income"} onClick={()=>selectBillDirection("income")}>
-          <ArrowUpCircle size={22} aria-hidden="true"/>
-          <div><strong>A receber</strong><small>Salário ou entrada</small></div>
-        </button>
-      </div>}
-      <div className="field-row major"><ReceiptText/><input aria-label="Descrição do lançamento" placeholder={form.direction==="income"?"Ex.: Salário, Reembolso":"Ex.: Aluguel, Energia"} required value={form.description} maxLength={120} onChange={e=>field("description",e.target.value)}/></div>
+      <div className="field-row major"><ReceiptText/><input aria-label="Descrição do lançamento" placeholder={form.direction==="income"?"Ex.: Salário, Reembolso":"Ex.: Mercado, Aluguel, Energia"} required value={form.description} maxLength={120} onChange={e=>field("description",e.target.value)}/></div>
       <div className="field-row money-input"><CircleDollarSign/><span>R$</span><MoneyInput ariaLabel="Valor em reais" value={form.amount} onChange={v=>field("amount",v)}/></div>
       {edit?<div className="editing-scope-note">A alteração será aplicada <strong>somente a este lançamento</strong>. Outras parcelas permanecem como estão.</div>:
       <><div className="field-row"><Repeat2/><label><small>Repetição</small><select value={form.mode} onChange={e=>field("mode",e.target.value)}><option value="single">Conta única</option><option value="monthly">Repete todo mês</option><option value="installments">Parcelada</option></select></label></div>
@@ -236,6 +229,16 @@ export default function EntryDrawer({
       <div className="repeat-preview"><strong>{Math.max(0,Number(form.count)-Number(form.startIndex)+1)||0} parcelas futuras</strong><span>{form.valueMode==="installment"?"Valor mensal: "+money(amountValue()):"Valor total: "+money(amountValue())}</span></div></div>}
       {form.mode==="monthly"&&<div className="repeat-config"><strong>Conta recorrente</strong><p>As próximas ocorrências são projetadas automaticamente sem precisar recadastrar.</p><label>Encerrar em (opcional)<input type="date" min={form.dueOn} max="2099-12-31" value={form.endsOn||""} onChange={ev=>field("endsOn",ev.target.value)}/></label></div>}
       </>}
+      {newTitle&&form.mode==="single"&&form.direction!=="income"&&<div className="direction-cards compact" role="group" aria-label="Situação da conta">
+        <button type="button" className={`direction-card neutral${form.settlementState!=="paid"?" active":""}`} aria-pressed={form.settlementState!=="paid"} onClick={()=>field("settlementState","pending")}>
+          <Clock3 size={18} aria-hidden="true"/>
+          <div><strong>A pagar</strong></div>
+        </button>
+        <button type="button" className={`direction-card expense${form.settlementState==="paid"?" active":""}`} aria-pressed={form.settlementState==="paid"} onClick={()=>field("settlementState","paid")}>
+          <CheckCircle2 size={18} aria-hidden="true"/>
+          <div><strong>Já paguei</strong></div>
+        </button>
+      </div>}
       {newTitle&&form.direction==="income"&&form.mode==="single"&&<div className="direction-cards compact" role="group" aria-label="Situação da receita">
         <button type="button" className={`direction-card neutral${form.settlementState!=="paid"?" active":""}`} aria-pressed={form.settlementState!=="paid"} onClick={()=>field("settlementState","pending")}>
           <Clock3 size={18} aria-hidden="true"/>
@@ -246,8 +249,8 @@ export default function EntryDrawer({
           <div><strong>Já recebido</strong></div>
         </button>
       </div>}
-      {newTitle&&form.direction==="income"&&form.mode==="single"&&form.settlementState==="paid"?
-        <div className="field-row"><CalendarDays/><label><small>Data do recebimento</small><input required type="date" max={brDay()} value={form.settledOn||brDay()} onChange={e=>field("settledOn",e.target.value)}/></label></div>:
+      {newTitle&&form.mode==="single"&&form.settlementState==="paid"?
+        <div className="field-row"><CalendarDays/><label><small>{form.direction==="income"?"Data do recebimento":"Data do pagamento"}</small><input required type="date" max={brDay()} value={form.settledOn||brDay()} onChange={e=>field("settledOn",e.target.value)}/></label></div>:
         <div className="field-row"><CalendarDays/><label><small>Data de vencimento</small><input required type="date" value={form.dueOn} onChange={e=>field("dueOn",e.target.value)}/></label></div>
       }
       <div className="form-group">
@@ -422,6 +425,46 @@ export default function EntryDrawer({
      <button type="button" className="light-button" onClick={()=>{setBudgetPicker(false);setQuick("category");setNewName("");setQuickError("");}}>
        <Plus size={16}/> Novo orçamento
      </button>
+   </div>
+ </div>}
+ {personPicker&&<div className="nested-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setPersonPicker(false);}}>
+   <div className="quick-category budget-picker-dialog" role="dialog" aria-modal="true" aria-label="Selecionar ou cadastrar pessoa">
+     <div className="quick-head">
+       <h3>{newPersonMode?"Nova pessoa":"Selecionar pessoa"}</h3>
+       <button type="button" aria-label="Fechar" onClick={()=>setPersonPicker(false)}><X size={20}/></button>
+     </div>
+     {!newPersonMode?<>
+       <div className="field-row" style={{padding:"6px 10px"}}><Search size={16}/><input aria-label="Buscar pessoa" placeholder="Buscar por nome ou relação..." value={personQuery} onChange={e=>setPersonQuery(e.target.value)}/></div>
+       <div className="action-menu">
+         {filteredPeople.length?filteredPeople.map(p=>(
+           <button type="button" key={p.id} className={form.personId===p.id?"selected":""} onClick={()=>{field("personId",p.id);setPersonPicker(false);}}>
+             <span>{p.name}<small>{p.relationship||"Outro"}{p.phone?` · ${p.phone}`:""}</small></span>
+             <span>{form.personId===p.id?<Check size={16}/>:"›"}</span>
+           </button>
+         )):<p className="hint" style={{margin:"8px 0"}}>Nenhuma pessoa encontrada.</p>}
+       </div>
+       <button type="button" className="pill pill-primary pill-compact" style={{width:"100%",justifyContent:"center"}} onClick={()=>{setNewPersonMode(true);setPName(personQuery);setPErr("");}}>
+         <UserPlus size={16}/> Nova pessoa
+       </button>
+     </>:<form onSubmit={createPerson} style={{display:"grid",gap:12}}>
+       <label>Nome<input required maxLength={120} autoFocus value={pName} onChange={e=>setPName(e.target.value)} placeholder="Ex.: João Silva"/></label>
+       <label>Relação<select value={pRel} onChange={e=>setPRel(e.target.value)}>
+         {["Amigo","Primo","Tio","Irmão","Pai/Mãe","Colega","Cliente","Outro"].map(r=><option key={r} value={r}>{r}</option>)}
+       </select></label>
+       <button type="button" className="text-button" onClick={()=>setPersonMore(v=>!v)}>
+         {personMore?<ChevronDown size={15}/>:<ChevronRight size={15}/>} Mais (e-mail, telefone, observações)
+       </button>
+       {personMore&&<div style={{display:"grid",gap:10}}>
+         <label>E-mail (opcional)<input type="email" maxLength={160} value={pEmail} onChange={e=>setPEmail(e.target.value)} placeholder="nome@email.com"/></label>
+         <label>Telefone / WhatsApp (opcional)<input maxLength={40} value={pPhone} onChange={e=>setPPhone(e.target.value)} placeholder="(11) 99999-9999"/></label>
+         <label>Observações / Chave Pix (opcional)<input maxLength={300} value={pNotes} onChange={e=>setPNotes(e.target.value)} placeholder="Ex.: Pix CPF ou combinado"/></label>
+       </div>}
+       {pErr&&<div className="notice error" role="alert">{pErr}</div>}
+       <div style={{display:"flex",gap:8}}>
+         <button type="button" className="light-button" onClick={()=>setNewPersonMode(false)}>Voltar</button>
+         <button type="submit" className="dark-button" disabled={pBusy}>{pBusy?"Salvando...":"Cadastrar pessoa"}</button>
+       </div>
+     </form>}
    </div>
  </div>}
  {quick&&<div className="nested-overlay" onMouseDown={e=>{if(e.target===e.currentTarget){setQuick(null);setTrackBudget(false);setQuickLimit("");}}}><form className="quick-category" onSubmit={createCategory}><div className="quick-head"><h3>{form.direction==="income"?"Nova origem de receita":"Novo orçamento"}</h3><button type="button" aria-label="Fechar" onClick={()=>{setQuick(null);setTrackBudget(false);setQuickLimit("");}}><X size={20}/></button></div><label>Nome<input required maxLength={80} autoFocus value={newName} onChange={e=>setNewName(e.target.value)} placeholder={form.direction==="income"?"Ex.: Freelance":"Ex.: Transporte"}/></label>{form.direction==="expense"&&<><label className="kc-check"><input type="checkbox" checked={trackBudget} onChange={e=>setTrackBudget(e.target.checked)}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Controlar limite mensal</span></label>{trackBudget&&<label>Limite mensal (R$)<MoneyInput value={quickLimit} onChange={setQuickLimit} ariaLabel="Limite mensal em reais"/></label>}</>}{quickError&&<div className="notice error" role="alert">{quickError}</div>}<button type="submit" className="dark-button" disabled={quickBusy}>{quickBusy?"Salvando...":"Adicionar"}</button></form></div>}
