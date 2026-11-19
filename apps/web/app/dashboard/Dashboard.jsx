@@ -28,11 +28,12 @@ import {
   ArrowLeftRight,
   CalendarRange,
   User,
+  Sparkles,
 } from "lucide-react";
 import { authClient } from "../../lib/auth/client";
 import { money, cents, brDay, isoDate } from "../../lib/finance";
 import { computeRange, lastDayOfMonth, firstDayOfMonth, moveMonth, inRange } from "../../lib/period";
-import { computeMonthlyIncomeCeilingCents, computeProjectedBalanceWithBudgetsCents, computeTotalDebtCents } from "../../lib/budgets";
+import { computeMonthlyIncomeCeilingCents, computeProjectedBalanceWithBudgetsCents, computeTotalDebtCents, suggestBudgetsFromIncome } from "../../lib/budgets";
 import { buildNotifications } from "../../lib/notifications";
 import { simulateGoalPurchase } from "../../lib/goal-planner";
 import { computeCapitalPace } from "../../lib/capital-pace";
@@ -171,6 +172,7 @@ export default function Dashboard({ user }) {
   const [healthModal, setHealthModal] = useState(null); // "diagnosis" | "dedoduro" | "tesouraco" | "milestones" | null
   const [planningView, setPlanningView] = useState("goals"); // "goals" | "budgets"
   const [tourOpen, setTourOpen] = useState(false);
+  const [budgetSuggestionResult, setBudgetSuggestionResult] = useState(null);
   const filterRef = useRef(null);
 
   useEffect(() => {
@@ -427,9 +429,11 @@ export default function Dashboard({ user }) {
     setBusy(true);
     setError("");
     try {
-      await request("POST", { action: "suggest_budgets", month: selectedMonth });
+      const res = await request("POST", { action: "suggest_budgets", month: selectedMonth });
       await refresh();
-      setNotice("Orçamentos 50-30-20 e Carteira de Capital gerados a partir da sua renda do mês.");
+      const incCents = Number(res?.incomeCents || monthlyIncomeCents || 0);
+      const suggestions = incCents > 0 ? suggestBudgetsFromIncome({ incomeCents: incCents }) : [];
+      setBudgetSuggestionResult({ incomeCents: incCents, suggestions });
     } catch (e) {
       setError(e.message);
     } finally {
@@ -817,7 +821,6 @@ export default function Dashboard({ user }) {
           <span className="brand-name">kuantoconta</span>
         </button>
         <div className="topbar-right">
-          <span className="preview-pill">V1 · Preview</span>
           <button
             type="button"
             className="bell-btn"
@@ -867,7 +870,7 @@ export default function Dashboard({ user }) {
                   className={planningView === "budgets" ? "active" : ""}
                   onClick={() => setPlanningView("budgets")}
                 >
-                  Orçamentos 50-30-20
+                  Limites por categoria
                 </button>
               </div>
             )}
@@ -991,8 +994,8 @@ export default function Dashboard({ user }) {
               <article className="card commitments">
                 <div className="card-heading">
                   <h2 className="card-title">Próximos compromissos</h2>
-                  <button type="button" className="mini-pill" onClick={() => setTab("movements")}>
-                    Carteira <ChevronRight size={15} aria-hidden="true" />
+                  <button type="button" className="icon-ghost-btn" aria-label="Ver todos os movimentos" title="Ver todos os movimentos" onClick={() => setTab("movements")}>
+                    <ChevronRight size={19} aria-hidden="true" />
                   </button>
                 </div>
                 <div className="commitments-body">{titlesTable(true)}</div>
@@ -1004,8 +1007,8 @@ export default function Dashboard({ user }) {
                     <div className="eyebrow">LIMITES MENSAIS</div>
                     <div className="month-heading">{monthLong}</div>
                   </div>
-                  <button type="button" className="mini-pill" onClick={() => setTab("planning")}>
-                    Gerenciar <ChevronRight size={15} aria-hidden="true" />
+                  <button type="button" className="icon-ghost-btn" aria-label="Gerenciar limites" title="Gerenciar limites" onClick={() => setTab("planning")}>
+                    <SlidersHorizontal size={17} aria-hidden="true" />
                   </button>
                 </div>
                 <div className="limits-body">
@@ -1056,8 +1059,8 @@ export default function Dashboard({ user }) {
                     <div className="eyebrow">CONTAS BANCÁRIAS</div>
                     <h2 className="chart-title">Saldos em conta</h2>
                   </div>
-                  <button type="button" className="mini-pill" onClick={() => open("wallet")}>
-                    <Plus size={14} aria-hidden="true" /> Nova conta
+                  <button type="button" className="icon-ghost-btn" aria-label="Nova conta" title="Nova conta" onClick={() => open("wallet")}>
+                    <Plus size={19} aria-hidden="true" />
                   </button>
                 </div>
                 <div className="bank-box">
@@ -1185,8 +1188,8 @@ export default function Dashboard({ user }) {
                     <div className="eyebrow">COMPRAS E OBJETIVOS</div>
                     <h2 className="card-title">Planejamentos salvos</h2>
                   </div>
-                  <button type="button" className="mini-pill" onClick={() => open("goal_sim")}>
-                    <Plus size={14} /> Simular compra
+                  <button type="button" className="icon-ghost-btn" aria-label="Simular compra" title="Simular compra" onClick={() => open("goal_sim")}>
+                    <Plus size={19} aria-hidden="true" />
                   </button>
                 </div>
                 {purchaseGoals.length ? (
@@ -1244,23 +1247,23 @@ export default function Dashboard({ user }) {
                 <section className="card panel">
                   <div className="card-heading" style={{ marginBottom: 14 }}>
                     <div>
-                      <div className="eyebrow">TETO PELA RENDA · 50-30-20</div>
-                      <h2 className="card-title">Distribuição dos orçamentos</h2>
+                      <div className="eyebrow">DIVISÃO INTELIGENTE DA RENDA</div>
+                      <h2 className="card-title">Limites sugeridos pela sua renda</h2>
                     </div>
                     <div className="toolbar-buttons">
                       {monthlyIncomeCents > 0 ? (
                         <>
-                          <button type="button" className="mini-pill" disabled={busy} onClick={suggestBudgets}>
-                            Gerar 50-30-20
+                          <button type="button" className="pill pill-primary pill-compact" disabled={busy} onClick={suggestBudgets}>
+                            <Sparkles size={15} aria-hidden="true" /> {busy ? "Calculando..." : "Sugerir limites"}
+                          </button>
+                          <button type="button" className="pill pill-outline-orange pill-compact" onClick={() => setActionMenu("budget_pick")}>
+                            <SlidersHorizontal size={15} aria-hidden="true" /> Configurar limite
                           </button>
                           {wallets.length >= 2 && (
-                            <button type="button" className="mini-pill" onClick={openCapitalTransfer}>
-                              Efetivar aporte Capital
+                            <button type="button" className="icon-ghost-btn" aria-label="Efetivar aporte Capital" title="Efetivar aporte Capital" onClick={openCapitalTransfer}>
+                              <TrendingUp size={18} aria-hidden="true" />
                             </button>
                           )}
-                          <button type="button" className="mini-pill" onClick={() => setActionMenu("budget_pick")}>
-                            Configurar limite
-                          </button>
                         </>
                       ) : (
                         <button
@@ -1385,8 +1388,8 @@ export default function Dashboard({ user }) {
                   <div className="eyebrow">RITMO DE FORMAÇÃO DE CAPITAL</div>
                   <h2 className="card-title">Metas de capital</h2>
                 </div>
-                <button type="button" className="mini-pill" onClick={() => open("capital_goal")}>
-                  <Target size={14} /> Nova meta de capital
+                <button type="button" className="icon-ghost-btn" aria-label="Nova meta de capital" title="Nova meta de capital" onClick={() => open("capital_goal")}>
+                  <Target size={18} aria-hidden="true" />
                 </button>
               </div>
               {capitalGoals.length ? (
@@ -1469,12 +1472,12 @@ export default function Dashboard({ user }) {
                 <h2 className="card-title">Contas bancárias e carteiras</h2>
                 <div className="toolbar-buttons">
                   {wallets.length >= 2 && (
-                    <button type="button" className="mini-pill" onClick={openCapitalTransfer}>
-                      Efetivar aporte
+                    <button type="button" className="icon-ghost-btn" aria-label="Efetivar aporte" title="Efetivar aporte" onClick={openCapitalTransfer}>
+                      <TrendingUp size={18} aria-hidden="true" />
                     </button>
                   )}
-                  <button type="button" className="mini-pill" onClick={() => open("wallet")}>
-                    <Plus size={14} /> Nova conta
+                  <button type="button" className="icon-ghost-btn" aria-label="Nova conta" title="Nova conta" onClick={() => open("wallet")}>
+                    <Plus size={19} aria-hidden="true" />
                   </button>
                 </div>
               </div>
@@ -1666,8 +1669,8 @@ export default function Dashboard({ user }) {
                       <div className="eyebrow">DEDO DURO · PADRÕES DE CONSUMO</div>
                       <h2 className="card-title">Onde o dinheiro escoa</h2>
                     </div>
-                    <button type="button" className="mini-pill" onClick={() => setHealthModal("dedoduro")}>
-                      Detalhes <ChevronRight size={14} />
+                    <button type="button" className="icon-ghost-btn" aria-label="Detalhes de consumo" title="Detalhes de consumo" onClick={() => setHealthModal("dedoduro")}>
+                      <ChevronRight size={19} aria-hidden="true" />
                     </button>
                   </div>
                   {habits.topLeaks.length > 0 ? (
@@ -1697,8 +1700,8 @@ export default function Dashboard({ user }) {
                       <div className="eyebrow">TESOURAÇO · REEDUCAÇÃO</div>
                       <h2 className="card-title">Potencial de corte</h2>
                     </div>
-                    <button type="button" className="mini-pill" onClick={() => setHealthModal("tesouraco")}>
-                      Onde cortar <ChevronRight size={14} />
+                    <button type="button" className="icon-ghost-btn" aria-label="Ver onde cortar" title="Ver onde cortar" onClick={() => setHealthModal("tesouraco")}>
+                      <Scissors size={18} aria-hidden="true" />
                     </button>
                   </div>
                   {habits.tesouraco.potentialMonthlySavingsCents > 0 ? (
@@ -1738,7 +1741,7 @@ export default function Dashboard({ user }) {
                   <a href="/legal/privacy">Aviso de Privacidade</a>
                 </div>
                 <p className="hint">
-                  Prévia restrita. Dados financeiros protegidos por autenticação. Não informe dados reais até a homologação legal.
+                  Seus dados financeiros são privados e protegidos por autenticação.
                 </p>
                 <div className="toolbar-buttons" style={{ marginTop: 14 }}>
                   <button
@@ -2382,6 +2385,80 @@ export default function Dashboard({ user }) {
           if (typeof window !== "undefined") window.localStorage.setItem(tourKey, "done");
         }}
       />
+
+      {budgetSuggestionResult && (
+        <div
+          className="action-overlay open"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setBudgetSuggestionResult(null);
+          }}
+        >
+          <div className="dialog dialog-wide" role="dialog" aria-modal="true" aria-labelledby="suggestResultTitle">
+            <div className="dialog-head">
+              <div>
+                <div className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <Sparkles size={13} aria-hidden="true" /> DIVISÃO INTELIGENTE APLICADA
+                </div>
+                <h2 id="suggestResultTitle">Limites sugeridos para {monthLong}</h2>
+              </div>
+              <button type="button" className="dialog-close" onClick={() => setBudgetSuggestionResult(null)} aria-label="Fechar">
+                <X size={17} />
+              </button>
+            </div>
+            <div style={{ display: "grid", gap: 14 }}>
+              <p className="hint" style={{ margin: 0 }}>
+                Com base na sua renda de <strong>{money(budgetSuggestionResult.incomeCents)}</strong> neste mês, distribuímos seus limites assim:
+              </p>
+              <div className="milestones-grid">
+                <article className="milestone-box">
+                  <span>Essenciais (50%)</span>
+                  <strong>{money(Math.round(budgetSuggestionResult.incomeCents * 0.5))}</strong>
+                  <small>Moradia, alimentação básica, transporte e saúde.</small>
+                </article>
+                <article className="milestone-box">
+                  <span>Estilo de vida (30%)</span>
+                  <strong>{money(Math.round(budgetSuggestionResult.incomeCents * 0.3))}</strong>
+                  <small>Lazer, assinaturas, educação e extras.</small>
+                </article>
+                <article className="milestone-box">
+                  <span>Reserva e Capital (20%)</span>
+                  <strong>{money(Math.round(budgetSuggestionResult.incomeCents * 0.2))}</strong>
+                  <small>Meta de reserva e formação do seu capital.</small>
+                </article>
+              </div>
+              {budgetSuggestionResult.suggestions?.some((s) => s.controlsLimit) && (
+                <div className="budget-list" style={{ maxHeight: 220, overflowY: "auto" }}>
+                  {budgetSuggestionResult.suggestions
+                    .filter((s) => s.controlsLimit)
+                    .map((s) => (
+                      <div className="budget-card" key={s.categoryName} style={{ padding: "10px 14px" }}>
+                        <div className="budget-row-top">
+                          <strong>{s.categoryName}</strong>
+                          <strong>{money(s.limitCents)}</strong>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                <button
+                  type="button"
+                  className="pill pill-outline-orange pill-compact"
+                  onClick={() => {
+                    setBudgetSuggestionResult(null);
+                    setActionMenu("budget_pick");
+                  }}
+                >
+                  <SlidersHorizontal size={15} /> Ajustar limites
+                </button>
+                <button type="button" className="pill pill-primary pill-compact" onClick={() => setBudgetSuggestionResult(null)}>
+                  Entendi
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

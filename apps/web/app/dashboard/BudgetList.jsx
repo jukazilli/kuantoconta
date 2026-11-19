@@ -18,9 +18,10 @@ export default function BudgetList({
   onEditPlan,
   onCancelPlan
 }) {
-  const [expanded, setExpanded] = useState(null);
+  const [detailItem, setDetailItem] = useState(null);
 
   const visible = compact ? items.slice(0, 5) : items;
+  const activeDetail = detailItem ? items.find((i) => i.categoryId === detailItem.categoryId) || detailItem : null;
 
   if (!visible.length) {
     return (
@@ -51,7 +52,6 @@ export default function BudgetList({
         const isOverPlan = hasLimit && !isOverReal && unallocated !== null && unallocated < 0;
         const isWarn = hasLimit && !isOverReal && !isOverPlan && item.utilizationPct >= 80;
         const pct = hasLimit && item.limitCents > 0 ? Math.min(100, Math.max(0, Math.round((realized / item.limitCents) * 100))) : 0;
-        const isOpen = expanded === item.categoryId;
 
         return (
           <article className={"budget-card" + (isOverReal ? " over" : "")} key={item.categoryId}>
@@ -59,37 +59,30 @@ export default function BudgetList({
               <button
                 type="button"
                 className="budget-expand"
-                aria-expanded={isOpen}
-                onClick={() => setExpanded(isOpen ? null : item.categoryId)}
+                onClick={() => setDetailItem(item)}
               >
-                {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                 <strong>{item.categoryName}</strong>
-                {isOverReal && <span className="status late">Limite excedido</span>}
-                {isOverPlan && <span className="status review">Acima do limite previsto</span>}
+                {isOverReal && <span className="status late">Excedido</span>}
+                {isOverPlan && <span className="status review">Acima do previsto</span>}
               </button>
               <div className="budget-right">
                 {hasLimit ? (
-                  hasForwardItems ? (
-                    <span className={"budget-remaining" + (unallocated < 0 ? " red" : "")}>
-                      Ainda sem destino: <strong>{money(unallocated)}</strong>
-                    </span>
-                  ) : (
-                    <span className={"budget-remaining" + (remainingLimit < 0 ? " red" : "")}>
-                      Restante do limite: <strong>{money(remainingLimit)}</strong>
-                    </span>
-                  )
+                  <span className={"budget-remaining" + ((hasForwardItems ? unallocated : remainingLimit) < 0 ? " red" : "")}>
+                    {hasForwardItems ? "Livre: " : "Restam "}
+                    <strong>{money(hasForwardItems ? unallocated : remainingLimit)}</strong>
+                  </span>
                 ) : (
-                  <span className="budget-remaining">Não controla limite</span>
+                  <span className="budget-remaining">Sem teto</span>
                 )}
                 {onEditBudget && (
                   <button
                     type="button"
-                    className="tiny-btn"
+                    className="icon-ghost-btn"
                     aria-label={"Configurar limite de " + item.categoryName}
+                    title={"Configurar limite de " + item.categoryName}
                     onClick={() => onEditBudget(item)}
                   >
-                    <SlidersHorizontal size={13} />
-                    {hasLimit ? "Limite" : "Definir"}
+                    <SlidersHorizontal size={16} aria-hidden="true" />
                   </button>
                 )}
               </div>
@@ -104,17 +97,40 @@ export default function BudgetList({
               </div>
             )}
 
-            <div className="budget-meta">
-              <span>
-                Gasto até agora: <strong>{money(realized)}</strong>
-                {planned > 0 && <> · <em>{money(planned)} já planejado</em></>}
-                {committed > 0 && <> · <em>{money(committed)} comprometido</em></>}
-              </span>
-              {hasLimit && <span>Limite: {money(item.limitCents)}</span>}
-            </div>
+            <button type="button" className="budget-meta budget-meta-btn" onClick={() => setDetailItem(item)}>
+              <span>Gasto: <strong>{money(realized)}</strong></span>
+              <span>{hasLimit ? `Limite: ${money(item.limitCents)}` : "Toque para ver detalhes"}</span>
+            </button>
+          </article>
+        );
+      })}
 
-            {isOpen && (
-              <div className="budget-drilldown">
+      {activeDetail && (() => {
+        const hasLimit = activeDetail.limitCents !== null;
+        const realized = activeDetail.realizedCents ?? activeDetail.usedCents ?? 0;
+        const committed = activeDetail.committedUnrealizedCents ?? 0;
+        const planned = activeDetail.plannedRemainingCents ?? 0;
+        const remainingLimit = activeDetail.remainingLimitCents ?? activeDetail.remainingCents;
+        const unallocated = activeDetail.unallocatedCents ?? remainingLimit;
+        const hasForwardItems = planned > 0 || committed > 0;
+        return (
+          <div
+            className="action-overlay open"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) setDetailItem(null);
+            }}
+          >
+            <div className="dialog dialog-wide" role="dialog" aria-modal="true" aria-labelledby="budgetDetailTitle">
+              <div className="dialog-head">
+                <div>
+                  <div className="eyebrow">DETALHE DO LIMITE · {monthLabel || "MÊS"}</div>
+                  <h2 id="budgetDetailTitle">{activeDetail.categoryName}</h2>
+                </div>
+                <button type="button" className="dialog-close" onClick={() => setDetailItem(null)} aria-label="Fechar">
+                  <X size={17} />
+                </button>
+              </div>
+              <div className="budget-drilldown" style={{ borderTop: 0, paddingTop: 0 }}>
                 <div className="budget-breakdown">
                   <div><span>Gasto até agora</span><strong>{money(realized)}</strong></div>
                   {committed > 0 && <div><span>Contas comprometidas</span><strong>{money(committed)}</strong></div>}
@@ -123,37 +139,37 @@ export default function BudgetList({
                   {hasLimit && hasForwardItems && <div><span>Ainda sem destino</span><strong className={unallocated < 0 ? "red" : ""}>{money(unallocated)}</strong></div>}
                 </div>
 
-                {item.plans?.length > 0 && (
+                {activeDetail.plans?.length > 0 && (
                   <div className="budget-plans-block">
                     <small className="eyebrow">INTENÇÕES PLANEJADAS</small>
                     <ul className="budget-events">
-                      {item.plans.map(plan => (
+                      {activeDetail.plans.map(plan => (
                         <li className="budget-plan-row" key={plan.id}>
                           <div>
                             <strong>{plan.description}</strong>
                             <span>
                               {plan.planned_for
                                 ? `Previsto para ${fmtDate(plan.planned_for)}`
-                                : `Previsto em ${plan.planned_month} (sem dia exato · protegido no início do mês)`}
+                                : `Previsto em ${plan.planned_month}`}
                               {" · "}
                               {money(plan.remainingCents)}
                             </span>
-                            {plan.needsReview && <span className="status review">Previsto · precisa revisar</span>}
+                            {plan.needsReview && <span className="status review">Precisa revisar</span>}
                           </div>
                           <div className="plan-actions">
                             {onFulfillPlan && (
-                              <button type="button" className="tiny-btn" onClick={() => onFulfillPlan(plan, item.categoryName)}>
-                                <ShoppingCart size={12} /> Registrar compra
+                              <button type="button" className="tiny-btn" onClick={() => { setDetailItem(null); onFulfillPlan(plan, activeDetail.categoryName); }}>
+                                <ShoppingCart size={12} /> Registrar
                               </button>
                             )}
                             {onEditPlan && (
-                              <button type="button" className="tiny-btn" onClick={() => onEditPlan(plan)}>
+                              <button type="button" className="tiny-btn" onClick={() => { setDetailItem(null); onEditPlan(plan); }}>
                                 <CalendarClock size={12} /> Adiar
                               </button>
                             )}
                             {onCancelPlan && (
-                              <button type="button" className="tiny-btn" aria-label={`Cancelar previsão ${plan.description}`} onClick={() => onCancelPlan(plan.id)}>
-                                <X size={12} />
+                              <button type="button" className="icon-ghost-btn" aria-label={`Cancelar previsão ${plan.description}`} onClick={() => onCancelPlan(plan.id)}>
+                                <X size={14} />
                               </button>
                             )}
                           </div>
@@ -163,9 +179,9 @@ export default function BudgetList({
                   </div>
                 )}
 
-                {item.events?.length > 0 ? (
+                {activeDetail.events?.length > 0 ? (
                   <ul className="budget-events">
-                    {item.events.map(ev => (
+                    {activeDetail.events.map(ev => (
                       <li key={ev.id}>
                         <span>{fmtDate(ev.occurredOn)} · {ev.description}</span>
                         <strong>{money(ev.amountCents)}</strong>
@@ -173,13 +189,29 @@ export default function BudgetList({
                     ))}
                   </ul>
                 ) : (
-                  !item.plans?.length && <p className="hint">Nenhum gasto registrado nesta categoria no mês.</p>
+                  !activeDetail.plans?.length && <p className="hint">Nenhum gasto registrado nesta categoria no mês.</p>
+                )}
+
+                {onEditBudget && (
+                  <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
+                    <button
+                      type="button"
+                      className="pill pill-outline-orange pill-compact"
+                      onClick={() => {
+                        const target = activeDetail;
+                        setDetailItem(null);
+                        onEditBudget(target);
+                      }}
+                    >
+                      <SlidersHorizontal size={15} /> Configurar limite
+                    </button>
+                  </div>
                 )}
               </div>
-            )}
-          </article>
+            </div>
+          </div>
         );
-      })}
+      })()}
     </div>
   );
 }

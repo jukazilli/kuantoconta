@@ -103,14 +103,9 @@ export default function HealthDiagnosisCard({ healthPlan, onOpenPlanning }) {
         </div>
       </div>
 
-      {(dataQuality.status !== "complete" || isProvisionalPolicy) && (
+      {dataQuality.status !== "complete" && (
         <div className="health-footnote">
-          {dataQuality.status !== "complete" && (
-            <span>Faltam dados: {dataQuality.missingFields.join(", ")}. </span>
-          )}
-          {isProvisionalPolicy && (
-            <span>Parâmetros da política ({healthPlan.policyVersion}) sujeitos à homologação.</span>
-          )}
+          <span>Faltam dados para diagnóstico completo: {dataQuality.missingFields.join(", ")}.</span>
         </div>
       )}
     </section>
