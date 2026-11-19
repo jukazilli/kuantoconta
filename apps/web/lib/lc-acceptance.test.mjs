@@ -147,10 +147,10 @@ test("LC-18 & LC-23: API isolates spending plans by owner.id and EntryDrawer avo
   assert.match(routeSrc, /UPDATE public\.kc_spending_plans SET status='cancelled'.*AND user_id=\$\{owner\.id\}/);
 
   const drawerSrc = readFileSync(path.join(__dirname, "../app/dashboard/EntryDrawer.jsx"), "utf8");
-  assert.match(drawerSrc, />Gastei</);
-  assert.match(drawerSrc, />Tenho uma conta</);
-  assert.match(drawerSrc, /selectBillDirection\("expense"\)/);
-  assert.match(drawerSrc, /selectBillDirection\("income"\)/);
+  assert.match(drawerSrc, />A pagar</);
+  assert.match(drawerSrc, />A receber</);
+  assert.match(drawerSrc, />Emprestar</);
+  assert.match(drawerSrc, />Já paguei</);
   assert.doesNotMatch(drawerSrc, />[A-Za-zÀ-ÿ0-9\s·\-:]*\b(economic_event|competence_source|title_id|ledger|settlement)\b[A-Za-zÀ-ÿ0-9\s·\-:]*</i);
 
   const dashSrc = readFileSync(path.join(__dirname, "../app/dashboard/Dashboard.jsx"), "utf8");

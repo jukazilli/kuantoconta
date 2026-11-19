@@ -185,7 +185,7 @@ export function computeBudgetSummary({
   );
   for (const t of expanded.titles || []) {
     if (t.direction !== "expense" || t.cancelled_at || t.economic_event_id) continue;
-    if ((t.entry_kind || "standard") === "reserve_transfer") continue;
+    if ((t.entry_kind || "standard") === "reserve_transfer" || (t.entry_kind || "standard") === "loan_out") continue;
     if (monthOf(t.due_on) !== month) continue;
     const root =
       (t.category_id && rootById.get(String(t.category_id))) ||
@@ -300,7 +300,7 @@ export function computeMonthlyIncomeCeilingCents({
   return (expanded.titles || []).reduce((sum, t) => {
     if (t.cancelled_at || t.direction !== "income") return sum;
     const kind = t.entry_kind || "standard";
-    if (kind === "reserve_transfer" || kind === "debt_payment" || t.liability_id) return sum;
+    if (kind === "reserve_transfer" || kind === "debt_payment" || kind === "loan_repayment" || t.liability_id) return sum;
     if (monthOf(t.due_on) !== month) return sum;
     return sum + Math.max(0, cents(t.amount_cents));
   }, 0);
@@ -465,7 +465,7 @@ export function computeProjectedBalanceWithBudgetsCents({
     const limit = Math.max(0, cents(b.limitCents));
     const settledInBudget = rows.reduce((sum, t) => {
       if (t.cancelled_at || t.direction !== "expense") return sum;
-      if ((t.entry_kind || "standard") === "reserve_transfer") return sum;
+      if ((t.entry_kind || "standard") === "reserve_transfer" || (t.entry_kind || "standard") === "loan_out") return sum;
       const matchesId = b.categoryId && t.category_id && String(t.category_id) === String(b.categoryId);
       const matchesName = b.categoryName && normalizeCategoryName(t.category || "") === normalizeCategoryName(b.categoryName);
       if (!matchesId && !matchesName) return sum;
@@ -480,7 +480,7 @@ export function computeProjectedBalanceWithBudgetsCents({
   let uncappedPendingExpenseCents = 0;
   for (const t of rows) {
     if (t.direction !== "expense" || t.cancelled_at) continue;
-    if ((t.entry_kind || "standard") === "reserve_transfer") continue;
+    if ((t.entry_kind || "standard") === "reserve_transfer" || (t.entry_kind || "standard") === "loan_out") continue;
     const inControlled =
       (t.category_id && controlledById.has(String(t.category_id))) ||
       controlledByNorm.has(normalizeCategoryName(t.category || ""));

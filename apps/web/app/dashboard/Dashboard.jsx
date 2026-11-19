@@ -29,6 +29,7 @@ import {
   CalendarRange,
   User,
   Sparkles,
+  HandCoins,
 } from "lucide-react";
 import { authClient } from "../../lib/auth/client";
 import { money, cents, brDay, isoDate } from "../../lib/finance";
@@ -38,6 +39,7 @@ import { buildNotifications } from "../../lib/notifications";
 import { simulateGoalPurchase } from "../../lib/goal-planner";
 import { computeCapitalPace } from "../../lib/capital-pace";
 import { analyzeConsumptionHabits } from "../../lib/habit-analyzer";
+import { rolloverOverdueLoanRepayments, summarizePeopleLoans } from "../../lib/lending";
 import { maskToDecimal, centsToMask } from "../../lib/money-input";
 import { expandRecurring } from "../../lib/recurring";
 import { buildFinancialHealthPlan } from "../../lib/financial-health";
@@ -238,9 +240,13 @@ export default function Dashboard({ user }) {
     };
   }, []);
 
-  const expanded = useMemo(
-    () => expandRecurring(data || {}, rangeStart < TODAY ? rangeStart : TODAY, date < TODAY ? TODAY : date),
-    [data, rangeStart, date]
+  const expanded = useMemo(() => {
+    const raw = expandRecurring(data || {}, rangeStart < TODAY ? rangeStart : TODAY, date < TODAY ? TODAY : date);
+    return { ...raw, titles: rolloverOverdueLoanRepayments(raw.titles || [], TODAY) };
+  }, [data, rangeStart, date]);
+  const peopleLoans = useMemo(
+    () => summarizePeopleLoans({ people: data?.people || [], titles: expanded?.titles || [] }),
+    [data?.people, expanded?.titles]
   );
   const summary = useMemo(() => computeRange(expanded, rangeStart, date, TODAY), [expanded, rangeStart, date]);
   const healthPlan = useMemo(
@@ -371,15 +377,23 @@ export default function Dashboard({ user }) {
     [rows, data, budgetItems]
   );
 
+  async function addPerson(personPayload) {
+    const res = await request("POST", { action: "person", ...personPayload });
+    await refresh();
+    return res?.person || { id: res?.id, ...personPayload };
+  }
+
   function open(kind, id, intentOverride = null) {
     const t = titles.find((item) => item.id === id);
     const dir = kind === "income" ? "income" : t?.direction || "expense";
-    const nextIntent = intentOverride || (kind === "income" ? "bill" : "spent");
+    const nextIntent = intentOverride || "bill";
     setForm({
       ...defaultForm(dir),
       intent: nextIntent,
-      settlementState: nextIntent === "spent" ? "paid" : "pending",
+      settlementState: "pending",
       walletId: t?.wallet_id || wallets[0]?.id || "",
+      lentOn: TODAY,
+      expectedRepaymentOn: lastDayOfMonth(TODAY),
       category: t?.category || "",
       amount:
         kind === "settle" && t
@@ -652,15 +666,18 @@ export default function Dashboard({ user }) {
           plannedFor: form.plannedFor || null,
           idempotencyKey: form.idempotencyKey || crypto.randomUUID(),
         });
+      } else if (drawer === "title" && form.intent === "lend") {
+        await request("POST", {
+          action: "lend",
+          description: form.description,
+          amount: maskToDecimal(form.amount),
+          walletId: form.walletId,
+          personId: form.personId,
+          lentOn: form.lentOn || TODAY,
+          expectedRepaymentOn: form.expectedRepaymentOn || form.dueOn || TODAY,
+        });
       } else {
-        const isBill = drawer === "title" && form.intent === "bill";
-        const effectiveState = isBill
-          ? form.direction === "income" && form.mode === "single"
-            ? form.settlementState
-            : "pending"
-          : form.mode === "single"
-            ? form.settlementState
-            : "pending";
+        const effectiveState = form.mode === "single" ? form.settlementState : "pending";
         const payload = {
           walletId: form.walletId,
           direction: form.direction,
@@ -847,7 +864,7 @@ export default function Dashboard({ user }) {
       {active !== "profile" && (
         <section className="toolbar" aria-label="Ações e período">
           <div className="toolbar-left" data-tour="actions">
-            <button type="button" className="pill pill-primary" onClick={() => setActionMenu("add")}>
+            <button type="button" className="pill pill-primary" onClick={() => open("title", null, "bill")}>
               <Plus size={17} aria-hidden="true" />
               Lançamento
             </button>
@@ -1507,6 +1524,57 @@ export default function Dashboard({ user }) {
                   <Empty>Nenhuma conta cadastrada.</Empty>
                 )}
               </div>
+            </section>
+
+            <section className="card panel">
+              <div className="card-heading" style={{ marginBottom: 14 }}>
+                <div>
+                  <div className="eyebrow">CARTEIRA DE PESSOAS</div>
+                  <h2 className="card-title">Empréstimos a terceiros</h2>
+                </div>
+                <button
+                  type="button"
+                  className="icon-ghost-btn"
+                  aria-label="Emprestar dinheiro"
+                  title="Emprestar dinheiro"
+                  onClick={() => open("title", null, "lend")}
+                >
+                  <HandCoins size={19} aria-hidden="true" />
+                </button>
+              </div>
+              {peopleLoans.length ? (
+                <div className="budget-list">
+                  {peopleLoans.map(({ person, totalLentCents, totalRepaidCents, openBalanceCents, openRepaymentTitles }) => (
+                    <div className="budget-card" key={person.id}>
+                      <div className="budget-row-top">
+                        <div>
+                          <strong>{person.name}</strong>
+                          <span className="small-flag" style={{ marginLeft: 8, fontSize: 10 }}>{person.relationship}</span>
+                          <div className="hint" style={{ marginTop: 2 }}>
+                            Emprestado: {money(totalLentCents)} · Devolvido: {money(totalRepaidCents)}
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <strong style={{ color: openBalanceCents > 0 ? "var(--kc-orange)" : "#067647" }}>
+                            {openBalanceCents > 0 ? money(openBalanceCents) : "Quitado"}
+                          </strong>
+                          {openRepaymentTitles[0] && (
+                            <button
+                              type="button"
+                              className="pill pill-outline-orange pill-compact"
+                              onClick={() => handleAction("settle", openRepaymentTitles[0].id)}
+                            >
+                              Receber
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <Empty>Nenhum empréstimo para terceiros registrado. Use + Lançamento → Emprestar para acompanhar.</Empty>
+              )}
             </section>
 
             <div className="register-grid">
@@ -2354,6 +2422,8 @@ export default function Dashboard({ user }) {
           onClose={() => setDrawer(null)}
           onAction={handleAction}
           onAddCategory={addCategory}
+          people={data?.people || []}
+          onAddPerson={addPerson}
           cancellations={data?.cancellations || []}
         />
       )}

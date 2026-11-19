@@ -94,7 +94,7 @@ export async function loadPortfolio(ownerId) {
     spendingPlanApplications,
   ] = await Promise.all([
     sql`SELECT id,name,opening_balance_cents::text,opening_at,wallet_kind,liquidity_kind,is_reserved,created_at FROM public.kc_wallets WHERE user_id=${owner.id} ORDER BY created_at LIMIT 100`,
-    sql`SELECT id,wallet_id,description,direction,category,subcategory,category_id,subcategory_id,economic_event_id,amount_cents::text,settled_cents::text,due_on::text,recurrence,installment_index,installment_total,series_id,is_essential,income_confidence,entry_kind,liability_id,created_at FROM public.kc_titles WHERE user_id=${owner.id} AND cancelled_at IS NULL ORDER BY due_on,id LIMIT 4000`,
+    sql`SELECT id,wallet_id,description,direction,category,subcategory,category_id,subcategory_id,economic_event_id,amount_cents::text,settled_cents::text,due_on::text,recurrence,installment_index,installment_total,series_id,is_essential,income_confidence,entry_kind,liability_id,person_id,created_at FROM public.kc_titles WHERE user_id=${owner.id} AND cancelled_at IS NULL ORDER BY due_on,id LIMIT 4000`,
     sql`SELECT s.id,s.title_id,s.wallet_id,s.amount_cents::text,s.settled_on::text,s.created_at,s.reversed_at,s.reversal_reason,t.direction,t.category FROM public.kc_settlements s JOIN public.kc_titles t ON t.id=s.title_id AND t.user_id=s.user_id WHERE s.user_id=${owner.id} ORDER BY s.settled_on,s.created_at LIMIT 7000`,
     sql`SELECT id,label,value_cents::text,valued_on::text,asset_kind,liquidity_kind,linked_wallet_id FROM public.kc_assets WHERE user_id=${owner.id} ORDER BY label LIMIT 200`,
     sql`SELECT id,label,principal_cents::text,valued_on::text,debt_kind,interest_rate_bps,cet_bps,monthly_installment_cents::text,remaining_installments,maturity_on::text,status,series_id FROM public.kc_liabilities WHERE user_id=${owner.id} ORDER BY label LIMIT 200`,
@@ -111,6 +111,12 @@ export async function loadPortfolio(ownerId) {
     sql`SELECT id,description,category_id,subcategory_id,estimated_amount_cents::text,planned_for::text,planned_month,expected_payment_on::text,status,source,created_at,updated_at,cancelled_at FROM public.kc_spending_plans WHERE user_id=${owner.id} AND status<>'cancelled' ORDER BY planned_month,planned_for NULLS LAST,created_at DESC LIMIT 500`,
     sql`SELECT id,plan_id,economic_event_id,allocated_cents::text,created_at FROM public.kc_spending_plan_applications WHERE user_id=${owner.id} ORDER BY created_at DESC LIMIT 2000`,
   ]);
+  let people = [];
+  try {
+    people = await sql`SELECT id,name,relationship,email,phone,notes,created_at FROM public.kc_people WHERE user_id=${owner.id} ORDER BY name LIMIT 300`;
+  } catch (e) {
+    if (e?.code !== "42P01") throw e;
+  }
   return {
     wallets,
     titles,
@@ -129,6 +135,7 @@ export async function loadPortfolio(ownerId) {
     latestHealthSnapshot: healthSnapshots[0] || null,
     spendingPlans,
     spendingPlanApplications,
+    people,
     as_of: new Date().toISOString(),
   };
 }
@@ -267,6 +274,46 @@ export async function executePortfolioPost(ownerId, x) {
       await sql`INSERT INTO public.kc_titles(user_id,wallet_id,description,direction,category,category_id,amount_cents,settled_cents,due_on,recurrence,installment_index,installment_total,series_id,entry_kind,liability_id) VALUES(${owner.id},${walletRef}::uuid,${`${label} (${i}/${count})`},'expense','Empréstimos',${categoryId},${installmentCents},0,${due},'installments',${i},${count},${seriesId}::uuid,'debt_payment',${liabilityId}::uuid)`;
     }
     return ok({ saved: true, liabilityId, seriesId }, 201);
+  }
+
+  if (x.action === "person") {
+    const name = textValue(x.name, 120);
+    if (!name) return fail("Informe o nome da pessoa.");
+    const relationship = textValue(x.relationship, 50) || "Outro";
+    const email = x.email ? textValue(x.email, 160) : null;
+    const phone = x.phone ? textValue(x.phone, 40) : null;
+    const notes = x.notes ? textValue(x.notes, 300) : null;
+    const rows = await sql`INSERT INTO public.kc_people(user_id,name,relationship,email,phone,notes) VALUES(${owner.id},${name},${relationship},${email},${phone},${notes}) RETURNING id,name,relationship,email,phone,notes,created_at`;
+    return ok({ saved: true, id: rows[0]?.id, person: rows[0] }, 201);
+  }
+
+  if (x.action === "lend") {
+    const description = textValue(x.description, 140);
+    if (!description) return fail("Informe a descrição do empréstimo.");
+    const amountCents = amount(x.amount, false, false);
+    if (!uuid(x.walletId)) return fail("Selecione de qual conta o dinheiro saiu.");
+    if (!uuid(x.personId)) return fail("Selecione para quem você emprestou.");
+    const lentOn = day(x.lentOn) ? x.lentOn : brDay();
+    if (lentOn > brDay()) return fail("A data de saída não pode ser futura.");
+    const expectedRepaymentOn = day(x.expectedRepaymentOn) ? x.expectedRepaymentOn : null;
+    if (!expectedRepaymentOn) return fail("Informe a previsão de pagamento.");
+    if (expectedRepaymentOn < lentOn) return fail("A previsão de pagamento deve ser igual ou posterior à data de saída.");
+
+    const [wRows, pRows] = await Promise.all([
+      sql`SELECT id,name FROM public.kc_wallets WHERE id=${x.walletId}::uuid AND user_id=${owner.id} LIMIT 1`,
+      sql`SELECT id,name,relationship FROM public.kc_people WHERE id=${x.personId}::uuid AND user_id=${owner.id} LIMIT 1`,
+    ]);
+    if (!wRows.length) return fail("Conta não encontrada.", 404);
+    if (!pRows.length) return fail("Pessoa não encontrada.", 404);
+    const person = pRows[0];
+
+    const outLabel = `${description} (${person.name})`;
+    const inLabel = `Devolução: ${description} (${person.name})`;
+    const outTitle = await sql`INSERT INTO public.kc_titles(user_id,wallet_id,description,direction,category,amount_cents,settled_cents,due_on,recurrence,entry_kind,person_id) VALUES(${owner.id},${x.walletId}::uuid,${outLabel.slice(0, 140)},'expense','Empréstimos',${amountCents},${amountCents},${lentOn}::date,'single','loan_out',${person.id}::uuid) RETURNING id`;
+    await sql`INSERT INTO public.kc_settlements(user_id,title_id,wallet_id,amount_cents,settled_on,idempotency_key) VALUES(${owner.id},${outTitle[0].id}::uuid,${x.walletId}::uuid,${amountCents},${lentOn}::date,${crypto.randomUUID()}::uuid)`;
+    const inTitle = await sql`INSERT INTO public.kc_titles(user_id,wallet_id,description,direction,category,amount_cents,settled_cents,due_on,recurrence,entry_kind,person_id) VALUES(${owner.id},${x.walletId}::uuid,${inLabel.slice(0, 140)},'income','Reembolsos',${amountCents},0,${expectedRepaymentOn}::date,'single','loan_repayment',${person.id}::uuid) RETURNING id`;
+
+    return ok({ saved: true, outTitleId: outTitle[0]?.id, repaymentTitleId: inTitle[0]?.id, person }, 201);
   }
 
   if (x.action === "transfer_capital") {
