@@ -266,7 +266,46 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
 .toolbar-left, .toolbar-right {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.toolbar-segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  height: 44px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .64);
+  box-shadow: var(--kc-pill-shadow);
+  border: 1px solid rgba(255, 255, 255, .82);
+}
+
+.toolbar-segmented button {
+  height: 34px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 500;
+  background: transparent;
+  color: var(--kc-muted-dark);
+  white-space: nowrap;
+}
+
+.toolbar-segmented button.active {
+  background: var(--kc-ink);
+  color: #fff;
+}
+
+.date-range-chip {
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--kc-ink);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
 }
 
 .pill {
