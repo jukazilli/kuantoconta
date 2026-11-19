@@ -1181,6 +1181,7 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
 .budget-picker-trigger span { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .budget-picker-trigger small { font-size: 12px; color: var(--kc-muted); white-space: nowrap; }
 .budget-picker-dialog { max-width: 440px; }
+.budget-picker-dialog .action-menu { max-height: 52vh; overflow-y: auto; }
 .action-menu button.selected { border-color: var(--kc-orange-light); background: var(--kc-orange-pale); }
 .drawer-head { padding: 20px 24px 16px; display: flex; align-items: center; justify-content: space-between; gap: 9px; position: sticky; top: 0; background: #fff; z-index: 5; border-bottom: 1px solid var(--kc-line); }
 .drawer-head h2 { font-size: 20px; }
@@ -1216,8 +1217,8 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
 .controlled-classification > label { flex: 1; display: grid; gap: 8px; font-size: 12px; color: var(--kc-muted-dark); min-width: 0; }
 .inline-plus { height: 46px; width: 46px; flex: 0 0 46px; border-radius: 12px; border: 1px solid var(--kc-line); background: var(--kc-surface-inner); display: grid; place-items: center; color: var(--kc-ink); }
 .inline-plus:hover { background: #e8e9f2; }
-.nested-overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(18, 21, 28, .45); z-index: 7; padding: 22px; }
-.quick-category { background: #fff; border-radius: 20px; box-shadow: 0 20px 70px rgba(0, 0, 0, .15); padding: 24px; width: 100%; max-width: 360px; display: grid; gap: 16px; }
+.nested-overlay { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(18, 21, 28, .45); backdrop-filter: blur(3px); z-index: 120; padding: 22px; }
+.quick-category { background: #fff; border-radius: 22px; box-shadow: 0 22px 80px rgba(17, 20, 45, .22); padding: 24px; width: min(100%, 420px); max-height: 82vh; overflow: auto; display: grid; gap: 16px; animation: kcPopIn .18s ease-out; }
 .quick-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .quick-head button { border: 0; background: transparent; color: var(--kc-muted); width: 34px; height: 34px; }
 .quick-category label { display: grid; gap: 8px; color: var(--kc-muted-dark); font-size: 12px; }
