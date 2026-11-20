@@ -50,7 +50,7 @@ test("Migration 011 enforces hashed tokens, PKCE S256, user_id scoping, and REVO
   assert.match(sqlSrc, /REVOKE ALL ON TABLE public\.kc_mcp_audit_logs FROM PUBLIC/);
 });
 
-test("MCP server registers all 15 tools and 3 prompts and scopes calls strictly to ownerId", async () => {
+test("MCP server registers all tools and prompts and scopes calls strictly to ownerId", async () => {
   const seenOwners = [];
   const postedPayloads = [];
   const server = createKuantoContaMcpServer("user-alpha", {

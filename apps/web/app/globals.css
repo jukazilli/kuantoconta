@@ -672,13 +672,31 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
-.direction-cards.three .direction-card {
+.direction-cards.four {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+@media (min-width: 600px) {
+  .direction-cards.four {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+.direction-cards.three .direction-card,
+.direction-cards.four .direction-card {
   padding: 10px;
   gap: 7px;
   min-height: 52px;
 }
-.direction-cards.three .direction-card strong { font-size: 13px; }
-.direction-cards.three .direction-card small { font-size: 10px; }
+.direction-cards.three .direction-card strong,
+.direction-cards.four .direction-card strong { font-size: 13px; }
+.direction-cards.three .direction-card small,
+.direction-cards.four .direction-card small { font-size: 10px; }
+.direction-card.transfer.active {
+  border-color: #0284c7;
+  background: #f0f9ff;
+  color: #0284c7;
+}
+.direction-card.transfer.active strong { color: #0369a1; }
 .direction-card.lend.active {
   border-color: #6366f1;
   background: #eef2ff;
@@ -739,6 +757,85 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
 }
 
 .popover-check input { accent-color: var(--kc-orange); width: 16px; height: 16px; }
+
+/* Transfer Routing Card */
+.transfer-routing-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: #f8fafc;
+  border: 1px solid var(--kc-line);
+  border-radius: var(--kc-radius-md);
+  padding: 14px;
+  margin: 12px 0;
+}
+@media (min-width: 520px) {
+  .transfer-routing-card {
+    flex-direction: row;
+    align-items: flex-end;
+  }
+}
+.transfer-route-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.transfer-route-item select {
+  width: 100%;
+}
+.transfer-swap-btn-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 0;
+}
+.transfer-swap-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--kc-line);
+  background: #fff;
+  color: #0284c7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform .1s ease;
+}
+.transfer-swap-btn:active {
+  transform: scale(0.92);
+}
+.transfer-status-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.transfer-guideline-note {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: var(--kc-radius-sm);
+  padding: 10px 14px;
+  margin-top: 10px;
+}
+.transfer-guideline-note p {
+  margin: 0;
+  font-size: 12px;
+  color: #166534;
+  line-height: 1.4;
+}
+.movement-direction.transfer {
+  color: #0284c7;
+  background: #f0f9ff;
+}
+.movement-tag.transfer-tag {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+.movement-transfer {
+  color: #0284c7;
+}
 
 /* Dashboard Bento Grid */
 .dashboard { margin-top: 28px; }

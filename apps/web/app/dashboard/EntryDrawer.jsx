@@ -1,6 +1,6 @@
 "use client";
 import {useMemo,useState} from "react";
-import {X,Plus,CalendarDays,ReceiptText,CircleDollarSign,Repeat2,CheckCircle2,Clock3,ChevronDown,ChevronRight,Sparkles,Check,Compass,ArrowDownCircle,ArrowUpCircle,HandCoins,Search,UserPlus} from "lucide-react";
+import {X,Plus,CalendarDays,ReceiptText,CircleDollarSign,Repeat2,CheckCircle2,Clock3,ChevronDown,ChevronRight,Sparkles,Check,Compass,ArrowDownCircle,ArrowUpCircle,HandCoins,Search,UserPlus,ArrowLeftRight} from "lucide-react";
 import MoneyInput from "./MoneyInput";
 import BankIcon from "./BankIcon";
 import {BANK_BRANDS} from "../../lib/bank-brands";
@@ -42,7 +42,7 @@ export default function EntryDrawer({
  const [quick,setQuick]=useState(null),[budgetPicker,setBudgetPicker]=useState(false),[personPicker,setPersonPicker]=useState(false),[personQuery,setPersonQuery]=useState(""),[newPersonMode,setNewPersonMode]=useState(false),[personMore,setPersonMore]=useState(false),[pName,setPName]=useState(""),[pRel,setPRel]=useState("Amigo"),[pEmail,setPEmail]=useState(""),[pPhone,setPPhone]=useState(""),[pNotes,setPNotes]=useState(""),[pBusy,setPBusy]=useState(false),[pErr,setPErr]=useState(""),[newName,setNewName]=useState(""),[trackBudget,setTrackBudget]=useState(false),[quickLimit,setQuickLimit]=useState(""),[quickError,setQuickError]=useState(""),[quickBusy,setQuickBusy]=useState(false),[showMore,setShowMore]=useState(false);
  const field=(name,value)=>setForm(old=>({...old,[name]:value}));
  const edit=drawer==="edit",newTitle=drawer==="title",editPlan=drawer==="edit_plan",titleEntry=newTitle||edit;
- const intent=newTitle?(form.intent==="lend"?"lend":"bill"):"bill";
+ const intent=newTitle?(form.intent==="transfer"?"transfer":form.intent==="lend"?"lend":"bill"):"bill";
  const selectedPerson=people.find(p=>p.id===form.personId)||null;
  const filteredPeople=useMemo(()=>{
   const q=personQuery.trim().toLowerCase();
@@ -129,7 +129,7 @@ export default function EntryDrawer({
  }
 
  const formTitle=
-  newTitle?(intent==="lend"?"Tenho um empréstimo a fazer":form.direction==="income"?"Tenho uma conta a receber":"Tenho uma conta a pagar"):
+  newTitle?(intent==="transfer"?"Nova transferência entre contas":intent==="lend"?"Tenho um empréstimo a fazer":form.direction==="income"?"Tenho uma conta a receber":"Tenho uma conta a pagar"):
   drawer==="edit"?"Editar lançamento":
   drawer==="edit_plan"?"Ajustar previsão de gasto":
   drawer==="wallet"?"Nova conta":
@@ -161,17 +161,21 @@ export default function EntryDrawer({
    <header className="drawer-head"><button type="button" className="plain-icon" onClick={onClose} aria-label="Fechar"><X size={23}/></button><h2>{formTitle}</h2>{canSubmit?<button className="save-pill" form="entry-form" type="submit" disabled={busy}>{busy?"Salvando...":"Salvar"}</button>:<span className="drawer-head-spacer"/>}</header>
    {error&&<div className="notice error" role="alert" style={{margin:"14px 20px"}}>{error}</div>}
    {drawer==="detail"?<div className="detail-layout">
-    <div className="detail-amount"><small>{selectedTitleObj?.direction==="income"?"A receber":"A pagar"}</small><strong>{money(cents(selectedTitleObj?.amount_cents))}</strong><p>{selectedTitleObj?.description}</p></div>
+    <div className="detail-amount"><small>{selectedTitleObj?.entry_kind==="transfer"?(selectedTitleObj?.direction==="income"?"Transferência recebida":"Transferência enviada"):selectedTitleObj?.direction==="income"?"A receber":"A pagar"}</small><strong>{money(cents(selectedTitleObj?.amount_cents))}</strong><p>{selectedTitleObj?.description}</p></div>
     <dl className="detail-fields">
       <div><dt>Conta</dt><dd>{wallets.find(w=>w.id===selectedTitleObj?.wallet_id)?.name||"—"}</dd></div>
-      <div><dt>{selectedTitleObj?.direction==="income"?"Categoria":"Orçamento"}</dt><dd>{selectedTitleObj?.category||"—"}</dd></div>
+      {selectedTitleObj?.entry_kind==="transfer"&&<div><dt>{selectedTitleObj?.direction==="expense"?"Conta de destino":"Conta de origem"}</dt><dd>{(()=>{
+        const counterpart=rawData?.titles?.find(t=>t.transfer_id&&t.transfer_id===selectedTitleObj?.transfer_id&&t.id!==selectedTitleObj?.id);
+        return wallets.find(w=>w.id===counterpart?.wallet_id)?.name||"Outra conta";
+      })()}</dd></div>}
+      <div><dt>{selectedTitleObj?.entry_kind==="transfer"?"Tipo":selectedTitleObj?.direction==="income"?"Categoria":"Orçamento"}</dt><dd>{selectedTitleObj?.category||"—"}</dd></div>
       <div><dt>Vencimento</dt><dd>{fdate(selectedTitleObj?.due_on)}</dd></div>
       <div><dt>Parcela</dt><dd>{selectedTitleObj?.installment_total>1?selectedTitleObj.installment_index+"/"+selectedTitleObj.installment_total:"Única / fixa"}</dd></div>
       <div><dt>Valor original</dt><dd>{money(cents(selectedTitleObj?.amount_cents))}</dd></div>
       <div><dt>Já efetivado</dt><dd>{money(cents(selectedTitleObj?.settled_cents))}</dd></div>
       <div className="strong"><dt>Saldo pendente</dt><dd>{money(balanceDue)}</dd></div>
     </dl>
-    <div className="detail-actions"><button className="dark-button" disabled={balanceDue===0} onClick={()=>onAction("settle",selectedTitleObj.id)}>Confirmar pagamento</button><button className="light-button" onClick={()=>onAction("edit",selectedTitleObj.id)}>Editar este lançamento</button></div>
+    <div className="detail-actions"><button className="dark-button" disabled={balanceDue===0} onClick={()=>onAction("settle",selectedTitleObj.id)}>{selectedTitleObj?.entry_kind==="transfer"?"Confirmar transferência":"Confirmar pagamento"}</button>{selectedTitleObj?.entry_kind!=="transfer"&&<button className="light-button" onClick={()=>onAction("edit",selectedTitleObj.id)}>Editar este lançamento</button>}</div>
     {cancellations.some(c=>c.title_id===selectedTitleObj?.id)&&<div className="editing-scope-note">
       <strong>Cancelamento parcial registrado</strong>
       <p>Valor original antes do cancelamento: {money(cents(cancellations.find(c=>c.title_id===selectedTitleObj?.id)?.original_amount_cents))}</p>
@@ -182,20 +186,129 @@ export default function EntryDrawer({
     <div className="detail-history"><h3>Histórico de pagamentos</h3>{settlements.filter(s=>s.title_id===selectedTitleObj?.id).length?settlements.filter(s=>s.title_id===selectedTitleObj?.id).map(s=><div className={"history-row"+(s.reversed_at?" reversed":"")} key={s.id}><p><CheckCircle2 size={15}/>{fdate(s.settled_on)} — {money(cents(s.amount_cents))} {s.reversed_at&&<span>• Revertido</span>}</p>{!s.reversed_at&&<button type="button" disabled={busy} onClick={()=>onAction("reverse",s.id)}>Desfazer pagamento</button>}</div>):<p><Clock3 size={15}/> Nenhum pagamento registrado.</p>}</div>
     <p className="hint">Ao editar este lançamento, as demais parcelas da série não serão alteradas.</p>
    </div>:<form id="entry-form" className="entry-form" onSubmit={onSave}>
-    {newTitle&&<div className="direction-cards three" role="group" aria-label="Tipo de lançamento">
-      <button type="button" className={`direction-card expense${intent!=="lend"&&form.direction!=="income"?" active":""}`} aria-pressed={intent!=="lend"&&form.direction!=="income"} onClick={()=>setForm(old=>({...old,intent:"bill",direction:"expense",category:old.direction==="expense"?old.category:""}))}>
+    {newTitle&&<div className="direction-cards four" role="group" aria-label="Tipo de lançamento">
+      <button type="button" className={`direction-card expense${intent==="bill"&&form.direction!=="income"?" active":""}`} aria-pressed={intent==="bill"&&form.direction!=="income"} onClick={()=>setForm(old=>({...old,intent:"bill",direction:"expense",category:old.direction==="expense"?old.category:""}))}>
         <ArrowDownCircle size={20} aria-hidden="true"/>
         <div><strong>A pagar</strong><small>Conta ou gasto</small></div>
       </button>
-      <button type="button" className={`direction-card income${intent!=="lend"&&form.direction==="income"?" active":""}`} aria-pressed={intent!=="lend"&&form.direction==="income"} onClick={()=>setForm(old=>({...old,intent:"bill",direction:"income",category:old.direction==="income"?old.category:""}))}>
+      <button type="button" className={`direction-card income${intent==="bill"&&form.direction==="income"?" active":""}`} aria-pressed={intent==="bill"&&form.direction==="income"} onClick={()=>setForm(old=>({...old,intent:"bill",direction:"income",category:old.direction==="income"?old.category:""}))}>
         <ArrowUpCircle size={20} aria-hidden="true"/>
         <div><strong>A receber</strong><small>Salário ou entrada</small></div>
+      </button>
+      <button type="button" className={`direction-card transfer${intent==="transfer"?" active":""}`} aria-pressed={intent==="transfer"} onClick={()=>{
+        const fW = form.fromWalletId || form.walletId || wallets[0]?.id || "";
+        const tW = form.toWalletId || (wallets.find(w => w.id !== fW)?.id || "");
+        setForm(old=>({...old,intent:"transfer",fromWalletId:fW,toWalletId:tW,transferredOn:old.transferredOn||old.dueOn||brDay(),settlementState:old.settlementState||"paid"}));
+      }}>
+        <ArrowLeftRight size={20} aria-hidden="true"/>
+        <div><strong>Transferir</strong><small>Entre contas</small></div>
       </button>
       <button type="button" className={`direction-card lend${intent==="lend"?" active":""}`} aria-pressed={intent==="lend"} onClick={()=>setForm(old=>({...old,intent:"lend",lentOn:old.lentOn||brDay(),expectedRepaymentOn:old.expectedRepaymentOn||old.dueOn||brDay()}))}>
         <HandCoins size={20} aria-hidden="true"/>
         <div><strong>Emprestar</strong><small>Para alguém</small></div>
       </button>
     </div>}
+
+    {/* TRANSFERÊNCIA ENTRE CONTAS */}
+    {newTitle&&intent==="transfer"&&<>
+      {wallets.length < 2 ? (
+        <div className="notice warning" style={{margin:"0 0 16px"}}>
+          <strong>Você precisa de pelo menos 2 contas para transferir.</strong>
+          <p style={{margin:"6px 0 0"}}>Cadastre outra conta bancária ou carteira em Criar › Nova conta para movimentar saldos entre elas.</p>
+        </div>
+      ) : (
+        <>
+          <div className="field-row major">
+            <ReceiptText/>
+            <input aria-label="Identificação da transferência (opcional)" placeholder="Ex.: Pix para PagBank, Reserva (opcional)" value={form.description||""} maxLength={120} onChange={e=>field("description",e.target.value)}/>
+          </div>
+          <div className="field-row money-input">
+            <CircleDollarSign/>
+            <span>R$</span>
+            <MoneyInput ariaLabel="Valor a transferir em reais" value={form.amount} onChange={v=>field("amount",v)}/>
+          </div>
+          <div className="transfer-routing-card">
+            <div className="transfer-route-item">
+              <span className="field-caption">De qual conta sai (Origem)</span>
+              <select
+                required
+                value={form.fromWalletId||""}
+                onChange={e=>{
+                  const newFrom = e.target.value;
+                  field("fromWalletId", newFrom);
+                  if (newFrom && form.toWalletId === newFrom) {
+                    const alt = wallets.find(w => w.id !== newFrom);
+                    if (alt) field("toWalletId", alt.id);
+                  }
+                }}
+              >
+                <option value="">Selecione a conta de origem</option>
+                {wallets.map(w=>(
+                  <option key={w.id} value={w.id}>{w.name} {w.is_reserved ? "(Reserva / Capital)" : ""}</option>
+                ))}
+              </select>
+            </div>
+            <div className="transfer-swap-btn-container">
+              <button
+                type="button"
+                className="transfer-swap-btn"
+                title="Inverter contas"
+                aria-label="Inverter conta de origem e conta de destino"
+                onClick={()=>{
+                  const curFrom = form.fromWalletId;
+                  const curTo = form.toWalletId;
+                  setForm(old=>({...old,fromWalletId:curTo,toWalletId:curFrom}));
+                }}
+              >
+                <ArrowLeftRight size={16} aria-hidden="true"/>
+              </button>
+            </div>
+            <div className="transfer-route-item">
+              <span className="field-caption">Para qual conta vai (Destino)</span>
+              <select
+                required
+                value={form.toWalletId||""}
+                onChange={e=>field("toWalletId",e.target.value)}
+              >
+                <option value="">Selecione a conta de destino</option>
+                {wallets.map(w=>(
+                  <option key={w.id} value={w.id} disabled={w.id === form.fromWalletId}>
+                    {w.name} {w.is_reserved ? "(Reserva / Capital)" : ""} {w.id === form.fromWalletId ? "(Mesma conta)" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="form-grid">
+            <label>Data da transferência
+              <input
+                required
+                type="date"
+                value={form.transferredOn||form.dueOn||brDay()}
+                onChange={e=>{
+                  const d = e.target.value;
+                  field("transferredOn", d);
+                  if (d > brDay()) field("settlementState", "pending");
+                }}
+              />
+            </label>
+            <div className="transfer-status-field">
+              <span className="field-caption">Situação</span>
+              <select
+                value={form.settlementState||"paid"}
+                onChange={e=>field("settlementState", e.target.value)}
+              >
+                <option value="paid">Já realizada (debitar e creditar agora)</option>
+                <option value="pending">Agendada / Prevista</option>
+              </select>
+            </div>
+          </div>
+          <div className="transfer-guideline-note">
+            <p><strong>Sem impacto nos limites ou salário:</strong> Esta operação transfere o saldo entre suas contas cadastradas sem duplicar receitas nem despesas de consumo.</p>
+          </div>
+        </>
+      )}
+    </>}
 
     {/* EMPRESTAR DINHEIRO */}
     {newTitle&&intent==="lend"&&<>
