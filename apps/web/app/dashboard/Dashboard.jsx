@@ -556,7 +556,9 @@ export default function Dashboard({ user }) {
       direction: t.direction,
       category: t.category,
       walletId: t.wallet_id,
+      occurredOn: isoDate(t.due_on),
       dueOn: isoDate(t.due_on),
+      settlementState: duplicate ? (t.direction === "expense" ? "paid" : "pending") : "pending",
       mode: "single",
     });
     setSelectedTitle(duplicate ? null : id);
@@ -792,17 +794,18 @@ export default function Dashboard({ user }) {
           expectedRepaymentOn: form.expectedRepaymentOn || form.dueOn || TODAY,
         });
       } else {
-        const effectiveState = form.mode === "single" ? form.settlementState : "pending";
+        const isEdit = drawer === "edit";
+        const effectiveState = !isEdit && form.mode === "single" ? form.settlementState : "pending";
         const payload = {
           walletId: form.walletId,
           direction: form.direction,
           description: form.description,
           category: form.category,
           amount: maskToDecimal(form.amount),
-          occurredOn: form.occurredOn || form.dueOn,
-          dueOn: effectiveState === "paid" ? form.settledOn || TODAY : form.dueOn,
+          occurredOn: isEdit ? form.dueOn : form.occurredOn || form.dueOn,
+          dueOn: isEdit ? form.dueOn : effectiveState === "paid" ? form.settledOn || TODAY : form.dueOn,
         };
-        if (drawer === "edit") {
+        if (isEdit) {
           const titleId = await materializeIfVirtual(selectedTitle);
           await request("PATCH", { action: "edit", titleId, ...payload });
         } else {
