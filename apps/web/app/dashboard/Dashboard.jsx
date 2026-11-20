@@ -1319,31 +1319,29 @@ export default function Dashboard({ user }) {
         )}
 
         {active === "planning" && (
-          <div className="workspace">
-            <div className="planning-stats">
-              <div className="card kpi-panel">
-                <span className="metric-label">Saldos em contas</span>
-                <strong className="kpi-value">{display(summary.liveCash)}</strong>
-                <span className="metric-sub">
-                  Uso diário: {money(checkingBalanceCents)} · Capital: {money(capitalBalanceCents)}
-                </span>
-              </div>
-              <div className="card kpi-panel">
-                <span className="metric-label">Limites do mês</span>
-                <strong className="kpi-value">{money(allocatedBudgetCents)}</strong>
-                <span className="metric-sub">
-                  {monthlyIncomeCents > 0 ? `De ${money(monthlyIncomeCents)} a receber` : "Cadastre seus a receber"}
-                </span>
-              </div>
-              <div className="card kpi-panel">
-                <span className="metric-label">Endividamento total</span>
-                <strong className="kpi-value">{debtDisplay}</strong>
-                <span className="metric-sub">Soma até a última parcela</span>
-              </div>
+          <div className="workspace planning-bento">
+            <div className="card kpi-panel bento-hero">
+              <span className="metric-label">Saldos em contas</span>
+              <strong className="kpi-value kpi-hero-value">{display(summary.liveCash)}</strong>
+              <span className="metric-sub">
+                Uso diário: {money(checkingBalanceCents)} · Capital: {money(capitalBalanceCents)}
+              </span>
+            </div>
+            <div className="card kpi-panel bento-kpi">
+              <span className="metric-label">Limites do mês</span>
+              <strong className="kpi-value">{money(allocatedBudgetCents)}</strong>
+              <span className="metric-sub">
+                {monthlyIncomeCents > 0 ? `De ${money(monthlyIncomeCents)} a receber` : "Cadastre seus a receber"}
+              </span>
+            </div>
+            <div className="card kpi-panel bento-kpi">
+              <span className="metric-label">Endividamento total</span>
+              <strong className="kpi-value">{debtDisplay}</strong>
+              <span className="metric-sub">Soma até a última parcela</span>
             </div>
 
             {planningView === "goals" ? (
-              <section className="card panel">
+              <section className="card panel bento-full">
                 <div className="card-heading" style={{ marginBottom: 16 }}>
                   <div>
                     <div className="eyebrow">COMPRAS E OBJETIVOS</div>
@@ -1405,7 +1403,7 @@ export default function Dashboard({ user }) {
               </section>
             ) : (
               <>
-                <section className="card panel">
+                <section className="card panel bento-allocation">
                   <div className="card-heading" style={{ marginBottom: 14 }}>
                     <div>
                       <div className="eyebrow">DIVISÃO INTELIGENTE DA RENDA</div>
@@ -1458,7 +1456,7 @@ export default function Dashboard({ user }) {
                   )}
                 </section>
 
-                <section className="card panel">
+                <section className="card panel bento-budgets-list">
                   <div className="card-heading" style={{ marginBottom: 16 }}>
                     <div>
                       <div className="eyebrow">ORÇAMENTOS DO MÊS</div>
@@ -1477,7 +1475,7 @@ export default function Dashboard({ user }) {
                   />
                 </section>
 
-                <section className="card panel">
+                <section className="card panel bento-evolution">
                   <div className="card-heading" style={{ marginBottom: 16 }}>
                     <h2 className="card-title">Evolução mês a mês</h2>
                   </div>
