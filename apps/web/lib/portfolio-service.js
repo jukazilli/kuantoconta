@@ -715,6 +715,11 @@ export async function executePortfolioPatch(ownerId, x) {
       await seedDefaultCategories(owner.id);
       root = await sql`SELECT id FROM public.kc_categories WHERE user_id=${owner.id} AND direction=${x.direction} AND name=${category} AND parent_id IS NULL LIMIT 1`;
     }
+    if (!root.length) {
+      const userRoots = await sql`SELECT id, name FROM public.kc_categories WHERE user_id=${owner.id} AND direction=${x.direction} AND parent_id IS NULL LIMIT 300`;
+      const matched = userRoots.find((c) => normalizeCategoryName(c.name) === normalizeCategoryName(category));
+      if (matched) root = [matched];
+    }
     if (!root.length) return fail("Categoria inválida.");
     const categoryId = root[0].id;
     let subcategoryId = null;
