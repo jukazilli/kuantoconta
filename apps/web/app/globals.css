@@ -2239,3 +2239,115 @@ input:not([type=checkbox]):not([type=radio]), select, textarea { font-size: 16px
   outline: 2px solid var(--kc-ink);
   outline-offset: 2px;
 }
+
+/* ==========================================================================
+   Design tokens: tamanhos padrão e regras de rolagem (cards, popups, views)
+   - Popups (dialog/drawer/quick/invoice/calc): largura por tamanho + altura máx.
+     de 88dvh; ao passar disso, o CONTEÚDO rola (cabeçalho fica fixo).
+   - Cards com listas: altura máx. da lista; ao passar disso, a LISTA rola.
+   - Mobile: popups viram bottom-sheet (92dvh).
+   ========================================================================== */
+:root {
+  --kc-modal-sm: 420px;
+  --kc-modal-md: 540px;
+  --kc-modal-lg: 760px;
+  --kc-modal-max-h: min(88dvh, 780px);
+  --kc-sheet-max-h: 92dvh;
+  --kc-list-scroll-h: 440px;
+  --kc-bento-list-h: 300px;
+}
+
+.dialog, .drawer, .quick-category, .invoice-dialog, .cancel-scope-dialog, .calc-dialog,
+.budget-picker-dialog {
+  max-height: var(--kc-modal-max-h);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
+}
+.dialog { width: min(480px, 100%); }
+.dialog.dialog-wide { width: min(var(--kc-modal-lg), 100%); }
+.drawer { width: min(100%, var(--kc-modal-md)); }
+.quick-category { width: min(100%, var(--kc-modal-sm)); }
+.dialog-head {
+  position: sticky;
+  top: -26px;
+  margin-top: -26px;
+  padding-top: 26px;
+  padding-bottom: 12px;
+  background: #fff;
+  z-index: 3;
+}
+.action-menu, .budget-picker-dialog .action-menu { max-height: min(56dvh, 460px); overflow-y: auto; overscroll-behavior: contain; }
+
+.card .wallet-list, .card .budget-list, .card .people-list {
+  max-height: var(--kc-list-scroll-h);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+}
+.movements-list.compact { max-height: 420px; overflow-y: auto; overscroll-behavior: contain; }
+.movements-list:not(.compact) { max-width: 100%; }
+
+@media (max-width: 670px) {
+  .dialog, .drawer, .quick-category, .invoice-dialog, .cancel-scope-dialog, .budget-picker-dialog {
+    max-height: var(--kc-sheet-max-h);
+  }
+  .card .wallet-list, .card .budget-list, .card .people-list { max-height: 360px; }
+}
+
+/* ==========================================================================
+   Meu Capital — Bento grid (leitura em até 15s)
+   Ordem de leitura: 1) quanto tenho  2) para onde vai  3) quanto devo
+   4) estou no ritmo da meta?  5) onde está o dinheiro  6) cartões  7) evolução  8) extras
+   ========================================================================== */
+.capital-bento {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 16px;
+  align-items: stretch;
+  max-width: 1120px;
+  margin-inline: auto;
+}
+.capital-bento > * { min-width: 0; grid-column: span 12; }
+.capital-bento > .card { margin: 0; }
+.bento-hero { order: 1; }
+.bento-kpi { order: 2; }
+.bento-goals { order: 4; }
+.bento-wallets { order: 5; }
+.bento-cards { order: 6; }
+.bento-chart { order: 7; }
+.bento-loans { order: 8; }
+.bento-extra { order: 9; }
+
+.bento-hero {
+  background: linear-gradient(135deg, #fff4ed 0%, #ffffff 70%);
+  border: 1px solid #fed7aa;
+  display: grid;
+  align-content: center;
+  gap: 6px;
+  min-height: 132px;
+}
+.kpi-hero-value { font-size: clamp(32px, 5vw, 44px); line-height: 1.05; letter-spacing: -0.03em; }
+.bento-kpi { display: grid; align-content: center; gap: 4px; }
+.bento-extra { gap: 16px; grid-template-columns: 1fr; }
+.bento-extra.register-grid { display: grid; }
+
+.capital-bento .wallet-list, .capital-bento .budget-list { max-height: var(--kc-bento-list-h); }
+.bento-chart .chart-wrap, .bento-chart canvas { max-width: 100%; }
+
+@media (min-width: 700px) {
+  .bento-hero { grid-column: span 12; }
+  .bento-kpi { grid-column: span 6; }
+  .bento-goals, .bento-wallets, .bento-cards, .bento-chart { grid-column: span 6; }
+  .bento-loans, .bento-extra { grid-column: span 12; }
+  .bento-extra { grid-template-columns: 1fr 1fr; }
+}
+@media (min-width: 1025px) {
+  .bento-hero { grid-column: span 6; }
+  .bento-kpi { grid-column: span 3; }
+  .bento-goals, .bento-cards { grid-column: span 5; }
+  .bento-wallets, .bento-chart { grid-column: span 7; }
+  .bento-loans { grid-column: span 5; }
+  .bento-extra { grid-column: span 7; }
+}

@@ -1524,26 +1524,28 @@ export default function Dashboard({ user }) {
         )}
 
         {active === "patrimony" && (
-          <div className="workspace">
-            <div className="planning-stats">
-              <div className="card kpi-panel">
-                <span className="metric-label">Capital formado hoje</span>
-                <strong className="kpi-value">{summary.knownCash ? money(capitalBalanceCents) : "A calcular"}</strong>
-                <span className="metric-sub">Carteiras de Capital e Reserva</span>
-              </div>
-              <div className="card kpi-panel">
-                <span className="metric-label">Capital projetado em {fmtDate(date)}</span>
-                <strong className="kpi-value">{summary.knownCash ? money(capitalProjectedAtDateCents) : "A calcular"}</strong>
-                <span className="metric-sub">Considerando aportes previstos no período</span>
-              </div>
-              <div className="card kpi-panel">
-                <span className="metric-label">Endividamento total</span>
-                <strong className="kpi-value">{debtDisplay}</strong>
-                <span className="metric-sub">Soma até a última parcela</span>
-              </div>
+          <div className="workspace capital-bento">
+            <div className="card kpi-panel bento-hero">
+              <span className="metric-label">Capital formado hoje</span>
+              <strong className="kpi-value kpi-hero-value">{summary.knownCash ? money(capitalBalanceCents) : "A calcular"}</strong>
+              <span className="metric-sub">
+                {summary.knownCash
+                  ? `${capitalProjectedAtDateCents - capitalBalanceCents >= 0 ? "+" : "−"}${money(Math.abs(capitalProjectedAtDateCents - capitalBalanceCents))} previstos até ${fmtDate(date)} · Carteiras de Capital e Reserva`
+                  : "Carteiras de Capital e Reserva"}
+              </span>
+            </div>
+            <div className="card kpi-panel bento-kpi">
+              <span className="metric-label">Capital projetado em {fmtDate(date)}</span>
+              <strong className="kpi-value">{summary.knownCash ? money(capitalProjectedAtDateCents) : "A calcular"}</strong>
+              <span className="metric-sub">Considerando aportes previstos no período</span>
+            </div>
+            <div className="card kpi-panel bento-kpi">
+              <span className="metric-label">Endividamento total</span>
+              <strong className="kpi-value">{debtDisplay}</strong>
+              <span className="metric-sub">Soma até a última parcela</span>
             </div>
 
-            <section className="card panel">
+            <section className="card panel bento-goals">
               <div className="card-heading" style={{ marginBottom: 14 }}>
                 <div>
                   <div className="eyebrow">RITMO DE FORMAÇÃO DE CAPITAL</div>
@@ -1609,7 +1611,7 @@ export default function Dashboard({ user }) {
               )}
             </section>
 
-            <section className="card panel">
+            <section className="card panel bento-chart">
               <div className="card-heading" style={{ marginBottom: 14 }}>
                 <div>
                   <div className="eyebrow">EVOLUÇÃO NO PERÍODO FILTRADO</div>
@@ -1628,7 +1630,7 @@ export default function Dashboard({ user }) {
               )}
             </section>
 
-            <section className="card panel">
+            <section className="card panel bento-wallets">
               <div className="card-heading" style={{ marginBottom: 14 }}>
                 <h2 className="card-title">Contas bancárias e carteiras</h2>
                 <div className="toolbar-buttons">
@@ -1679,7 +1681,7 @@ export default function Dashboard({ user }) {
               </div>
             </section>
 
-            <section className="card panel">
+            <section className="card panel bento-cards">
               <div className="card-heading" style={{ marginBottom: 14 }}>
                 <div>
                   <div className="eyebrow">CRÉDITO E FATURAS</div>
@@ -1737,7 +1739,7 @@ export default function Dashboard({ user }) {
               )}
             </section>
 
-            <section className="card panel">
+            <section className="card panel bento-loans">
               <div className="card-heading" style={{ marginBottom: 14 }}>
                 <div>
                   <div className="eyebrow">CARTEIRA DE PESSOAS</div>
@@ -1788,7 +1790,7 @@ export default function Dashboard({ user }) {
               )}
             </section>
 
-            <div className="register-grid">
+            <div className="register-grid bento-extra">
               <section className="card panel" style={{ opacity: 0.92 }}>
                 <div className="card-heading">
                   <div>
