@@ -572,8 +572,10 @@ export function computeProjectedBalanceWithBudgetsCents({
   openingOperationalCents = 0,
   receivableCents = null,
   rows = [],
+  settledRows = null,
   budgetSummary = []
 }) {
+  const settlementSource = settledRows || rows;
   // Backwards-compatible fallback when caller passes explicit receivableCents without settlement breakdown
   const hasSettlementData = rows.some((t) => t.settled_cents !== undefined);
   const pendingReceivableCents =
@@ -594,7 +596,7 @@ export function computeProjectedBalanceWithBudgetsCents({
     if (b.limitCents === null || b.limitCents === undefined) continue;
     const used = Math.max(0, cents(b.usedCents));
     const limit = Math.max(0, cents(b.limitCents));
-    const settledInBudget = rows.reduce((sum, t) => {
+    const settledInBudget = settlementSource.reduce((sum, t) => {
       if (t.cancelled_at || t.direction !== "expense") return sum;
       if ((t.entry_kind || "standard") === "reserve_transfer" || (t.entry_kind || "standard") === "loan_out" || (t.entry_kind || "standard") === "transfer") return sum;
       const matchesId = b.categoryId && t.category_id && String(t.category_id) === String(b.categoryId);

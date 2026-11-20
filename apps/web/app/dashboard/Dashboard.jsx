@@ -377,14 +377,23 @@ export default function Dashboard({ user }) {
         .reduce((sum, w) => sum + (walletBalance(w) ?? 0), 0),
     [wallets, data]
   );
+  const rangeRows = useMemo(
+    () => titles.filter((t) => inRange(t.due_on, rangeStart, date)),
+    [titles, rangeStart, date]
+  );
+  const selectedMonthRows = useMemo(
+    () => titles.filter((t) => isoDate(t.due_on).slice(0, 7) === selectedMonth),
+    [titles, selectedMonth]
+  );
   const projectedBalanceCents = useMemo(
     () =>
       computeProjectedBalanceWithBudgetsCents({
         openingOperationalCents: summary.knownCash ? checkingBalanceCents : 0,
-        rows,
+        rows: rangeRows,
+        settledRows: selectedMonthRows,
         budgetSummary: budgetItems,
       }),
-    [summary.knownCash, checkingBalanceCents, rows, budgetItems]
+    [summary.knownCash, checkingBalanceCents, rangeRows, selectedMonthRows, budgetItems]
   );
   const totalDebtCents = useMemo(
     () =>

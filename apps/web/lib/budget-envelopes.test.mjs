@@ -218,3 +218,20 @@ test("buildNotifications surfaces planned goals, due bills, budget overruns, cap
   assert.equal(alerts.some((a) => a.id === "capital-pending"), true);
   assert.equal(alerts.some((a) => a.id === "negative-cash"), true);
 });
+
+test("computeProjectedBalanceWithBudgetsCents counts settledRows from earlier in the month without double-counting", () => {
+  // User had R$ 5.000 salary, already spent R$ 800 in Alimentação before today (now R$ 4.200 in checking),
+  // and allocates R$ 1.500 budget for Alimentação in the month.
+  // Remaining commitment in Alimentação is R$ 700, so Saldo previsto must be R$ 3.500 (not R$ 2.700).
+  const projected = computeProjectedBalanceWithBudgetsCents({
+    openingOperationalCents: 420000,
+    rows: [], // rangeStart = today has no upcoming bills
+    settledRows: [
+      { id: "s1", direction: "expense", category: "Alimentação", category_id: "c-food", amount_cents: 80000, settled_cents: 80000, due_on: "2026-11-10" },
+    ],
+    budgetSummary: [
+      { categoryId: "c-food", categoryName: "Alimentação", limitCents: 150000, usedCents: 80000 },
+    ],
+  });
+  assert.equal(projected, 350000);
+});
