@@ -28,14 +28,14 @@ import {
   ArrowLeftRight,
   CalendarRange,
   User,
-  Sparkles,
   HandCoins,
   CreditCard,
+  PiggyBank,
 } from "lucide-react";
 import { authClient } from "../../lib/auth/client";
 import { money, cents, brDay, isoDate } from "../../lib/finance";
 import { computeRange, lastDayOfMonth, firstDayOfMonth, moveMonth, inRange } from "../../lib/period";
-import { computeMonthlyIncomeCeilingCents, computeProjectedBalanceWithBudgetsCents, computeTotalDebtCents, suggestBudgetsFromIncome } from "../../lib/budgets";
+import { computeMonthlyIncomeCeilingCents, computeProjectedBalanceWithBudgetsCents, computeTotalDebtCents } from "../../lib/budgets";
 import { buildNotifications } from "../../lib/notifications";
 import { simulateGoalPurchase } from "../../lib/goal-planner";
 import { computeCapitalPace } from "../../lib/capital-pace";
@@ -191,7 +191,6 @@ export default function Dashboard({ user }) {
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [healthModal, setHealthModal] = useState(null); // "diagnosis" | "dedoduro" | "tesouraco" | "milestones" | null
   const [tourOpen, setTourOpen] = useState(false);
-  const [budgetSuggestionResult, setBudgetSuggestionResult] = useState(null);
   const [manageWalletsOpen, setManageWalletsOpen] = useState(false);
   const [invoiceModal, setInvoiceModal] = useState(null); // { cardId, month } | null
   const filterRef = useRef(null);
@@ -363,19 +362,51 @@ export default function Dashboard({ user }) {
   const allocatedBudgetCents = budgetItems.reduce((sum, b) => sum + (b.limitCents !== null ? Math.max(0, cents(b.limitCents)) : 0), 0);
   const remainingAllocableCents = Math.max(0, monthlyIncomeCents - allocatedBudgetCents);
   const capitalBudget = budgetItems.find((b) => /capital|reserva/i.test(b.categoryName));
+  const isCaixinhaWallet = (w) =>
+    Boolean(w?.parent_wallet_id) ||
+    Boolean(w?.caixinha_purpose) ||
+    Boolean(w?.is_reserved) ||
+    w?.wallet_kind === "reserve" ||
+    w?.wallet_kind === "investment";
+  const checkingWallets = wallets.filter((w) => !isCaixinhaWallet(w));
+  const walletBalanceMap = useMemo(() => {
+    const map = {};
+    for (const w of wallets) {
+      map[w.id] = walletBalance(w);
+    }
+    return map;
+  }, [wallets, data]);
   const checkingBalanceCents = useMemo(
-    () =>
-      wallets
-        .filter((w) => !w.is_reserved && w.wallet_kind !== "reserve" && w.wallet_kind !== "investment")
-        .reduce((sum, w) => sum + (walletBalance(w) ?? 0), 0),
+    () => checkingWallets.reduce((sum, w) => sum + (walletBalance(w) ?? 0), 0),
     [wallets, data]
   );
   const capitalBalanceCents = useMemo(
-    () =>
-      wallets
-        .filter((w) => w.is_reserved || w.wallet_kind === "reserve" || w.wallet_kind === "investment")
-        .reduce((sum, w) => sum + (walletBalance(w) ?? 0), 0),
+    () => wallets.filter(isCaixinhaWallet).reduce((sum, w) => sum + (walletBalance(w) ?? 0), 0),
     [wallets, data]
+  );
+  const caixinhaBalance = (g) => {
+    if (g?.wallet_id) {
+      const w = wallets.find((x) => x.id === g.wallet_id);
+      return w ? Math.max(0, walletBalance(w) ?? 0) : 0;
+    }
+    return Math.max(0, capitalBalanceCents);
+  };
+  const bankCaixinhasTotal = (bankId) =>
+    (data?.goals || [])
+      .filter((g) => g.category === "capital_goal" && g.status !== "cancelled" && g.parent_wallet_id === bankId && g.wallet_id)
+      .reduce((s, g) => s + caixinhaBalance(g), 0);
+  const reservedThisMonthCents = useMemo(
+    () =>
+      (data?.titles || [])
+        .filter(
+          (t) =>
+            !t.cancelled_at &&
+            t.entry_kind === "reserve_transfer" &&
+            t.direction === "income" &&
+            isoDate(t.due_on).slice(0, 7) === selectedMonth
+        )
+        .reduce((s, t) => s + cents(t.settled_cents), 0),
+    [data, selectedMonth]
   );
   const rangeRows = useMemo(
     () => titles.filter((t) => inRange(t.due_on, rangeStart, date)),
@@ -419,6 +450,10 @@ export default function Dashboard({ user }) {
   const debtDisplay = totalDebtCents === null ? "A calcular" : money(totalDebtCents);
   const capitalGoals = (data?.goals || []).filter((g) => g.category === "capital_goal");
   const purchaseGoals = (data?.goals || []).filter((g) => g.category !== "capital_goal");
+  const reserveCaixinhasCents = capitalGoals
+    .filter((g) => (g.caixinha_purpose || "goal") === "reserve")
+    .reduce((s, g) => s + (g.wallet_id ? caixinhaBalance(g) : 0), 0);
+  const goalCaixinhasCents = Math.max(0, capitalBalanceCents - reserveCaixinhasCents);
   const capitalProjectedAtDateCents =
     capitalBalanceCents + (capitalBudget?.limitCents > 0 ? capitalBudget.limitCents * Math.max(1, months.length) : 0);
   const netWorthAtDateCents =
@@ -486,13 +521,20 @@ export default function Dashboard({ user }) {
     const t = titles.find((item) => item.id === id);
     const dir = kind === "income" ? "income" : t?.direction || "expense";
     const nextIntent = intentOverride || "bill";
+    const defaultChecking = checkingWallets[0]?.id || wallets[0]?.id || "";
+    const secondChecking = checkingWallets.find((w) => w.id !== defaultChecking)?.id || "";
     setForm({
       ...defaultForm(dir),
       intent: nextIntent,
       settlementState: nextIntent === "transfer" ? "paid" : "pending",
-      walletId: t?.wallet_id || wallets[0]?.id || "",
-      fromWalletId: t?.wallet_id || wallets[0]?.id || "",
-      toWalletId: wallets.find((w) => w.id !== (t?.wallet_id || wallets[0]?.id))?.id || wallets[1]?.id || "",
+      walletId: t?.wallet_id || defaultChecking,
+      fromWalletId: t?.wallet_id || defaultChecking,
+      toWalletId: secondChecking,
+      parentWalletId: defaultChecking,
+      caixinhaPurpose: "goal",
+      initialAmount: "",
+      downPaymentSource: "checking",
+      sourceGoalId: capitalGoals[0]?.id || "",
       transferredOn: TODAY,
       lentOn: TODAY,
       expectedRepaymentOn: lastDayOfMonth(TODAY),
@@ -526,41 +568,22 @@ export default function Dashboard({ user }) {
     setDrawer("budget");
   }
 
-  function openCapitalTransfer(descriptionLabel = "") {
-    const checking = wallets.find((w) => !w.is_reserved && w.wallet_kind !== "reserve" && w.wallet_kind !== "investment") || wallets[0];
-    const capital = wallets.find((w) => w.is_reserved || w.wallet_kind === "reserve" || w.wallet_kind === "investment") || wallets.find((w) => w.id !== checking?.id) || wallets[0];
-    const suggested = capitalBudget?.limitCents > 0 ? centsToMask(capitalBudget.limitCents) : "";
+  function openReserveCaixinha(caixinha = null) {
+    const target = caixinha || capitalGoals[0] || null;
+    const bankId = target?.parent_wallet_id || checkingWallets[0]?.id || wallets[0]?.id || "";
     setForm({
       ...defaultForm("expense"),
-      intent: "transfer",
-      description: descriptionLabel,
-      fromWalletId: checking?.id || "",
-      toWalletId: capital?.id || "",
-      amount: suggested,
+      caixinhaId: target?.id || "",
+      fromWalletId: bankId,
+      reserveBankFilter: "",
+      reserveDirection: "deposit",
       transferredOn: TODAY,
-      settlementState: "paid",
+      amount: "",
       idempotencyKey: crypto.randomUUID(),
     });
     setSelectedTitle(null);
     setError("");
-    setDrawer("title");
-  }
-
-  async function suggestBudgets() {
-    if (busy) return;
-    setBusy(true);
-    setError("");
-    try {
-      const res = await request("POST", { action: "suggest_budgets", month: selectedMonth });
-      await refresh();
-      const incCents = Number(res?.incomeCents || monthlyIncomeCents || 0);
-      const suggestions = incCents > 0 ? suggestBudgetsFromIncome({ incomeCents: incCents }) : [];
-      setBudgetSuggestionResult({ incomeCents: incCents, suggestions });
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
+    setDrawer("reserve_caixinha");
   }
 
   function editTitle(id, duplicate = false) {
@@ -698,14 +721,22 @@ export default function Dashboard({ user }) {
           idempotency: crypto.randomUUID(),
         });
       } else if (drawer === "wallet") {
-        const walletKind = form.walletKind || "checking";
         await request("POST", {
           action: "wallet",
           name: form.name,
           balance: maskToDecimal(form.balance, { allowNegative: true }),
-          walletKind,
-          liquidityKind: walletKind === "investment" ? "d_plus" : "immediate",
-          isReserved: walletKind === "reserve" || walletKind === "investment",
+          walletKind: "checking",
+          liquidityKind: "immediate",
+          isReserved: false,
+        });
+      } else if (drawer === "reserve_caixinha") {
+        await request("POST", {
+          action: "reserve_caixinha",
+          goalId: form.caixinhaId,
+          fromWalletId: form.fromWalletId,
+          amount: maskToDecimal(form.amount),
+          transferredOn: form.transferredOn || TODAY,
+          direction: form.reserveDirection || "deposit",
         });
       } else if (drawer === "loan") {
         await request("POST", {
@@ -732,6 +763,9 @@ export default function Dashboard({ user }) {
           installmentCount: Number(form.goalInstallments || 1),
           interestBps,
           desiredOn: form.goalDesiredOn || TODAY,
+          sourceGoalId: form.downPaymentSource === "caixinha" ? (form.sourceGoalId || null) : null,
+          createLinkedCaixinha: form.downPaymentSource === "create_caixinha",
+          parentWalletId: form.downPaymentSource === "create_caixinha" ? (form.parentWalletId || checkingWallets[0]?.id || null) : null,
         });
       } else if (drawer === "capital_goal") {
         await request("POST", {
@@ -742,6 +776,9 @@ export default function Dashboard({ user }) {
           downPayment: "0.00",
           installmentCount: 1,
           desiredOn: form.goalDesiredOn || TODAY,
+          parentWalletId: form.parentWalletId || checkingWallets[0]?.id || null,
+          caixinhaPurpose: form.caixinhaPurpose || "goal",
+          initialAmount: form.initialAmount && form.initialAmount !== "0,00" ? maskToDecimal(form.initialAmount) : "",
         });
       } else if (drawer === "budget") {
         await request("POST", {
@@ -1230,25 +1267,28 @@ export default function Dashboard({ user }) {
                   <div className="bank-box-header">
                     <strong>Suas contas</strong>
                     <span>Toque em uma conta para gerenciar</span>
-                    <strong className="bank-total">{display(summary.liveCash)}</strong>
+                    <strong className="bank-total">{display(checkingBalanceCents)}</strong>
                   </div>
-                  {wallets.length ? (
+                  {checkingWallets.length ? (
                     <div className="bank-rows">
-                      {wallets.slice(0, 4).map((w) => (
-                        <button
-                          type="button"
-                          className="account-row clickable-row"
-                          key={w.id}
-                          onClick={() => setSelectedWallet(w)}
-                        >
-                          <BankIcon name={w.name} size={36} />
-                          <span className="account-name">{w.name}</span>
-                          <span className="account-balance">
-                            <strong>{display(walletBalance(w))}</strong>
-                            <span>{(w.is_reserved || w.wallet_kind === "reserve" || w.wallet_kind === "investment") ? "Reserva / Caixinha" : "Uso diário"}</span>
-                          </span>
-                        </button>
-                      ))}
+                      {checkingWallets.slice(0, 4).map((w) => {
+                        const caixinhaSum = bankCaixinhasTotal(w.id);
+                        return (
+                          <button
+                            type="button"
+                            className="account-row clickable-row"
+                            key={w.id}
+                            onClick={() => setSelectedWallet(w)}
+                          >
+                            <BankIcon name={w.name} size={36} />
+                            <span className="account-name">{w.name}</span>
+                            <span className="account-balance">
+                              <strong>{display(walletBalance(w))}</strong>
+                              <span>{caixinhaSum > 0 ? `+ ${money(caixinhaSum)} em caixinhas` : "Uso diário"}</span>
+                            </span>
+                          </button>
+                        );
+                      })}
                     </div>
                   ) : (
                     <Empty>Nenhuma conta cadastrada. Use Novo → Conta bancária.</Empty>
@@ -1366,80 +1406,38 @@ export default function Dashboard({ user }) {
 
         {active === "budgets" && (
           <div className="workspace planning-bento">
-            <div className="card kpi-panel bento-hero">
+            <div className="card kpi-panel bento-hero bento-span-5">
               <span className="metric-label">Renda prevista em {monthOnly}</span>
               <strong className="kpi-value kpi-hero-value">{money(monthlyIncomeCents)}</strong>
               <span className="metric-sub">
-                {monthlyIncomeCents > 0 ? "Base para distribuição dos seus limites do mês" : "Cadastre suas receitas do mês para distribuir limites"}
+                {monthlyIncomeCents > 0 ? "Base para distribuir seus limites" : "Cadastre suas receitas do mês"}
               </span>
             </div>
-            <div className="card kpi-panel bento-kpi">
-              <span className="metric-label">Total orçado no mês</span>
+            <div className="card kpi-panel bento-kpi bento-span-3">
+              <span className="metric-label">Total orçado</span>
               <strong className="kpi-value">{money(allocatedBudgetCents)}</strong>
               <span className="metric-sub">
-                {monthlyIncomeCents > 0 ? `${Math.min(100, Math.round((allocatedBudgetCents / monthlyIncomeCents) * 100))}% da renda alocada` : "Limites por categoria"}
+                {monthlyIncomeCents > 0 ? `${Math.min(100, Math.round((allocatedBudgetCents / monthlyIncomeCents) * 100))}% da renda` : "Limites por categoria"}
               </span>
             </div>
-            <div className="card kpi-panel bento-kpi">
+            <div className="card kpi-panel bento-kpi bento-span-2">
               <span className="metric-label">Livre para orçar</span>
               <strong className="kpi-value">{money(remainingAllocableCents)}</strong>
-              <span className="metric-sub">Margem ainda sem teto definido</span>
+              <span className="metric-sub">Sem teto definido</span>
             </div>
+            <button
+              type="button"
+              className="card bento-action-card bento-span-2"
+              onClick={() => setActionMenu("budget_pick")}
+            >
+              <SlidersHorizontal size={20} aria-hidden="true" />
+              <strong>Definir limite</strong>
+              <span>Configurar teto</span>
+            </button>
 
-            <section className="card panel bento-allocation">
-              <div className="card-heading" style={{ marginBottom: 10 }}>
-                <div>
-                  <div className="eyebrow">DIVISÃO INTELIGENTE DA RENDA (50/30/20)</div>
-                  <h2 className="card-title">Limites sugeridos pela sua renda</h2>
-                </div>
-              </div>
-              {monthlyIncomeCents <= 0 ? (
-                <div className="alert">
-                  <AlertTriangle size={16} />
-                  <span>
-                    Cadastre seus valores a receber de {monthLong} primeiro para liberar a criação e sugestão automática de orçamentos.
-                  </span>
-                </div>
-              ) : (
-                <div className="allocation-summary" style={{ marginBottom: 0 }}>
-                  <div>
-                    <span>A receber no mês</span>
-                    <strong>{money(monthlyIncomeCents)}</strong>
-                  </div>
-                  <div>
-                    <span>Alocado nos orçamentos · Disponível: {money(remainingAllocableCents)}</span>
-                    <strong>{money(allocatedBudgetCents)}</strong>
-                  </div>
-                </div>
-              )}
-              <div className="toolbar-buttons" style={{ marginTop: 12 }}>
-                <button
-                  type="button"
-                  className="pill pill-primary pill-compact"
-                  disabled={busy}
-                  onClick={() => {
-                    if (monthlyIncomeCents <= 0) {
-                      setNotice(`Cadastre ao menos uma receita em ${monthLong} para sugerir os limites automaticamente.`);
-                      open("income", null, "bill");
-                      return;
-                    }
-                    suggestBudgets();
-                  }}
-                >
-                  <Sparkles size={15} aria-hidden="true" /> {busy ? "Calculando..." : "Sugerir limites"}
-                </button>
-                <button type="button" className="pill pill-outline-orange pill-compact" onClick={() => setActionMenu("budget_pick")}>
-                  <SlidersHorizontal size={15} aria-hidden="true" /> Configurar limite
-                </button>
-              </div>
-            </section>
-
-            <section className="card panel bento-budgets-list">
-              <div className="card-heading" style={{ marginBottom: 16 }}>
-                <div>
-                  <div className="eyebrow">ORÇAMENTOS DO MÊS</div>
-                  <h2 className="card-title">Limites de {monthLong}</h2>
-                </div>
+            <section className="card panel bento-full">
+              <div className="card-heading" style={{ marginBottom: 14 }}>
+                <h2 className="card-title">Limites de {monthLong}</h2>
                 <span className="small-flag">Mês calendário</span>
               </div>
               <BudgetList
@@ -1454,7 +1452,7 @@ export default function Dashboard({ user }) {
             </section>
 
             <section className="card panel bento-evolution">
-              <div className="card-heading" style={{ marginBottom: 16 }}>
+              <div className="card-heading" style={{ marginBottom: 14 }}>
                 <h2 className="card-title">Evolução mês a mês</h2>
               </div>
               <div className="table-scroll">
@@ -1499,60 +1497,54 @@ export default function Dashboard({ user }) {
 
         {active === "planning" && (
           <div className="workspace planning-bento">
-            <div className="card kpi-panel bento-hero">
-              <span className="metric-label">Guardado em Caixinhas e Reserva</span>
+            <div className="card kpi-panel bento-hero bento-span-4">
+              <span className="metric-label">Guardado em Caixinhas</span>
               <strong className="kpi-value kpi-hero-value">{summary.knownCash ? money(capitalBalanceCents) : "A calcular"}</strong>
               <span className="metric-sub">
-                Dinheiro separado nas suas contas de Reserva e Capital · Uso diário: {money(checkingBalanceCents)}
+                Reserva: {money(reserveCaixinhasCents)} · Objetivos: {money(goalCaixinhasCents)}
               </span>
             </div>
-            <div className="card kpi-panel bento-kpi">
-              <span className="metric-label">Ritmo para guardar</span>
-              <strong className="kpi-value">{money(capitalBudget?.limitCents || 0)}/mês</strong>
+            <div className="card kpi-panel bento-kpi bento-span-4">
+              <span className="metric-label">Guardado em {monthOnly}</span>
+              <strong className="kpi-value">{money(reservedThisMonthCents)}</strong>
               <span className="metric-sub">
-                {capitalBudget?.limitCents > 0 ? "Definido no seu orçamento mensal" : "Defina na aba Orçamentos"}
+                Livre no uso diário: {money(checkingBalanceCents)}
               </span>
             </div>
-            <div className="card kpi-panel bento-kpi">
-              <span className="metric-label">Objetivos e compras</span>
-              <strong className="kpi-value">{capitalGoals.length + purchaseGoals.length}</strong>
-              <span className="metric-sub">
-                {capitalGoals.length} caixinha(s) · {purchaseGoals.length} compra(s)
-              </span>
-            </div>
+            <button
+              type="button"
+              className="card bento-action-card bento-span-2"
+              onClick={() => openReserveCaixinha()}
+            >
+              <PiggyBank size={20} aria-hidden="true" />
+              <strong>Reservar valor</strong>
+              <span>Guardar ou resgatar</span>
+            </button>
+            <button
+              type="button"
+              className="card bento-action-card bento-action-accent bento-span-2"
+              onClick={() => open("capital_goal")}
+            >
+              <Plus size={20} aria-hidden="true" />
+              <strong>Nova caixinha</strong>
+              <span>Criar objetivo</span>
+            </button>
 
             <section className="card panel bento-caixinhas">
               <div className="card-heading" style={{ marginBottom: 14 }}>
-                <div>
-                  <div className="eyebrow">GUARDAR DINHEIRO · ESTILO CAIXINHAS</div>
-                  <h2 className="card-title">Meus objetivos</h2>
-                </div>
-                <div className="toolbar-buttons">
-                  {wallets.length >= 2 && (
-                    <button
-                      type="button"
-                      className="pill pill-secondary pill-compact"
-                      onClick={() => openCapitalTransfer("Guardar na Caixinha")}
-                    >
-                      <ArrowLeftRight size={14} aria-hidden="true" /> Guardar valor
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className="pill pill-outline-orange pill-compact"
-                    onClick={() => open("capital_goal")}
-                  >
-                    <Plus size={15} aria-hidden="true" /> Nova caixinha
-                  </button>
-                </div>
+                <h2 className="card-title">Caixinhas</h2>
+                <span className="small-flag">{capitalGoals.length} ativa(s)</span>
               </div>
               {capitalGoals.length ? (
                 <div className="budget-list">
                   {capitalGoals.map((g) => {
+                    const saved = caixinhaBalance(g);
+                    const bankWallet = checkingWallets.find((w) => w.id === g.parent_wallet_id) || wallets.find((w) => w.id === g.parent_wallet_id);
+                    const purposeLabel = g.caixinha_purpose === "reserve" ? "Reserva" : g.caixinha_purpose === "capital" ? "Capital" : "Objetivo";
                     const pace = computeCapitalPace({
                       targetCents: cents(g.target_cents),
                       targetDate: isoDate(g.desired_on) || END,
-                      currentCapitalCents: capitalBalanceCents,
+                      currentCapitalCents: saved,
                       monthlyContributionCents: capitalBudget?.limitCents || 0,
                       today: TODAY,
                     });
@@ -1562,25 +1554,19 @@ export default function Dashboard({ user }) {
                         className="budget-card clickable-card"
                         style={{ width: "100%" }}
                         key={g.id}
-                        onClick={() => setSelectedCaixinha({ raw: g, pace })}
+                        onClick={() => setSelectedCaixinha({ raw: g, pace, saved, bankName: bankWallet?.name || "Sem banco" })}
                       >
                         <div className="budget-row-top">
-                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            <span className="goal-bento-icon" style={{ width: 32, height: 32 }}>
-                              <Target size={16} />
-                            </span>
+                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                            <BankIcon name={bankWallet?.name || g.title} size={34} />
                             <div>
                               <strong>{g.title}</strong>
-                              <div className="hint">Meta para {fmtDate(g.desired_on)}</div>
+                              <div className="hint">{bankWallet ? bankWallet.name : "Sem banco"} · {purposeLabel}</div>
                             </div>
                           </div>
                           <div style={{ textAlign: "right" }}>
-                            <span className={`status ${pace.onPace ? "done" : "late"}`}>
-                              {pace.onPace ? "No ritmo" : "Atenção ao prazo"}
-                            </span>
-                            <div className="hint" style={{ marginTop: 4 }}>
-                              <strong>{money(pace.currentCapitalCents)}</strong> de {money(pace.targetCents)}
-                            </div>
+                            <strong style={{ color: "var(--kc-ink)", fontSize: 15 }}>{money(saved)}</strong>
+                            <div className="hint">Meta: {money(pace.targetCents)}</div>
                           </div>
                         </div>
                         <div className="budget-bar" role="progressbar" aria-valuenow={pace.progressPct} aria-valuemin={0} aria-valuemax={100}>
@@ -1588,11 +1574,11 @@ export default function Dashboard({ user }) {
                         </div>
                         <div className="budget-meta">
                           <span>
-                            {pace.onPace
-                              ? `Ritmo atual (${money(pace.monthlyContributionCents)}/mês) alcança o objetivo`
-                              : `Guarde ${money(pace.requiredMonthlyCents)}/mês para alcançar no prazo`}
+                            {pace.remainingCents === 0
+                              ? "Meta atingida!"
+                              : `Ritmo: ${money(pace.requiredMonthlyCents)}/mês até ${fmtDate(g.desired_on)}`}
                           </span>
-                          <span>{pace.progressPct}% · Toque para detalhes ›</span>
+                          <span>{pace.progressPct}% ›</span>
                         </div>
                       </button>
                     );
@@ -1600,17 +1586,14 @@ export default function Dashboard({ user }) {
                 </div>
               ) : (
                 <Empty>
-                  Crie uma caixinha (ex.: Reserva de emergência, Viagem, Carro novo) em &ldquo;+ Nova caixinha&rdquo; para guardar dinheiro e acompanhar seu progresso.
+                  Use &ldquo;Nova caixinha&rdquo; no topo para separar dinheiro por objetivo (ex.: Reserva de emergência, Entrada do carro).
                 </Empty>
               )}
             </section>
 
             <section className="card panel bento-purchases">
               <div className="card-heading" style={{ marginBottom: 14 }}>
-                <div>
-                  <div className="eyebrow">SIMULADOR DE VIABILIDADE</div>
-                  <h2 className="card-title">Compras planejadas</h2>
-                </div>
+                <h2 className="card-title">Compras planejadas</h2>
                 <button
                   type="button"
                   className="pill pill-outline-orange pill-compact"
@@ -1634,6 +1617,7 @@ export default function Dashboard({ user }) {
                           installmentCount: Number(g.installment_count || 1),
                           installmentCents: cents(g.installment_cents),
                           interestBps: Number(g.interest_bps || 0),
+                          sourceGoalId: g.source_goal_id || null,
                           desiredOn: isoDate(g.desired_on) || TODAY,
                         },
                         { today: TODAY }
@@ -1660,12 +1644,17 @@ export default function Dashboard({ user }) {
                           <span>{money(cents(g.target_cents))}</span>
                           <small>{g.installment_count > 1 ? `${g.installment_count}x de ${money(cents(g.installment_cents))}` : "À vista"}</small>
                         </div>
+                        {sim.twoStepVerdict?.linkedCaixinhaTitle && (
+                          <div className="hint" style={{ fontSize: 11 }}>
+                            Entrada via {sim.twoStepVerdict.linkedCaixinhaTitle}
+                          </div>
+                        )}
                       </button>
                     ))}
                 </div>
               ) : (
                 <Empty>
-                  Nenhuma compra planejada salva. Toque em &ldquo;+ Simular compra&rdquo; para descobrir o melhor momento para comprar sem apertar seu mês.
+                  Toque em &ldquo;+ Simular compra&rdquo; para validar entrada e parcelas sem comprometer suas reservas.
                 </Empty>
               )}
             </section>
@@ -1696,47 +1685,35 @@ export default function Dashboard({ user }) {
 
             <section className="card panel bento-wallets">
               <div className="card-heading" style={{ marginBottom: 14 }}>
-                <div>
-                  <div className="eyebrow">ONDE ESTÁ SEU DINHEIRO</div>
-                  <h2 className="card-title">Contas bancárias e carteiras</h2>
-                </div>
+                <h2 className="card-title">Contas bancárias</h2>
                 <button type="button" className="pill pill-secondary pill-compact" onClick={() => setManageWalletsOpen(true)}>
                   Gerenciar contas
                 </button>
               </div>
               <div className="wallet-list">
-                {wallets.length ? (
-                  wallets
-                    .filter((w) => {
-                      const wf = screenFilters.patrimony.walletKind || "all";
-                      const isCap = w.is_reserved || w.wallet_kind === "reserve" || w.wallet_kind === "investment";
-                      if (wf === "checking") return !isCap;
-                      if (wf === "capital") return isCap;
-                      return true;
-                    })
-                    .map((w) => {
-                      const isCap = w.is_reserved || w.wallet_kind === "reserve" || w.wallet_kind === "investment";
-                      return (
-                        <button
-                          type="button"
-                          className="account-panel-row clickable-row"
-                          key={w.id}
-                          onClick={() => setSelectedWallet(w)}
-                        >
-                          <BankIcon name={w.name} size={40} />
-                          <div className="account-info">
-                            <h3>
-                              {w.name}{" "}
-                              <span className="small-flag" style={{ marginLeft: 6, fontSize: 10 }}>
-                                {isCap ? "Reserva / Caixinha" : "Uso diário"}
-                              </span>
-                            </h3>
-                            <p>Toque para transferir, lançar ou arquivar · Abertura em {w.opening_at ? fmtDate(w.opening_at) : "data não informada"}</p>
-                          </div>
-                          <strong>{display(walletBalance(w))} ›</strong>
-                        </button>
-                      );
-                    })
+                {checkingWallets.length ? (
+                  checkingWallets.map((w) => {
+                    const caixinhaSum = bankCaixinhasTotal(w.id);
+                    return (
+                      <button
+                        type="button"
+                        className="account-panel-row clickable-row"
+                        key={w.id}
+                        onClick={() => setSelectedWallet(w)}
+                      >
+                        <BankIcon name={w.name} size={40} />
+                        <div className="account-info">
+                          <h3>{w.name}</h3>
+                          <p>
+                            {caixinhaSum > 0
+                              ? `Livre: ${display(walletBalance(w))} · Em caixinhas: ${money(caixinhaSum)}`
+                              : `Abertura em ${w.opening_at ? fmtDate(w.opening_at) : "data não informada"}`}
+                          </p>
+                        </div>
+                        <strong>{display(walletBalance(w))} ›</strong>
+                      </button>
+                    );
+                  })
                 ) : (
                   <Empty>Nenhuma conta cadastrada. Use Novo → Conta bancária.</Empty>
                 )}
@@ -2391,24 +2368,7 @@ export default function Dashboard({ user }) {
 
               {active === "patrimony" && (
                 <div className="filter-checks-group">
-                  <span className="field-caption">Tipo de conta</span>
-                  <div className="filter-pills">
-                    {[
-                      ["all", "Todas"],
-                      ["checking", "Uso diário"],
-                      ["capital", "Reserva / Caixinha"],
-                    ].map(([k, l]) => (
-                      <button
-                        key={k}
-                        type="button"
-                        className={(screenFilters.patrimony.walletKind || "all") === k ? "active" : ""}
-                        onClick={() => setScreenFilter("patrimony", { walletKind: k })}
-                      >
-                        {l}
-                      </button>
-                    ))}
-                  </div>
-                  <div style={{ marginTop: 6, display: "grid", gap: 6 }}>
+                  <div style={{ display: "grid", gap: 6 }}>
                     <span className="field-caption">Composição do endividamento</span>
                     <div className="filter-pills">
                       {[
@@ -2459,7 +2419,7 @@ export default function Dashboard({ user }) {
                     key={n.id}
                     onClick={() => {
                       setNotificationsOpen(false);
-                      if (n.action === "transfer_capital") openCapitalTransfer();
+                      if (n.action === "transfer_capital" || n.action === "reserve_caixinha") openReserveCaixinha();
                       else if (n.targetTab) setTab(n.targetTab);
                     }}
                   >
@@ -2593,11 +2553,13 @@ export default function Dashboard({ user }) {
                   <div className="repeat-preview" style={{ borderTop: 0, paddingTop: 0 }}>
                     <span>
                       <strong>1. Entrada ({money(selectedGoal.sim.twoStepVerdict.downPaymentCents)}):</strong>{" "}
-                      {selectedGoal.sim.twoStepVerdict.hasDownPaymentNow
-                        ? "Disponível hoje"
-                        : selectedGoal.sim.twoStepVerdict.downPaymentReadyDate
-                          ? `Pronta em ${fmtDate(selectedGoal.sim.twoStepVerdict.downPaymentReadyDate)}`
-                          : "Insuficiente no horizonte"}
+                      {selectedGoal.sim.twoStepVerdict.coveredByCaixinhaCents > 0
+                        ? `${money(selectedGoal.sim.twoStepVerdict.coveredByCaixinhaCents)} na caixinha "${selectedGoal.sim.twoStepVerdict.linkedCaixinhaTitle}" · ${selectedGoal.sim.twoStepVerdict.remainingDownPaymentCents > 0 ? `faltam ${money(selectedGoal.sim.twoStepVerdict.remainingDownPaymentCents)}` : "100% coberta!"}`
+                        : selectedGoal.sim.twoStepVerdict.hasDownPaymentNow
+                          ? "Disponível hoje"
+                          : selectedGoal.sim.twoStepVerdict.downPaymentReadyDate
+                            ? `Pronta em ${fmtDate(selectedGoal.sim.twoStepVerdict.downPaymentReadyDate)}`
+                            : "Insuficiente no horizonte"}
                     </span>
                     <span>
                       <strong>2. Parcela ({money(selectedGoal.sim.twoStepVerdict.perInstallmentCents)}/mês):</strong>{" "}
@@ -2658,7 +2620,7 @@ export default function Dashboard({ user }) {
           <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="caixinhaDetailTitle">
             <div className="dialog-head">
               <div>
-                <div className="eyebrow">CAIXINHA · GUARDAR DINHEIRO</div>
+                <div className="eyebrow">{selectedCaixinha.bankName || "CAIXINHA"}</div>
                 <h2 id="caixinhaDetailTitle">{selectedCaixinha.raw.title}</h2>
               </div>
               <button type="button" className="dialog-close" onClick={() => setSelectedCaixinha(null)} aria-label="Fechar">
@@ -2666,16 +2628,16 @@ export default function Dashboard({ user }) {
               </button>
             </div>
             <div className="detail-layout" style={{ padding: 0 }}>
-              <div className={`goal-verdict ${selectedCaixinha.pace.onPace ? "ok" : "warn"}`}>
-                <Target size={18} />
+              <div className={`goal-verdict ${selectedCaixinha.pace.remainingCents === 0 || selectedCaixinha.pace.onPace ? "ok" : "warn"}`}>
+                <PiggyBank size={18} />
                 <div>
                   <strong>
-                    {selectedCaixinha.pace.onPace
-                      ? "Você está no ritmo certo para atingir esta meta!"
-                      : `Guarde ${money(selectedCaixinha.pace.requiredMonthlyCents)}/mês para alcançar até ${fmtDate(selectedCaixinha.raw.desired_on)}`}
+                    {selectedCaixinha.pace.remainingCents === 0
+                      ? "Meta alcançada!"
+                      : `Guarde ${money(selectedCaixinha.pace.requiredMonthlyCents)}/mês para atingir até ${fmtDate(selectedCaixinha.raw.desired_on)}`}
                   </strong>
                   <small>
-                    Acumulado em Reserva/Caixinhas: {money(selectedCaixinha.pace.currentCapitalCents)} ({selectedCaixinha.pace.progressPct}%) de{" "}
+                    Guardado nesta caixinha: {money(selectedCaixinha.pace.currentCapitalCents)} ({selectedCaixinha.pace.progressPct}%) de{" "}
                     {money(selectedCaixinha.pace.targetCents)}. Faltam {money(selectedCaixinha.pace.remainingCents)}.
                   </small>
                 </div>
@@ -2688,12 +2650,12 @@ export default function Dashboard({ user }) {
                   type="button"
                   className="dark-button"
                   onClick={() => {
-                    const label = `Guardar em ${selectedCaixinha.raw.title}`;
+                    const target = selectedCaixinha.raw;
                     setSelectedCaixinha(null);
-                    openCapitalTransfer(label);
+                    openReserveCaixinha(target);
                   }}
                 >
-                  <ArrowLeftRight size={16} /> Guardar dinheiro agora (Transferir)
+                  <PiggyBank size={16} /> Reservar ou resgatar valor
                 </button>
                 <button
                   type="button"
@@ -2768,12 +2730,12 @@ export default function Dashboard({ user }) {
                   </span>
                   <span>›</span>
                 </button>
-                {wallets.length >= 2 && (
+                {checkingWallets.length >= 2 && (
                   <button
                     type="button"
                     onClick={() => {
                       const w = selectedWallet;
-                      const other = wallets.find((x) => x.id !== w.id) || wallets[0];
+                      const other = checkingWallets.find((x) => x.id !== w.id) || checkingWallets[0];
                       setSelectedWallet(null);
                       setForm({
                         ...defaultForm("expense"),
@@ -2790,8 +2752,37 @@ export default function Dashboard({ user }) {
                     }}
                   >
                     <span>
-                      Transferir ou guardar dinheiro
-                      <small>Mover saldo entre {selectedWallet.name} e outra conta ou caixinha</small>
+                      Transferir para outro banco
+                      <small>Mover saldo de uso diário entre suas contas bancárias</small>
+                    </span>
+                    <span>›</span>
+                  </button>
+                )}
+                {capitalGoals.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const w = selectedWallet;
+                      const match = capitalGoals.find((g) => g.parent_wallet_id === w.id) || capitalGoals[0];
+                      setSelectedWallet(null);
+                      setForm({
+                        ...defaultForm("expense"),
+                        caixinhaId: match?.id || "",
+                        fromWalletId: w.id,
+                        reserveBankFilter: "",
+                        reserveDirection: "deposit",
+                        transferredOn: TODAY,
+                        amount: "",
+                        idempotencyKey: crypto.randomUUID(),
+                      });
+                      setSelectedTitle(null);
+                      setError("");
+                      setDrawer("reserve_caixinha");
+                    }}
+                  >
+                    <span>
+                      Reservar em uma Caixinha
+                      <small>Separar dinheiro desta conta para seus objetivos ou reserva</small>
                     </span>
                     <span>›</span>
                   </button>
@@ -2850,7 +2841,9 @@ export default function Dashboard({ user }) {
           setForm={setForm}
           selectedTitleObj={selectedTitleObj}
           settlements={data?.settlements || []}
-          wallets={wallets}
+          walletBalances={walletBalanceMap}
+          caixinhas={capitalGoals}
+          wallets={checkingWallets.length ? checkingWallets : wallets}
           categories={data?.categories || []}
           budgets={budgetItems}
           selectedMonth={selectedMonth}
@@ -2889,7 +2882,7 @@ export default function Dashboard({ user }) {
         card={invoiceModal ? creditCards.find((c) => c.id === invoiceModal.cardId) || null : null}
         initialMonth={invoiceModal?.month || TODAY.slice(0, 7)}
         titles={expanded?.titles || []}
-        wallets={wallets}
+        wallets={checkingWallets.length ? checkingWallets : wallets}
         today={TODAY}
         busy={busy}
         onClose={() => setInvoiceModal(null)}
@@ -2915,7 +2908,7 @@ export default function Dashboard({ user }) {
 
       <ManageWalletsModal
         open={manageWalletsOpen}
-        allWallets={allWallets}
+        allWallets={allWallets.filter((w) => !w.parent_wallet_id && !w.caixinha_purpose)}
         walletBalance={walletBalance}
         busy={busy}
         onClose={() => setManageWalletsOpen(false)}
@@ -2933,80 +2926,6 @@ export default function Dashboard({ user }) {
           if (typeof window !== "undefined") window.localStorage.setItem(tourKey, "done");
         }}
       />
-
-      {budgetSuggestionResult && (
-        <div
-          className="action-overlay open"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setBudgetSuggestionResult(null);
-          }}
-        >
-          <div className="dialog dialog-wide" role="dialog" aria-modal="true" aria-labelledby="suggestResultTitle">
-            <div className="dialog-head">
-              <div>
-                <div className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  <Sparkles size={13} aria-hidden="true" /> DIVISÃO INTELIGENTE APLICADA
-                </div>
-                <h2 id="suggestResultTitle">Limites sugeridos para {monthLong}</h2>
-              </div>
-              <button type="button" className="dialog-close" onClick={() => setBudgetSuggestionResult(null)} aria-label="Fechar">
-                <X size={17} />
-              </button>
-            </div>
-            <div style={{ display: "grid", gap: 14 }}>
-              <p className="hint" style={{ margin: 0 }}>
-                Com base na sua renda de <strong>{money(budgetSuggestionResult.incomeCents)}</strong> neste mês, distribuímos seus limites assim:
-              </p>
-              <div className="milestones-grid">
-                <article className="milestone-box">
-                  <span>Essenciais (50%)</span>
-                  <strong>{money(Math.round(budgetSuggestionResult.incomeCents * 0.5))}</strong>
-                  <small>Moradia, alimentação básica, transporte e saúde.</small>
-                </article>
-                <article className="milestone-box">
-                  <span>Estilo de vida (30%)</span>
-                  <strong>{money(Math.round(budgetSuggestionResult.incomeCents * 0.3))}</strong>
-                  <small>Lazer, assinaturas, educação e extras.</small>
-                </article>
-                <article className="milestone-box">
-                  <span>Reserva e Capital (20%)</span>
-                  <strong>{money(Math.round(budgetSuggestionResult.incomeCents * 0.2))}</strong>
-                  <small>Meta de reserva e formação do seu capital.</small>
-                </article>
-              </div>
-              {budgetSuggestionResult.suggestions?.some((s) => s.controlsLimit) && (
-                <div className="budget-list" style={{ maxHeight: 220, overflowY: "auto" }}>
-                  {budgetSuggestionResult.suggestions
-                    .filter((s) => s.controlsLimit)
-                    .map((s) => (
-                      <div className="budget-card" key={s.categoryName} style={{ padding: "10px 14px" }}>
-                        <div className="budget-row-top">
-                          <strong>{s.categoryName}</strong>
-                          <strong>{money(s.limitCents)}</strong>
-                        </div>
-                      </div>
-                    ))}
-                </div>
-              )}
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-                <button
-                  type="button"
-                  className="pill pill-outline-orange pill-compact"
-                  onClick={() => {
-                    setBudgetSuggestionResult(null);
-                    setActionMenu("budget_pick");
-                  }}
-                >
-                  <SlidersHorizontal size={15} /> Ajustar limites
-                </button>
-                <button type="button" className="pill pill-primary pill-compact" onClick={() => setBudgetSuggestionResult(null)}>
-                  Entendi
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

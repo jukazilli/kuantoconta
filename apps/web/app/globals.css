@@ -2509,6 +2509,7 @@ input:not([type=checkbox]):not([type=radio]), select, textarea { font-size: 16px
 @media (min-width: 700px) {
   .planning-bento .bento-hero { grid-column: span 12; }
   .planning-bento .bento-kpi { grid-column: span 6; }
+  .planning-bento .bento-action-card { grid-column: span 6; }
   .planning-bento .bento-full,
   .planning-bento .bento-caixinhas,
   .planning-bento .bento-purchases,
@@ -2520,10 +2521,46 @@ input:not([type=checkbox]):not([type=radio]), select, textarea { font-size: 16px
 @media (min-width: 1025px) {
   .planning-bento .bento-hero { grid-column: span 6; }
   .planning-bento .bento-kpi { grid-column: span 3; }
+  .planning-bento .bento-span-2 { grid-column: span 2; }
+  .planning-bento .bento-span-3 { grid-column: span 3; }
+  .planning-bento .bento-span-4 { grid-column: span 4; }
+  .planning-bento .bento-span-5 { grid-column: span 5; }
   .planning-bento .bento-caixinhas { grid-column: span 6; }
   .planning-bento .bento-purchases { grid-column: span 6; }
   .planning-bento .bento-allocation { grid-column: span 5; }
   .planning-bento .bento-budgets-list { grid-column: span 7; }
   .planning-bento .bento-evolution { grid-column: span 12; }
   .planning-bento .allocation-summary { grid-template-columns: 1fr; }
+}
+
+.bento-action-card {
+  order: 3;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  text-align: center;
+  gap: 4px;
+  padding: 16px 12px;
+  cursor: pointer;
+  color: var(--kc-ink);
+  border: 1px solid var(--kc-line);
+  background: #fff;
+  transition: transform .15s ease, border-color .15s ease, background-color .15s ease;
+}
+.bento-action-card svg { color: var(--kc-orange); }
+.bento-action-card strong { font-size: 13px; font-weight: 600; }
+.bento-action-card span { font-size: 11px; color: var(--kc-muted); }
+.bento-action-card.bento-action-accent {
+  background: linear-gradient(135deg, #fff4ed 0%, #ffffff 90%);
+  border-color: #fed7aa;
+}
+.bento-action-card:active { transform: scale(0.98); border-color: var(--kc-orange); }
+@media (hover: hover) and (pointer: fine) {
+  .bento-action-card:hover { transform: translateY(-2px); border-color: var(--kc-orange-light); background: #fff9f5; }
+}
+
+.direction-cards.three {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
 }

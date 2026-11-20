@@ -12,7 +12,7 @@ export function buildFinancialHealthPlan(rawData, options = {}) {
   const allocation = planAllocationPriorities(diag);
 
   const goals = (rawData?.goals || [])
-    .filter((g) => g.status !== "cancelled")
+    .filter((g) => g.status !== "cancelled" && g.category !== "capital_goal")
     .map((g) =>
       simulateGoalPurchase(
         rawData,
@@ -25,6 +25,7 @@ export function buildFinancialHealthPlan(rawData, options = {}) {
           installmentCents: g.installment_cents,
           interestBps: g.interest_bps,
           desiredOn: g.desired_on,
+          sourceGoalId: g.source_goal_id || null,
         },
         options
       )

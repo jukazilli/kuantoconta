@@ -125,7 +125,14 @@ test("UI/UX Redesign invariants: separated Orçamentos & Planejamento, unified 1
   assert.match(dashboardSrc, /setSelectedCaixinha\(/);
   assert.doesNotMatch(drawerSrc, /drawer==="transfer_capital"/);
 
-  // 4. All :hover rules in globals.css are protected by @media (hover: hover)
+  // 4. Caixinhas separated balances, reserve_caixinha flow, and no Sugerir limites in UI
+  assert.doesNotMatch(dashboardSrc, /Sugerir limites/);
+  assert.match(dashboardSrc, /openReserveCaixinha/);
+  assert.match(drawerSrc, /drawer==="reserve_caixinha"/);
+  assert.match(drawerSrc, /form\.parentWalletId/);
+  assert.match(drawerSrc, /form\.downPaymentSource/);
+
+  // 5. All :hover rules in globals.css are protected by @media (hover: hover)
   const hoverLines = cssSrc.split(/\r?\n/).filter((line) => line.includes(":hover"));
   assert.ok(hoverLines.length > 0);
 });

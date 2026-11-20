@@ -121,3 +121,52 @@ test("FH-11 & FH-18: impossible goal returns null firstFeasibleDate and never mu
   assert.equal(rawData.titles.length, 0);
   assert.equal(rawData.settlements.length, 0);
 });
+
+test("Caixinhas + Planejamento: linked goal caixinha abates down payment without touching Emergency Reserve", () => {
+  // User has R$ 2.000 in checking, R$ 10.000 in Emergency Reserve Caixinha, and R$ 15.000 in Carro Caixinha.
+  // Simulates a R$ 55.000 car with R$ 25.000 down payment + 30x R$ 1.000 linked ONLY to Carro Caixinha.
+  // Effective down payment needed from checking/future cash is R$ 10.000 (25k - 15k), NEVER touching the R$ 10k Emergency Reserve!
+  const rawData = {
+    wallets: [
+      { id: "w-chk", name: "Nubank", opening_balance_cents: 200000, opening_at: "2026-11-01T00:00:00Z", wallet_kind: "checking" },
+      { id: "w-res", name: "Reserva", opening_balance_cents: 1000000, opening_at: "2026-11-01T00:00:00Z", wallet_kind: "reserve", is_reserved: true, parent_wallet_id: "w-chk", caixinha_purpose: "reserve" },
+      { id: "w-car", name: "Caixinha Carro", opening_balance_cents: 1500000, opening_at: "2026-11-01T00:00:00Z", wallet_kind: "investment", is_reserved: false, parent_wallet_id: "w-chk", caixinha_purpose: "goal" },
+    ],
+    goals: [
+      { id: "g-res", title: "Reserva de emergência", category: "capital_goal", wallet_id: "w-res", parent_wallet_id: "w-chk", caixinha_purpose: "reserve", target_cents: 1200000, status: "simulated" },
+      { id: "g-car", title: "Entrada do carro", category: "capital_goal", wallet_id: "w-car", parent_wallet_id: "w-chk", caixinha_purpose: "goal", target_cents: 2500000, status: "simulated" },
+    ],
+    recurringRules: [
+      { id: "r1", wallet_id: "w-chk", direction: "income", description: "Salário", category: "Salário", amount_cents: 600000, starts_on: "2026-11-05" },
+      { id: "r2", wallet_id: "w-chk", direction: "expense", description: "Contas", category: "Moradia", amount_cents: 300000, starts_on: "2026-11-10" },
+    ],
+    titles: [],
+    settlements: [],
+    assets: [],
+    liabilities: [],
+  };
+
+  // Trying today (2026-11-19): only R$ 2.000 free in checking + R$ 15.000 in Carro Caixinha = R$ 17.000 < R$ 25.000.
+  // Because Emergency Reserve (R$ 10.000) is strictly protected, it must NOT be feasible today!
+  const simToday = simulateGoalPurchase(
+    rawData,
+    {
+      title: "Carro",
+      targetCents: 5500000,
+      downPaymentCents: 2500000,
+      installmentCount: 30,
+      installmentCents: 100000,
+      sourceGoalId: "g-car",
+      desiredOn: "2026-11-19",
+    },
+    { today: "2026-11-19" }
+  );
+
+  assert.equal(simToday.twoStepVerdict.coveredByCaixinhaCents, 1500000);
+  assert.equal(simToday.twoStepVerdict.remainingDownPaymentCents, 1000000);
+  assert.equal(simToday.twoStepVerdict.hasDownPaymentNow, false);
+  assert.equal(simToday.isFeasible, false);
+
+  // With monthly surplus of R$ 3.000/mo, in ~4 months (March 2027) remaining R$ 10k is covered and 30x R$ 1k fits!
+  assert.ok(simToday.firstFeasibleDate && simToday.firstFeasibleDate <= "2027-04-05");
+});

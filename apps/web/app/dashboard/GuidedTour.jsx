@@ -25,7 +25,7 @@ const TOUR_STEPS = [
     target: '[data-tour="dock"]',
     eyebrow: "PASSO 3 DE 5 · ~15 SEG",
     title: "Orçamentos separados de Planejamento",
-    body: "Na aba Orçamentos você distribui sua renda com a sugestão inteligente (50/30/20) e acompanha quanto ainda pode gastar em cada categoria no mês.",
+    body: "Na aba Orçamentos você define seus limites mensais por categoria e acompanha quanto ainda pode gastar no mês.",
   },
   {
     id: "planning",

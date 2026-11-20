@@ -32,9 +32,11 @@ function addMonthsIso(iso, delta) {
   return dt.toISOString().slice(0, 10);
 }
 
-function buildSchedule(goal, startDate) {
+function buildSchedule(goal, startDate, coveredByCaixinhaCents = 0) {
   const target = Math.max(0, cents(goal.targetCents));
   const down = Math.min(target, Math.max(0, cents(goal.downPaymentCents)));
+  const covered = Math.min(down > 0 ? down : target, Math.max(0, cents(coveredByCaixinhaCents)));
+  const netDown = Math.max(0, down - covered);
   const count = Math.max(1, Number(goal.installmentCount || 1));
   const remaining = Math.max(0, target - down);
   const explicitInst = cents(goal.installmentCents);
@@ -50,17 +52,19 @@ function buildSchedule(goal, startDate) {
         : 0;
 
   const outflows = [];
-  if (down > 0) {
-    outflows.push({ date: startDate, amountCents: down, kind: "down_payment" });
+  if (netDown > 0) {
+    outflows.push({ date: startDate, amountCents: netDown, kind: "down_payment" });
   }
 
   if (remaining > 0 || (down === 0 && perInst > 0)) {
     for (let i = 0; i < count; i++) {
       const date = down === 0 && i === 0 ? startDate : addMonthsIso(startDate, down > 0 ? i + 1 : i);
-      outflows.push({ date, amountCents: perInst, kind: "installment", index: i + 1 });
+      const amt = i === 0 && down === 0 ? Math.max(0, perInst - covered) : perInst;
+      if (amt > 0) outflows.push({ date, amountCents: amt, kind: "installment", index: i + 1 });
     }
   } else if (down === 0 && target > 0) {
-    outflows.push({ date: startDate, amountCents: target, kind: "single" });
+    const netSingle = Math.max(0, target - covered);
+    if (netSingle > 0) outflows.push({ date: startDate, amountCents: netSingle, kind: "single" });
   }
 
   outflows.sort((a, b) => a.date.localeCompare(b.date));
@@ -184,12 +188,29 @@ export function simulateGoalPurchase(rawData, goal, options = {}) {
     return { date: d.date, balance: d.balance - cumPlans };
   });
 
-  const useCapital = Boolean(goal.useCapitalInDownPayment);
-  const protectedFloorCents =
-    policy.minimumCashFloorCents + (useCapital ? 0 : (reconciled.walletReserveCents ?? 0));
+  const sourceGoalId = goal.sourceGoalId || goal.source_goal_id || null;
+  const linkedGoal = sourceGoalId
+    ? (rawData?.goals || []).find((g) => String(g.id) === String(sourceGoalId) && g.status !== "cancelled")
+    : null;
+  const linkedWalletEntry = linkedGoal?.wallet_id
+    ? (reconciled.walletBreakdown || []).find((w) => String(w.id) === String(linkedGoal.wallet_id))
+    : null;
+  const linkedCaixinhaBalanceCents = Math.max(0, linkedWalletEntry?.balanceCents ?? 0);
 
-  const downCents = Math.min(Math.max(0, cents(goal.targetCents)), Math.max(0, cents(goal.downPaymentCents)));
-  const financedCents = Math.max(0, cents(goal.targetCents) - downCents);
+  const useCapital = Boolean(goal.useCapitalInDownPayment) && !linkedGoal;
+  const allProtectedCaixinhasCents =
+    (reconciled.walletReserveCents ?? 0) + (reconciled.walletInvestmentCents ?? 0);
+  const protectedFloorCents =
+    policy.minimumCashFloorCents + (useCapital ? 0 : allProtectedCaixinhasCents);
+
+  const targetCents = Math.max(0, cents(goal.targetCents));
+  const downCents = Math.min(targetCents, Math.max(0, cents(goal.downPaymentCents)));
+  const effectiveDownTarget = downCents > 0 ? downCents : installmentCount === 1 ? targetCents : 0;
+  const coveredByCaixinhaCents = linkedGoal
+    ? Math.min(effectiveDownTarget, linkedCaixinhaBalanceCents)
+    : 0;
+  const remainingDownPaymentCents = Math.max(0, effectiveDownTarget - coveredByCaixinhaCents);
+  const financedCents = Math.max(0, targetCents - downCents);
   const explicitInstCents = cents(goal.installmentCents);
   const perInstallmentCents =
     explicitInstCents > 0
@@ -237,28 +258,29 @@ export function simulateGoalPurchase(rawData, goal, options = {}) {
     monthlySurpluses.reduce((s, v) => s + v, 0) / monthlySurpluses.length
   );
 
-  const availableForDownCents = Math.max(
+  const operatingForDownCents = Math.max(
     0,
     (useCapital ? (reconciled.totalWalletCashCents ?? 0) : (reconciled.operatingCashCents ?? 0)) - policy.minimumCashFloorCents
   );
-  const hasDownPaymentNow = downCents === 0 || availableForDownCents >= downCents;
+  const availableForDownCents = coveredByCaixinhaCents + operatingForDownCents;
+  const hasDownPaymentNow = effectiveDownTarget === 0 || availableForDownCents >= effectiveDownTarget;
   let downPaymentReadyDate = hasDownPaymentNow ? today : null;
   if (!downPaymentReadyDate) {
-    const foundDay = daily.find((d) => d.balance - protectedFloorCents >= downCents);
+    const foundDay = daily.find((d) => d.balance - protectedFloorCents >= remainingDownPaymentCents);
     downPaymentReadyDate = foundDay ? foundDay.date : null;
   }
   const installmentFitsMonthly = perInstallmentCents === 0 || avgMonthlyFreeSurplusCents >= perInstallmentCents;
   const monthlyGapCents = Math.max(0, perInstallmentCents - Math.max(0, avgMonthlyFreeSurplusCents));
 
   const desiredDate = goal.desiredOn && goal.desiredOn >= today ? goal.desiredOn : today;
-  const desiredSchedule = buildSchedule(goal, desiredDate);
+  const desiredSchedule = buildSchedule(goal, desiredDate, coveredByCaixinhaCents);
   const desiredEval = evaluateCandidate(daily, protectedFloorCents, desiredSchedule, simulationEnd);
 
   // Search for first feasible date up to baseHorizonEnd
   let firstFeasibleDate = desiredEval.feasible ? desiredDate : null;
   if (!firstFeasibleDate) {
     for (let d = today; d <= baseHorizonEnd; d = dayAdd(d, 1)) {
-      const sched = buildSchedule(goal, d);
+      const sched = buildSchedule(goal, d, coveredByCaixinhaCents);
       const ev = evaluateCandidate(daily, protectedFloorCents, sched, simulationEnd);
       if (ev.feasible) {
         firstFeasibleDate = d;
@@ -295,7 +317,8 @@ export function simulateGoalPurchase(rawData, goal, options = {}) {
   // Comparable scenarios (à vista, entrada maior, adiado)
   const cashSchedule = buildSchedule(
     { ...goal, downPaymentCents: goal.targetCents, installmentCount: 1, installmentCents: 0 },
-    desiredDate
+    desiredDate,
+    linkedGoal ? Math.min(targetCents, linkedCaixinhaBalanceCents) : 0
   );
   const cashEval = evaluateCandidate(daily, protectedFloorCents, cashSchedule, simulationEnd);
 
@@ -306,7 +329,8 @@ export function simulateGoalPurchase(rawData, goal, options = {}) {
       downPaymentCents: halfDown,
       installmentCents: Math.ceil((cents(goal.targetCents) - halfDown) / installmentCount),
     },
-    desiredDate
+    desiredDate,
+    linkedGoal ? Math.min(halfDown, linkedCaixinhaBalanceCents) : 0
   );
   const higherDownEval = evaluateCandidate(
     daily,
@@ -363,6 +387,10 @@ export function simulateGoalPurchase(rawData, goal, options = {}) {
     totalCostCents,
     twoStepVerdict: {
       downPaymentCents: downCents,
+      coveredByCaixinhaCents,
+      remainingDownPaymentCents,
+      linkedCaixinhaTitle: linkedGoal?.title || null,
+      linkedCaixinhaBalanceCents,
       availableForDownCents,
       hasDownPaymentNow,
       downPaymentReadyDate,

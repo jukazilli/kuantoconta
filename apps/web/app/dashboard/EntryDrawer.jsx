@@ -1,6 +1,6 @@
 "use client";
 import {useMemo,useState} from "react";
-import {X,Plus,CalendarDays,ReceiptText,CircleDollarSign,Repeat2,CheckCircle2,Clock3,ChevronDown,ChevronRight,Sparkles,Check,Compass,ArrowDownCircle,ArrowUpCircle,HandCoins,Search,UserPlus,ArrowLeftRight} from "lucide-react";
+import {X,Plus,CalendarDays,ReceiptText,CircleDollarSign,Repeat2,CheckCircle2,Clock3,ChevronDown,ChevronRight,Check,Compass,ArrowDownCircle,ArrowUpCircle,HandCoins,Search,UserPlus,ArrowLeftRight,PiggyBank} from "lucide-react";
 import MoneyInput from "./MoneyInput";
 import BankIcon from "./BankIcon";
 import {BANK_BRANDS} from "../../lib/bank-brands";
@@ -21,6 +21,8 @@ export default function EntryDrawer({
   selectedTitleObj,
   settlements=[],
   wallets=[],
+  walletBalances={},
+  caixinhas=[],
   categories=[],
   budgets=[],
   selectedMonth="",
@@ -116,14 +118,21 @@ export default function EntryDrawer({
   drawer==="credit_card"?"Cartão de crédito":
   drawer==="loan"?"Empréstimo / financiamento":
   drawer==="goal_sim"?"Planejamento de compra":
-  drawer==="capital_goal"?"Nova caixinha (Guardar dinheiro)":
+  drawer==="capital_goal"?"Nova caixinha":
+  drawer==="reserve_caixinha"?"Reservar na caixinha":
   drawer==="settle"?"Confirmar pagamento":
   drawer==="detail"?"Detalhes do lançamento":
   drawer==="budget"?"Orçamento mensal":
   "Bem ou patrimônio";
 
  const canSubmit=drawer!=="detail";
- const checkingWallets=wallets.filter(w=>!w.is_reserved&&w.wallet_kind!=="reserve"&&w.wallet_kind!=="investment");
+ const isCaixinhaW=w=>Boolean(w?.parent_wallet_id)||Boolean(w?.caixinha_purpose)||Boolean(w?.is_reserved)||w?.wallet_kind==="reserve"||w?.wallet_kind==="investment";
+ const checkingWallets=wallets.filter(w=>!isCaixinhaW(w));
+ const caixinhaBalanceOf=g=>{
+  if(!g)return 0;
+  if(g.wallet_id&&walletBalances[g.wallet_id]!==undefined&&walletBalances[g.wallet_id]!==null)return walletBalances[g.wallet_id];
+  return 0;
+ };
 
  const goalPreview=useMemo(()=>{
   if(drawer!=="goal_sim"||!rawData)return null;
@@ -132,8 +141,9 @@ export default function EntryDrawer({
   const downPaymentCents=Math.min(targetCents,safeCents(form.goalDownPayment));
   const count=Math.max(1,Math.min(120,Number(form.goalInstallments||1)));
   const interestBps=Math.min(10000,Math.max(0,Math.round(Number(String(form.goalInterestPct||"0").replace(",","."))*100)||0));
-  return simulateGoalPurchase(rawData,{title:form.description||"Compra planejada",targetCents,downPaymentCents,installmentCount:count,interestBps,useCapitalInDownPayment:Boolean(form.goalUseCapital),desiredOn:form.goalDesiredOn||brDay()},{today:brDay()});
- },[drawer,rawData,form.description,form.goalTarget,form.goalDownPayment,form.goalInstallments,form.goalInterestPct,form.goalUseCapital,form.goalDesiredOn]);
+  const sourceGoalId=form.downPaymentSource==="caixinha"?(form.sourceGoalId||null):null;
+  return simulateGoalPurchase(rawData,{title:form.description||"Compra planejada",targetCents,downPaymentCents,installmentCount:count,interestBps,sourceGoalId,desiredOn:form.goalDesiredOn||brDay()},{today:brDay()});
+ },[drawer,rawData,form.description,form.goalTarget,form.goalDownPayment,form.goalInstallments,form.goalInterestPct,form.downPaymentSource,form.sourceGoalId,form.goalDesiredOn]);
 
  return <div className="overlay" onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}><section className="drawer" role="dialog" aria-modal="true" aria-label={formTitle}>
    <header className="drawer-head"><button type="button" className="plain-icon" onClick={onClose} aria-label="Fechar"><X size={23}/></button><h2>{formTitle}</h2>{canSubmit?<button className="save-pill" form="entry-form" type="submit" disabled={busy}>{busy?"Salvando...":"Salvar"}</button>:<span className="drawer-head-spacer"/>}</header>
@@ -174,8 +184,8 @@ export default function EntryDrawer({
         <div><strong>A receber</strong><small>Salário ou entrada</small></div>
       </button>
       <button type="button" className={`direction-card transfer${intent==="transfer"?" active":""}`} aria-pressed={intent==="transfer"} onClick={()=>{
-        const fW = form.fromWalletId || form.walletId || wallets[0]?.id || "";
-        const tW = form.toWalletId || (wallets.find(w => w.id !== fW)?.id || "");
+        const fW = (checkingWallets.some(w => w.id === form.fromWalletId) ? form.fromWalletId : null) || checkingWallets[0]?.id || "";
+        const tW = (checkingWallets.some(w => w.id === form.toWalletId && w.id !== fW) ? form.toWalletId : null) || (checkingWallets.find(w => w.id !== fW)?.id || "");
         setForm(old=>({...old,intent:"transfer",fromWalletId:fW,toWalletId:tW,transferredOn:old.transferredOn||old.dueOn||brDay(),settlementState:old.settlementState||"paid"}));
       }}>
         <ArrowLeftRight size={20} aria-hidden="true"/>
@@ -189,16 +199,16 @@ export default function EntryDrawer({
 
     {/* TRANSFERÊNCIA ENTRE CONTAS */}
     {newTitle&&intent==="transfer"&&<>
-      {wallets.length < 2 ? (
+      {checkingWallets.length < 2 ? (
         <div className="notice warning" style={{margin:"0 0 16px"}}>
-          <strong>Você precisa de pelo menos 2 contas para transferir.</strong>
-          <p style={{margin:"6px 0 0"}}>Cadastre outra conta bancária ou reserva em Novo › Conta bancária para movimentar saldos ou guardar dinheiro.</p>
+          <strong>Você precisa de pelo menos 2 contas bancárias para transferir.</strong>
+          <p style={{margin:"6px 0 0"}}>Para guardar dinheiro em reserva ou objetivos, use Planejamento → Reservar valor. Para transferir entre bancos, cadastre outra conta em Novo › Conta bancária.</p>
         </div>
       ) : (
         <>
           <div className="field-row major">
             <ReceiptText/>
-            <input aria-label="Identificação da transferência (opcional)" placeholder="Ex.: Guardar na Caixinha, Pix para Reserva (opcional)" value={form.description||""} maxLength={120} onChange={e=>field("description",e.target.value)}/>
+            <input aria-label="Identificação da transferência (opcional)" placeholder="Ex.: Pix entre bancos (opcional)" value={form.description||""} maxLength={120} onChange={e=>field("description",e.target.value)}/>
           </div>
           <div className="field-row money-input">
             <CircleDollarSign/>
@@ -215,14 +225,14 @@ export default function EntryDrawer({
                   const newFrom = e.target.value;
                   field("fromWalletId", newFrom);
                   if (newFrom && form.toWalletId === newFrom) {
-                    const alt = wallets.find(w => w.id !== newFrom);
+                    const alt = checkingWallets.find(w => w.id !== newFrom);
                     if (alt) field("toWalletId", alt.id);
                   }
                 }}
               >
                 <option value="">Selecione a conta de origem</option>
-                {wallets.map(w=>(
-                  <option key={w.id} value={w.id}>{w.name} {(w.is_reserved||w.wallet_kind==="reserve"||w.wallet_kind==="investment") ? "(Reserva / Caixinha)" : "(Uso diário)"}</option>
+                {checkingWallets.map(w=>(
+                  <option key={w.id} value={w.id}>{w.name}{walletBalances[w.id]!=null?` (${money(walletBalances[w.id])})`:""}</option>
                 ))}
               </select>
             </div>
@@ -242,16 +252,16 @@ export default function EntryDrawer({
               </button>
             </div>
             <div className="transfer-route-item">
-              <span className="field-caption">Para qual conta vai (Destino / Caixinha)</span>
+              <span className="field-caption">Para qual conta vai (Destino)</span>
               <select
                 required
                 value={form.toWalletId||""}
                 onChange={e=>field("toWalletId",e.target.value)}
               >
                 <option value="">Selecione a conta de destino</option>
-                {wallets.map(w=>(
+                {checkingWallets.map(w=>(
                   <option key={w.id} value={w.id} disabled={w.id === form.fromWalletId}>
-                    {w.name} {(w.is_reserved||w.wallet_kind==="reserve"||w.wallet_kind==="investment") ? "(Reserva / Caixinha)" : "(Uso diário)"} {w.id === form.fromWalletId ? "(Mesma conta)" : ""}
+                    {w.name}{walletBalances[w.id]!=null?` (${money(walletBalances[w.id])})`:""} {w.id === form.fromWalletId ? "(Mesma conta)" : ""}
                   </option>
                 ))}
               </select>
@@ -282,7 +292,7 @@ export default function EntryDrawer({
             </div>
           </div>
           <div className="transfer-guideline-note">
-            <p><strong>Sem impacto nos limites ou salário:</strong> Esta operação transfere o saldo entre suas contas cadastradas sem duplicar receitas nem despesas de consumo.</p>
+            <p><strong>Sem impacto nos limites ou salário:</strong> Move saldo entre suas contas bancárias. Para separar dinheiro em metas ou reserva, use <strong>Planejamento → Reservar valor</strong>.</p>
           </div>
         </>
       )}
@@ -413,10 +423,10 @@ export default function EntryDrawer({
     </>}
 
     {drawer==="wallet"&&<>
-      <p className="hint">O saldo de abertura representa a posição real da conta na data do cadastro.</p>
+      <p className="hint">Cadastre sua conta bancária ou carteira de uso diário. Para separar dinheiro em objetivos ou reserva, crie Caixinhas vinculadas à conta.</p>
       <div className="bank-picker-preview">
         <BankIcon name={form.name} size={40}/>
-        <label style={{flex:1}}>Nome da conta<input required maxLength={90} value={form.name} onChange={e=>field("name",e.target.value)} placeholder="Ex.: Nubank, Itaú, Sicredi ou Maré"/></label>
+        <label style={{flex:1}}>Nome do banco ou conta<input required maxLength={90} value={form.name} onChange={e=>field("name",e.target.value)} placeholder="Ex.: Nubank, Itaú, Sicredi"/></label>
       </div>
       <div className="bank-picker-row" aria-label="Atalhos de bancos">
         {["nubank","itau","bradesco","bb","caixa","santander","inter","c6","picpay","mercado_pago","pagbank","neon","maree","sicredi","sicoob"].map(bid=>{
@@ -425,11 +435,6 @@ export default function EntryDrawer({
           return <button key={b.id} type="button" className="bank-pick-chip" onClick={()=>field("name",b.name)} title={b.name}><BankIcon name={b.name} size={22}/><span>{b.name}</span></button>;
         })}
       </div>
-      <label>Finalidade da conta<select value={form.walletKind||"checking"} onChange={e=>field("walletKind",e.target.value)}>
-        <option value="checking">Conta corrente (uso diário)</option>
-        <option value="reserve">Reserva de emergência</option>
-        <option value="investment">Carteira de Capital / Investimentos</option>
-      </select></label>
       <label>Saldo de abertura (R$)<MoneyInput value={form.balance} allowNegative onChange={v=>field("balance",v)} ariaLabel="Saldo de abertura"/></label>
       <label className="kc-check"><input type="checkbox" checked={String(form.balance).startsWith("-")} onChange={e=>field("balance",e.target.checked?"-"+(form.balance||"0,00").replace("-",""):(form.balance||"0,00").replace("-",""))}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Saldo negativo (devedor)</span></label>
     </>}
@@ -492,8 +497,8 @@ export default function EntryDrawer({
     </>}
 
     {drawer==="goal_sim"&&<>
-      <p className="hint">Simule uma compra, viagem ou bem antes de assumir o compromisso. Não gera cobrança nem altera o saldo previsto.</p>
-      <label>O que deseja comprar?<input required maxLength={120} placeholder="Ex.: Notebook, Geladeira, Celular" value={form.description} onChange={e=>field("description",e.target.value)}/></label>
+      <p className="hint">Simule antes de comprar. Você pode vincular uma Caixinha para a entrada — sua Reserva de Emergência continua protegida.</p>
+      <label>O que deseja comprar?<input required maxLength={120} placeholder="Ex.: Carro, Notebook, Geladeira" value={form.description} onChange={e=>field("description",e.target.value)}/></label>
       <div className="form-grid">
         <label>Valor total (R$)<MoneyInput value={form.goalTarget||"0,00"} onChange={v=>field("goalTarget",v)} ariaLabel="Valor total desejado"/></label>
         <label>Entrada (R$)<MoneyInput value={form.goalDownPayment||"0,00"} onChange={v=>field("goalDownPayment",v)} ariaLabel="Valor de entrada"/></label>
@@ -503,7 +508,33 @@ export default function EntryDrawer({
         <label>Juros (% a.m. · opcional)<input type="text" inputMode="decimal" placeholder="Ex.: 1,80" value={form.goalInterestPct||""} onChange={e=>field("goalInterestPct",e.target.value)}/></label>
       </div>
       <label>Data desejada<input required type="date" min={brDay()} value={form.goalDesiredOn||brDay()} onChange={e=>field("goalDesiredOn",e.target.value)}/></label>
-      <label className="kc-check"><input type="checkbox" checked={Boolean(form.goalUseCapital)} onChange={e=>field("goalUseCapital",e.target.checked)}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Considerar saldo das Caixinhas / Reserva na entrada</span></label>
+      <div className="repeat-config" style={{gap:10}}>
+        <label>De onde sai a entrada?
+          <select value={form.downPaymentSource||"checking"} onChange={e=>field("downPaymentSource",e.target.value)}>
+            <option value="checking">Do saldo livre de uso diário</option>
+            {caixinhas.length>0&&<option value="caixinha">Usar uma Caixinha existente</option>}
+            {checkingWallets.length>0&&<option value="create_caixinha">Criar uma Caixinha automática para juntar a entrada</option>}
+          </select>
+        </label>
+        {form.downPaymentSource==="caixinha"&&caixinhas.length>0&&(
+          <label>Escolha a Caixinha
+            <select required value={form.sourceGoalId||""} onChange={e=>field("sourceGoalId",e.target.value)}>
+              <option value="">Selecione a caixinha</option>
+              {caixinhas.map(c=>{
+                const bankName=checkingWallets.find(w=>w.id===c.parent_wallet_id)?.name||"Sem banco";
+                return <option key={c.id} value={c.id}>{c.title} ({bankName} · Guardado: {money(caixinhaBalanceOf(c))})</option>;
+              })}
+            </select>
+          </label>
+        )}
+        {form.downPaymentSource==="create_caixinha"&&checkingWallets.length>0&&(
+          <label>Em qual banco criar a Caixinha da entrada?
+            <select required value={form.parentWalletId||checkingWallets[0]?.id||""} onChange={e=>field("parentWalletId",e.target.value)}>
+              {checkingWallets.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}
+            </select>
+          </label>
+        )}
+      </div>
       {goalPreview&&<>
         <div className={`goal-verdict ${goalPreview.isFeasible?"ok":"warn"}`}>
           <Compass size={18}/>
@@ -517,7 +548,12 @@ export default function EntryDrawer({
         </div>
         {goalPreview.twoStepVerdict&&<div className="repeat-config">
           <div className="repeat-preview" style={{borderTop:0,paddingTop:0}}>
-            <span><strong>1. Entrada ({money(goalPreview.twoStepVerdict.downPaymentCents)}):</strong> {goalPreview.twoStepVerdict.hasDownPaymentNow?"Você já tem disponível hoje":goalPreview.twoStepVerdict.downPaymentReadyDate?`Atinge em ${fdate(goalPreview.twoStepVerdict.downPaymentReadyDate)}`:"Não atinge no horizonte"}</span>
+            <span>
+              <strong>1. Entrada ({money(goalPreview.twoStepVerdict.downPaymentCents)}):</strong>{" "}
+              {goalPreview.twoStepVerdict.coveredByCaixinhaCents>0
+                ? `${money(goalPreview.twoStepVerdict.coveredByCaixinhaCents)} já na caixinha "${goalPreview.twoStepVerdict.linkedCaixinhaTitle}" · ${goalPreview.twoStepVerdict.remainingDownPaymentCents>0?`faltam ${money(goalPreview.twoStepVerdict.remainingDownPaymentCents)}`:"100% coberta!"}`
+                : goalPreview.twoStepVerdict.hasDownPaymentNow?"Disponível no uso diário hoje":goalPreview.twoStepVerdict.downPaymentReadyDate?`Atinge em ${fdate(goalPreview.twoStepVerdict.downPaymentReadyDate)}`:"Não atinge no horizonte"}
+            </span>
             <span><strong>2. Parcela ({money(goalPreview.twoStepVerdict.perInstallmentCents)}/mês):</strong> {goalPreview.twoStepVerdict.installmentFitsMonthly?`Cabe na sobra mensal (${money(goalPreview.twoStepVerdict.monthlyFreeSurplusCents)}/mês)`:`Não cabe na sobra mensal (${money(goalPreview.twoStepVerdict.monthlyFreeSurplusCents)}/mês · faltam ${money(goalPreview.twoStepVerdict.monthlyGapCents)}/mês)`}</span>
           </div>
         </div>}
@@ -525,30 +561,112 @@ export default function EntryDrawer({
     </>}
 
     {drawer==="capital_goal"&&<>
-      <p className="hint">Crie uma caixinha para guardar dinheiro com objetivo e prazo claros, acompanhando quanto precisa separar por mês.</p>
+      <p className="hint">Cada Caixinha tem saldo próprio dentro do banco que você escolher, separado do uso diário.</p>
+      <div className="direction-cards three" role="group" aria-label="Finalidade da caixinha">
+        {[
+          ["reserve","Reserva","Emergência e proteção"],
+          ["goal","Objetivo","Carro, viagem ou entrada"],
+          ["capital","Capital","Investimento e longo prazo"]
+        ].map(([k,lbl,sub])=>(
+          <button key={k} type="button" className={`direction-card ${(form.caixinhaPurpose||"goal")===k?"active":""}`} onClick={()=>field("caixinhaPurpose",k)}>
+            <div><strong>{lbl}</strong><small>{sub}</small></div>
+          </button>
+        ))}
+      </div>
       <div className="bank-picker-row" aria-label="Sugestões de caixinhas">
-        {["Reserva de emergência","Viagem","Trocar de carro","Reformar a casa","Fundo de liberdade"].map(preset=>(
+        {((form.caixinhaPurpose||"goal")==="reserve"
+          ? ["Reserva de emergência","Colchão de segurança"]
+          : (form.caixinhaPurpose||"goal")==="capital"
+            ? ["Aporte de Capital","Fundo de liberdade","Aposentadoria"]
+            : ["Entrada do carro","Viagem","Reformar a casa","Trocar de celular"]
+        ).map(preset=>(
           <button key={preset} type="button" className="bank-pick-chip" onClick={()=>field("description",preset)}>
             <span>{preset}</span>
           </button>
         ))}
       </div>
-      <label>Qual é o seu objetivo?<input required maxLength={120} placeholder="Ex.: Reserva de emergência, Viagem, Carro novo" value={form.description} onChange={e=>field("description",e.target.value)}/></label>
+      <label>Nome da caixinha<input required maxLength={120} placeholder="Ex.: Reserva de emergência, Entrada do carro" value={form.description} onChange={e=>field("description",e.target.value)}/></label>
+      <label>Banco / Conta onde fica o dinheiro
+        <select required value={form.parentWalletId||checkingWallets[0]?.id||""} onChange={e=>field("parentWalletId",e.target.value)}>
+          <option value="">Selecione a conta</option>
+          {checkingWallets.map(w=>(
+            <option key={w.id} value={w.id}>{w.name}{walletBalances[w.id]!=null?` (Livre: ${money(walletBalances[w.id])})`:""}</option>
+          ))}
+        </select>
+      </label>
       <div className="form-grid">
-        <label>Quanto quer guardar (R$)<MoneyInput value={form.goalTarget||"0,00"} onChange={v=>field("goalTarget",v)} ariaLabel="Valor do objetivo em reais"/></label>
-        <label>Até quando<input required type="date" min={brDay()} value={form.goalDesiredOn||brDay()} onChange={e=>field("goalDesiredOn",e.target.value)}/></label>
+        <label>Meta (R$)<MoneyInput value={form.goalTarget||"0,00"} onChange={v=>field("goalTarget",v)} ariaLabel="Valor da meta em reais"/></label>
+        <label>Prazo<input required type="date" min={brDay()} value={form.goalDesiredOn||brDay()} onChange={e=>field("goalDesiredOn",e.target.value)}/></label>
       </div>
+      <label>Guardar valor inicial agora? (opcional, R$)
+        <MoneyInput value={form.initialAmount||"0,00"} required={false} onChange={v=>field("initialAmount",v)} ariaLabel="Valor inicial a reservar agora"/>
+      </label>
       {(()=>{
         const safeC=v=>{try{return maskToCents(v||"0,00");}catch{return 0;}};
-        const pace=computeCapitalPace({targetCents:safeC(form.goalTarget),targetDate:form.goalDesiredOn||brDay(),currentCapitalCents:Number(form.currentCapitalCents||0),monthlyContributionCents:Number(form.monthlyCapitalContributionCents||0),today:brDay()});
-        return pace.targetCents>0?<div className={`goal-verdict ${pace.onPace?"ok":"warn"}`}>
-          <Compass size={18}/>
+        const pace=computeCapitalPace({targetCents:safeC(form.goalTarget),targetDate:form.goalDesiredOn||brDay(),currentCapitalCents:safeC(form.initialAmount),monthlyContributionCents:Number(form.monthlyCapitalContributionCents||0),today:brDay()});
+        return pace.targetCents>0?<div className="goal-verdict ok">
+          <PiggyBank size={18}/>
           <div>
-            <strong>{pace.onPace?"No ritmo certo para conquistar!":`Guarde ${money(pace.requiredMonthlyCents)}/mês para bater a meta`}</strong>
-            <small>{pace.onPace?`Em ${pace.monthsLeft} mês(es), seu ritmo atual de ${money(pace.monthlyContributionCents)}/mês alcança ${money(pace.targetCents)}.`:`Faltam ${money(pace.remainingCents)} em ${pace.monthsLeft} mês(es). Separe +${money(pace.monthlyGapCents)}/mês na sua Reserva/Caixinha.`}</small>
+            <strong>Ritmo para atingir a meta: {money(pace.requiredMonthlyCents)}/mês</strong>
+            <small>{pace.monthsLeft} mês(es) até {fdate(form.goalDesiredOn||brDay())} · Faltam {money(pace.remainingCents)} após o depósito inicial.</small>
           </div>
         </div>:null;
       })()}
+    </>}
+
+    {drawer==="reserve_caixinha"&&<>
+      {caixinhas.length===0||checkingWallets.length===0?(
+        <div className="notice warning">
+          <strong>{checkingWallets.length===0?"Cadastre uma conta bancária primeiro.":"Crie uma caixinha antes de reservar dinheiro."}</strong>
+        </div>
+      ):(
+        <>
+          <div className="direction-cards compact" role="group" aria-label="Tipo de movimento na caixinha">
+            <button type="button" className={`direction-card income${(form.reserveDirection||"deposit")==="deposit"?" active":""}`} onClick={()=>field("reserveDirection","deposit")}>
+              <div><strong>Guardar</strong><small>Conta → Caixinha</small></div>
+            </button>
+            <button type="button" className={`direction-card neutral${form.reserveDirection==="withdraw"?" active":""}`} onClick={()=>field("reserveDirection","withdraw")}>
+              <div><strong>Resgatar</strong><small>Caixinha → Conta</small></div>
+            </button>
+          </div>
+          <label>{form.reserveDirection==="withdraw"?"Para qual conta bancária vai o resgate?":"De qual conta bancária sai o valor?"}
+            <select required value={form.fromWalletId||checkingWallets[0]?.id||""} onChange={e=>field("fromWalletId",e.target.value)}>
+              <option value="">Selecione a conta</option>
+              {checkingWallets.map(w=>(
+                <option key={w.id} value={w.id}>{w.name}{walletBalances[w.id]!=null?` (Livre: ${money(walletBalances[w.id])})`:""}</option>
+              ))}
+            </select>
+          </label>
+          <label>Filtrar por banco da caixinha (opcional)
+            <select value={form.reserveBankFilter||""} onChange={e=>{
+              const bId=e.target.value;
+              const filtered=bId?caixinhas.filter(c=>c.parent_wallet_id===bId):caixinhas;
+              setForm(old=>({...old,reserveBankFilter:bId,caixinhaId:filtered[0]?.id||""}));
+            }}>
+              <option value="">Todos os bancos</option>
+              {checkingWallets.filter(w=>caixinhas.some(c=>c.parent_wallet_id===w.id)).map(w=>(
+                <option key={w.id} value={w.id}>{w.name}</option>
+              ))}
+            </select>
+          </label>
+          <label>{form.reserveDirection==="withdraw"?"Resgatar de qual caixinha?":"Guardar em qual caixinha?"}
+            <select required value={form.caixinhaId||""} onChange={e=>field("caixinhaId",e.target.value)}>
+              <option value="">Selecione a caixinha</option>
+              {(form.reserveBankFilter?caixinhas.filter(c=>c.parent_wallet_id===form.reserveBankFilter):caixinhas).map(c=>{
+                const bName=checkingWallets.find(w=>w.id===c.parent_wallet_id)?.name||"Sem banco";
+                return <option key={c.id} value={c.id}>{c.title} ({bName} · Saldo: {money(caixinhaBalanceOf(c))})</option>;
+              })}
+            </select>
+          </label>
+          <div className="form-grid">
+            <label>Valor (R$)<MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Valor em reais"/></label>
+            <label>Data<input required type="date" max={brDay()} value={form.transferredOn||brDay()} onChange={e=>field("transferredOn",e.target.value)}/></label>
+          </div>
+          <div className="transfer-guideline-note">
+            <p><strong>Saldo separado e sem dupla contagem:</strong> Reservar move o valor do seu uso diário para o saldo isolado desta caixinha sem alterar receitas ou despesas.</p>
+          </div>
+        </>
+      )}
     </>}
    </form>}
  </section>

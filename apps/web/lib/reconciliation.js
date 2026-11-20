@@ -68,6 +68,8 @@ export function reconcilePortfolio(data) {
       walletKind: kind,
       liquidityKind: liquidity,
       isReserved,
+      parentWalletId: w.parent_wallet_id || null,
+      caixinhaPurpose: w.caixinha_purpose || null,
       balanceCents: bal,
     };
   });
