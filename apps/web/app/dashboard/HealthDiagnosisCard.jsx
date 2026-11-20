@@ -36,27 +36,12 @@ function fmtMonth(ym) {
 
 export default function HealthDiagnosisCard({ healthPlan }) {
   if (!healthPlan) return null;
-  const { diagnosis, milestones, dataQuality } = healthPlan;
+  const { diagnosis, allocation, dataQuality } = healthPlan;
   const meta = STATE_META[diagnosis.state] || STATE_META.unknown;
   const { Icon } = meta;
-  const ind = diagnosis.indicators;
 
-  const mainReasons = (diagnosis.reasonCodes || [])
-    .slice(0, 2)
-    .map((code) => REASON_LABELS[code] || code);
-
-  const fmtShort = (ym) =>
-    ym
-      ? new Date(ym + "-15T12:00:00Z")
-          .toLocaleDateString("pt-BR", { month: "short", year: "numeric", timeZone: "UTC" })
-          .replace(".", "")
-      : null;
-
-  const nextMilestoneText = milestones.firstSavingMonth
-    ? `Guardar em ${fmtShort(milestones.firstSavingMonth)}`
-    : milestones.firstCoveredMonth
-      ? `Contas em dia em ${fmtShort(milestones.firstCoveredMonth)}`
-      : "Ainda não fecha no ano";
+  const allReasons = (diagnosis.reasonCodes || []).map((code) => REASON_LABELS[code] || code);
+  const topProposal = allocation?.proposals?.[0] || null;
 
   return (
     <section className="panel health-card" aria-label="Diagnóstico de saúde financeira">
@@ -67,40 +52,31 @@ export default function HealthDiagnosisCard({ healthPlan }) {
         </div>
       </div>
 
-      {mainReasons.length > 0 && (
-        <ul className="health-reasons">
-          {mainReasons.map((r) => (
-            <li key={r}>{r}</li>
-          ))}
-        </ul>
+      {allReasons.length > 0 ? (
+        <div style={{ display: "grid", gap: 6 }}>
+          <span className="eyebrow">POR QUE VOCÊ ESTÁ NESTE ESTADO</span>
+          <ul className="health-reasons">
+            {allReasons.map((r) => (
+              <li key={r}>{r}</li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <p className="hint" style={{ margin: 0 }}>
+          Nenhum fator crítico identificado no momento. Continue acompanhando seus vencimentos e sua reserva.
+        </p>
       )}
 
-      <div className="health-metrics-row">
-        <div className="health-mini-stat">
-          <span>Dívida restante</span>
-          <strong>{money(ind.outstandingDebtCents)}</strong>
+      {topProposal && (
+        <div className="repeat-config" style={{ marginTop: 8 }}>
+          <span className="eyebrow">PRÓXIMA AÇÃO RECOMENDADA</span>
+          <strong style={{ display: "block", marginTop: 4 }}>{topProposal.title}</strong>
+          <p className="hint" style={{ margin: "4px 0 0" }}>
+            {topProposal.rationale}
+            {topProposal.recommendedCents > 0 ? ` (Valor sugerido: ${money(topProposal.recommendedCents)})` : ""}
+          </p>
         </div>
-        <div className="health-mini-stat">
-          <span>Comprometimento</span>
-          <strong>
-            {ind.incomeCommitmentRatio === null
-              ? "Indisponível"
-              : `${Math.round(ind.incomeCommitmentRatio * 100)}%`}
-          </strong>
-        </div>
-        <div className="health-mini-stat">
-          <span>Reserva líquida</span>
-          <strong>
-            {ind.emergencyCoverageMonths === null
-              ? "A calcular"
-              : `${ind.emergencyCoverageMonths.toFixed(1)} mês(es)`}
-          </strong>
-        </div>
-        <div className="health-mini-stat">
-          <span>Próxima mudança</span>
-          <strong>{nextMilestoneText}</strong>
-        </div>
-      </div>
+      )}
 
       {dataQuality.status !== "complete" && (
         <div className="health-footnote">

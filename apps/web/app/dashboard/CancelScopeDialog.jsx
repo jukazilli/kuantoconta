@@ -22,7 +22,7 @@ export default function CancelScopeDialog({title,busy=false,error="",onCancel,on
  <input type="radio" name="cancel-scope" checked={scope===opt.value} onChange={()=>setScope(opt.value)} disabled={busy}/>
  <span><strong>{opt.label}</strong><small>{opt.description}</small></span>
  </label>)}</fieldset>
- <div className="cancel-policy"><AlertTriangle size={17}/><p>{full&&scope==="only"?"Este título já está totalmente baixado. Desfaça a baixa antes de cancelar somente esta ocorrência.":"Pagamentos e recebimentos já realizados serão preservados. Somente valores pendentes serão cancelados. A operação ficará registrada no histórico."}</p></div>
+ <div className="cancel-policy"><AlertTriangle size={17}/><p>{full&&scope==="only"?"Este lançamento já foi pago ou recebido. Desfaça o pagamento nos detalhes antes de excluir apenas esta ocorrência.":"Pagamentos e recebimentos já realizados serão preservados. Somente valores pendentes serão cancelados. A operação ficará registrada no histórico."}</p></div>
  {error&&<div className="notice error" role="alert">{error}</div>}
  <footer className="cancel-actions"><button className="light-button" type="button" disabled={busy} onClick={onCancel}>Voltar</button><button className="cancel-confirm" type="button" disabled={busy||invalid} onClick={()=>onConfirm(scope)}>{busy?"Excluindo...":"Confirmar exclusão"}</button></footer>
  </section></div>;

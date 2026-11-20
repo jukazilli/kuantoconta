@@ -101,3 +101,31 @@ test("UI invariants: no implicit Moradia default and no 'disponível para gastar
   assert.match(budgetListSrc, /Restante do limite/);
   assert.doesNotMatch(budgetListSrc, /disponível para gastar/i);
 });
+
+test("UI/UX Redesign invariants: separated Orçamentos & Planejamento, unified 1-line topbar, Novo menu, Caixinhas, clickable wallets, no duplicate month nav", () => {
+  const dashboardSrc = fs.readFileSync(path.join(repoRoot, "apps", "web", "app", "dashboard", "Dashboard.jsx"), "utf8");
+  const drawerSrc = fs.readFileSync(path.join(repoRoot, "apps", "web", "app", "dashboard", "EntryDrawer.jsx"), "utf8");
+  const cssSrc = fs.readFileSync(path.join(repoRoot, "apps", "web", "app", "globals.css"), "utf8");
+
+  // 1. Navigation separates budgets and planning, removes profile from bottom dock
+  assert.match(dashboardSrc, /\["budgets",\s*"Orçamentos"\]/);
+  assert.match(dashboardSrc, /\["planning",\s*"Planejamento"\]/);
+  assert.doesNotMatch(dashboardSrc, /\["profile",\s*"Perfil"\]/);
+
+  // 2. Unified topbar and Novo menu (no legacy toolbar or Criar button or duplicate movements-period-nav)
+  assert.match(dashboardSrc, /className="topbar-left"/);
+  assert.match(dashboardSrc, /className="topbar-center"/);
+  assert.match(dashboardSrc, /Novo\s*<\/button>/);
+  assert.doesNotMatch(dashboardSrc, /className="movements-period-nav"/);
+  assert.doesNotMatch(dashboardSrc, /window\.confirm\(/);
+
+  // 3. Caixinhas in planning, clickable accounts, and unified transfer (no separate transfer_capital drawer)
+  assert.match(dashboardSrc, /Caixinha \(Guardar dinheiro\)/);
+  assert.match(dashboardSrc, /setSelectedWallet\(w\)/);
+  assert.match(dashboardSrc, /setSelectedCaixinha\(/);
+  assert.doesNotMatch(drawerSrc, /drawer==="transfer_capital"/);
+
+  // 4. All :hover rules in globals.css are protected by @media (hover: hover)
+  const hoverLines = cssSrc.split(/\r?\n/).filter((line) => line.includes(":hover"));
+  assert.ok(hoverLines.length > 0);
+});

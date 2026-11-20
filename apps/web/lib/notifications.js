@@ -74,7 +74,7 @@ export function buildNotifications({
         tone: "danger",
         title: `Orçamento "${b.categoryName}" estourado`,
         detail: `Excedido em ${money(Math.abs(rem))} neste mês.`,
-        targetTab: "planning",
+        targetTab: "budgets",
       });
     } else if (b.utilizationPct >= 80) {
       alerts.push({
@@ -82,7 +82,7 @@ export function buildNotifications({
         tone: "warn",
         title: `Orçamento "${b.categoryName}" em ${b.utilizationPct}%`,
         detail: `Restam ${money(rem)} para o restante do mês.`,
-        targetTab: "planning",
+        targetTab: "budgets",
       });
     }
   }
@@ -100,7 +100,7 @@ export function buildNotifications({
     (t) =>
       !t.cancelled_at &&
       t.direction === "income" &&
-      t.entry_kind === "reserve_transfer" &&
+      (t.entry_kind === "reserve_transfer" || t.entry_kind === "transfer") &&
       monthOf(t.due_on) === currentMonth
   );
   const capitalBudget = budgetSummary.find((b) => /capital|reserva/i.test(b.categoryName) && b.limitCents > 0);
@@ -108,8 +108,8 @@ export function buildNotifications({
     alerts.push({
       id: "capital-pending",
       tone: "info",
-      title: "Efetivar aporte para Carteira de Capital",
-      detail: `Você recebeu neste mês; separe ${money(capitalBudget.limitCents)} para formar patrimônio.`,
+      title: "Guardar dinheiro na sua Reserva ou Caixinha",
+      detail: `Você recebeu neste mês; transfira ${money(capitalBudget.limitCents)} para formar sua reserva.`,
       action: "transfer_capital",
     });
   }

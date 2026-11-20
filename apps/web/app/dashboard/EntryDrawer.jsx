@@ -90,26 +90,6 @@ export default function EntryDrawer({
  const linkedRemaining=linkedPlan?computePlanRemainingCents(linkedPlan,spendingPlanApplications):0;
  const partialLeftover=linkedPlan&&amountValue()>0&&amountValue()<linkedRemaining?linkedRemaining-amountValue():0;
 
- function selectIntent(next){
-  setShowMore(false);
-  if(next==="spent"){
-   setForm(old=>({...old,intent:"spent",direction:"expense",category:old.direction==="expense"?old.category:"",mode:"single",settlementState:"paid",occurredOn:old.occurredOn||brDay(),settledOn:old.settledOn||brDay(),dueOn:old.dueOn||brDay()}));
-  }else if(next==="plan"){
-   setForm(old=>({...old,intent:"plan",direction:"expense",category:old.direction==="expense"?old.category:"",mode:"single",plannedMonth:old.plannedMonth||brDay().slice(0,7),plannedFor:old.plannedFor||"",spendingPlanId:""}));
-  }else{
-   setForm(old=>({...old,intent:"bill",settlementState:"pending",mode:old.mode==="single"?"single":old.mode,spendingPlanId:""}));
-  }
- }
-
- function selectBillDirection(dir){
-  setForm(old=>({
-   ...old,
-   direction:dir,
-   category:"",
-   settlementState:"pending"
-  }));
- }
-
  async function createCategory(e){
   e.preventDefault();setQuickError("");
   if(!newName.trim()){setQuickError("Informe um nome.");return;}
@@ -129,23 +109,21 @@ export default function EntryDrawer({
  }
 
  const formTitle=
-  newTitle?(intent==="transfer"?"Nova transferência entre contas":intent==="lend"?"Tenho um empréstimo a fazer":form.direction==="income"?"Tenho uma conta a receber":"Tenho uma conta a pagar"):
+  newTitle?(intent==="transfer"?"Transferência entre contas":intent==="lend"?"Emprestar dinheiro":form.direction==="income"?"Conta a receber":"Conta a pagar"):
   drawer==="edit"?"Editar lançamento":
   drawer==="edit_plan"?"Ajustar previsão de gasto":
-  drawer==="wallet"?"Nova conta":
-  drawer==="credit_card"?"Novo cartão de crédito":
-  drawer==="transfer_capital"?"Aporte para Carteira de Capital":
-  drawer==="loan"?"Novo empréstimo / financiamento":
-  drawer==="goal_sim"?"Novo planejamento de compra":
-  drawer==="capital_goal"?"Nova meta de capital":
+  drawer==="wallet"?"Conta bancária":
+  drawer==="credit_card"?"Cartão de crédito":
+  drawer==="loan"?"Empréstimo / financiamento":
+  drawer==="goal_sim"?"Planejamento de compra":
+  drawer==="capital_goal"?"Nova caixinha (Guardar dinheiro)":
   drawer==="settle"?"Confirmar pagamento":
   drawer==="detail"?"Detalhes do lançamento":
-  drawer==="budget"?"Configurar orçamento":
-  drawer==="asset"?"Novo ativo":"Nova dívida";
+  drawer==="budget"?"Orçamento mensal":
+  "Bem ou patrimônio";
 
  const canSubmit=drawer!=="detail";
  const checkingWallets=wallets.filter(w=>!w.is_reserved&&w.wallet_kind!=="reserve"&&w.wallet_kind!=="investment");
- const capitalWallets=wallets.filter(w=>w.is_reserved||w.wallet_kind==="reserve"||w.wallet_kind==="investment");
 
  const goalPreview=useMemo(()=>{
   if(drawer!=="goal_sim"||!rawData)return null;
@@ -168,7 +146,7 @@ export default function EntryDrawer({
         const counterpart=rawData?.titles?.find(t=>t.transfer_id&&t.transfer_id===selectedTitleObj?.transfer_id&&t.id!==selectedTitleObj?.id);
         return wallets.find(w=>w.id===counterpart?.wallet_id)?.name||"Outra conta";
       })()}</dd></div>}
-      <div><dt>{selectedTitleObj?.entry_kind==="transfer"?"Tipo":selectedTitleObj?.direction==="income"?"Categoria":"Orçamento"}</dt><dd>{selectedTitleObj?.category||"—"}</dd></div>
+      <div><dt>{selectedTitleObj?.entry_kind==="transfer"?"Tipo":"Categoria"}</dt><dd>{selectedTitleObj?.category||"—"}</dd></div>
       <div><dt>Vencimento</dt><dd>{fdate(selectedTitleObj?.due_on)}</dd></div>
       <div><dt>Parcela</dt><dd>{selectedTitleObj?.installment_total>1?selectedTitleObj.installment_index+"/"+selectedTitleObj.installment_total:"Única / fixa"}</dd></div>
       <div><dt>Valor original</dt><dd>{money(cents(selectedTitleObj?.amount_cents))}</dd></div>
@@ -214,13 +192,13 @@ export default function EntryDrawer({
       {wallets.length < 2 ? (
         <div className="notice warning" style={{margin:"0 0 16px"}}>
           <strong>Você precisa de pelo menos 2 contas para transferir.</strong>
-          <p style={{margin:"6px 0 0"}}>Cadastre outra conta bancária ou carteira em Criar › Nova conta para movimentar saldos entre elas.</p>
+          <p style={{margin:"6px 0 0"}}>Cadastre outra conta bancária ou reserva em Novo › Conta bancária para movimentar saldos ou guardar dinheiro.</p>
         </div>
       ) : (
         <>
           <div className="field-row major">
             <ReceiptText/>
-            <input aria-label="Identificação da transferência (opcional)" placeholder="Ex.: Pix para PagBank, Reserva (opcional)" value={form.description||""} maxLength={120} onChange={e=>field("description",e.target.value)}/>
+            <input aria-label="Identificação da transferência (opcional)" placeholder="Ex.: Guardar na Caixinha, Pix para Reserva (opcional)" value={form.description||""} maxLength={120} onChange={e=>field("description",e.target.value)}/>
           </div>
           <div className="field-row money-input">
             <CircleDollarSign/>
@@ -244,7 +222,7 @@ export default function EntryDrawer({
               >
                 <option value="">Selecione a conta de origem</option>
                 {wallets.map(w=>(
-                  <option key={w.id} value={w.id}>{w.name} {w.is_reserved ? "(Reserva / Capital)" : ""}</option>
+                  <option key={w.id} value={w.id}>{w.name} {(w.is_reserved||w.wallet_kind==="reserve"||w.wallet_kind==="investment") ? "(Reserva / Caixinha)" : "(Uso diário)"}</option>
                 ))}
               </select>
             </div>
@@ -264,7 +242,7 @@ export default function EntryDrawer({
               </button>
             </div>
             <div className="transfer-route-item">
-              <span className="field-caption">Para qual conta vai (Destino)</span>
+              <span className="field-caption">Para qual conta vai (Destino / Caixinha)</span>
               <select
                 required
                 value={form.toWalletId||""}
@@ -273,7 +251,7 @@ export default function EntryDrawer({
                 <option value="">Selecione a conta de destino</option>
                 {wallets.map(w=>(
                   <option key={w.id} value={w.id} disabled={w.id === form.fromWalletId}>
-                    {w.name} {w.is_reserved ? "(Reserva / Capital)" : ""} {w.id === form.fromWalletId ? "(Mesma conta)" : ""}
+                    {w.name} {(w.is_reserved||w.wallet_kind==="reserve"||w.wallet_kind==="investment") ? "(Reserva / Caixinha)" : "(Uso diário)"} {w.id === form.fromWalletId ? "(Mesma conta)" : ""}
                   </option>
                 ))}
               </select>
@@ -381,18 +359,18 @@ export default function EntryDrawer({
       }
       <div className="form-group">
         {form.direction==="income"?(
-          <div className="controlled-classification"><label>Origem da receita<select required value={form.category} onChange={e=>field("category",e.target.value)}><option value="">Selecione</option>{roots.map(c=><option key={c.id} value={c.name}>{c.name}</option>)}</select></label><button type="button" className="inline-plus" aria-label="Criar origem" onClick={()=>{setQuick("category");setNewName("");setQuickError("");}}><Plus size={20}/></button></div>
+          <div className="controlled-classification"><label>Categoria<select required value={form.category} onChange={e=>field("category",e.target.value)}><option value="">Selecione a categoria</option>{roots.map(c=><option key={c.id} value={c.name}>{c.name}</option>)}</select></label><button type="button" className="inline-plus" aria-label="Nova categoria" onClick={()=>{setQuick("category");setNewName("");setQuickError("");}}><Plus size={20}/></button></div>
         ):(
           <div className="controlled-classification">
             <div className="budget-picker-field">
-              <span className="field-caption">De qual orçamento sai?</span>
+              <span className="field-caption">Categoria</span>
               <input className="sr-only-input" tabIndex={-1} aria-hidden="true" required value={form.category} onChange={()=>{}}/>
               <button type="button" className="budget-picker-trigger" onClick={()=>setBudgetPicker(true)}>
-                <span>{form.category||"Selecione o orçamento"}</span>
+                <span>{form.category||"Selecione a categoria"}</span>
                 <small>{form.category?formatBudgetMeta(form.category):"Escolher da lista ›"}</small>
               </button>
             </div>
-            <button type="button" className="inline-plus" aria-label="Criar orçamento" onClick={()=>{setQuick("category");setNewName("");setQuickError("");}}><Plus size={20}/></button>
+            <button type="button" className="inline-plus" aria-label="Nova categoria" onClick={()=>{setQuick("category");setNewName("");setQuickError("");}}><Plus size={20}/></button>
           </div>
         )}
         {newTitle&&form.direction!=="income"&&creditCards.length>0?(
@@ -482,40 +460,26 @@ export default function EntryDrawer({
       </label>
     </>}
 
-    {drawer==="transfer_capital"&&<>
-      <p className="hint">Transferir para a Carteira de Capital separa esse valor do dinheiro livre para gastar e soma ao seu patrimônio, sem duplicar despesas.</p>
-      <label>Sair da conta<select required value={form.fromWalletId||""} onChange={e=>field("fromWalletId",e.target.value)}>
-        <option value="">Selecione a conta de origem</option>
-        {(checkingWallets.length?checkingWallets:wallets).map(w=><option key={w.id} value={w.id}>{w.name}</option>)}
-      </select></label>
-      <label>Para a Carteira de Capital / Reserva<select required value={form.toWalletId||""} onChange={e=>field("toWalletId",e.target.value)}>
-        <option value="">Selecione a carteira de destino</option>
-        {(capitalWallets.length?capitalWallets:wallets).map(w=><option key={w.id} value={w.id}>{w.name}</option>)}
-      </select></label>
-      <label>Valor do aporte (R$)<MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Valor do aporte em reais"/></label>
-      <label>Data da transferência<input required type="date" max={brDay()} value={form.transferredOn||brDay()} onChange={e=>field("transferredOn",e.target.value)}/></label>
-    </>}
-
     {drawer==="settle"&&<><p className="hint">Confirmar o valor pago ou recebido. A parte restante permanece pendente.</p><div className="settle-title">{selectedTitleObj?.description}<small>Saldo em aberto: {money(balanceDue)}</small></div><label>Valor efetivado (R$)<MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Valor efetivado em reais"/></label><label>Data da efetivação<input required type="date" max={brDay()} value={form.settledOn} onChange={e=>field("settledOn",e.target.value)}/></label></>}
     {drawer==="budget"&&<>
       <div className="settle-title">{form.category}<small>Competência: {form.budgetMonth}</small></div>
-      <label className="kc-check"><input type="checkbox" checked={form.budgetActive!==false} onChange={e=>field("budgetActive",e.target.checked)}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Controlar limite mensal neste orçamento</span></label>
+      <label className="kc-check"><input type="checkbox" checked={form.budgetActive!==false} onChange={e=>field("budgetActive",e.target.checked)}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Controlar limite mensal nesta categoria</span></label>
       {form.budgetActive!==false&&<label>Limite mensal (R$)<MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Limite mensal em reais"/></label>}
-      {form.budgetActive===false&&<p className="hint">Este orçamento apenas acompanha os gastos, sem trava de limite mensal.</p>}
+      {form.budgetActive===false&&<p className="hint">Esta categoria apenas acompanha os gastos, sem trava de limite mensal.</p>}
     </>}
-    {(drawer==="asset"||drawer==="liability")&&<><label>Descrição<input required maxLength={120} placeholder={drawer==="asset"?"Ex.: veículo":"Ex.: empréstimo"} value={form.label} onChange={e=>field("label",e.target.value)}/></label><label>Valor atual (R$)<MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Valor atual"/></label><p className="hint">Não inclua novamente o dinheiro já registrado em uma conta.</p></>}
+    {drawer==="asset"&&<><label>Descrição do bem ou investimento<input required maxLength={120} placeholder="Ex.: Imóvel, Veículo, Previdência" value={form.label} onChange={e=>field("label",e.target.value)}/></label><label>Valor estimado (R$)<MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Valor atual"/></label><p className="hint">Não inclua novamente o dinheiro já registrado nas suas contas ou carteiras.</p></>}
 
     {drawer==="loan"&&<>
-      <p className="hint">O valor recebido entra na conta sem contar como salário, e as parcelas somam no endividamento total até a última parcela.</p>
-      <label>Descrição do empréstimo / financiamento<input required maxLength={120} placeholder="Ex.: Empréstimo Banco X" value={form.description} onChange={e=>field("description",e.target.value)}/></label>
+      <p className="hint">O valor recebido entra na conta sem inflar sua renda mensal, e as parcelas são agendadas automaticamente.</p>
+      <label>Identificação<input required maxLength={120} placeholder="Ex.: Empréstimo pessoal, Financiamento" value={form.description} onChange={e=>field("description",e.target.value)}/></label>
       <div className="form-grid">
-        <label>Valor recebido (R$)<MoneyInput value={form.loanPrincipal||"0,00"} onChange={v=>field("loanPrincipal",v)} ariaLabel="Valor recebido"/></label>
+        <label>Quanto você recebeu (R$)<MoneyInput value={form.loanPrincipal||"0,00"} onChange={v=>field("loanPrincipal",v)} ariaLabel="Valor recebido"/></label>
         <label>Data do recebimento<input required type="date" max={brDay()} value={form.loanReceivedOn||brDay()} onChange={e=>field("loanReceivedOn",e.target.value)}/></label>
       </div>
-      <label className="kc-check"><input type="checkbox" checked={form.loanCreditWallet!==false} onChange={e=>field("loanCreditWallet",e.target.checked)}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Creditar o valor recebido na conta selecionada</span></label>
-      <label>Conta vinculada<select required value={form.walletId} onChange={e=>field("walletId",e.target.value)}><option value="">Selecione uma conta</option>{(checkingWallets.length?checkingWallets:wallets).map(w=><option key={w.id} value={w.id}>{w.name}</option>)}</select></label>
+      <label className="kc-check"><input type="checkbox" checked={form.loanCreditWallet!==false} onChange={e=>field("loanCreditWallet",e.target.checked)}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Depositar valor recebido na conta selecionada</span></label>
+      <label>Conta para depósito e parcelas<select required value={form.walletId} onChange={e=>field("walletId",e.target.value)}><option value="">Selecione uma conta</option>{(checkingWallets.length?checkingWallets:wallets).map(w=><option key={w.id} value={w.id}>{w.name}</option>)}</select></label>
       <div className="form-grid">
-        <label>Total de parcelas<input required type="number" min="2" max="120" value={form.loanCount||"12"} onChange={e=>field("loanCount",e.target.value)}/></label>
+        <label>Número de parcelas<input required type="number" min="2" max="120" value={form.loanCount||"12"} onChange={e=>field("loanCount",e.target.value)}/></label>
         <label>Valor da parcela (R$)<MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Valor da parcela"/></label>
       </div>
       <label>Vencimento da 1ª parcela<input required type="date" value={form.dueOn} onChange={e=>field("dueOn",e.target.value)}/></label>
@@ -523,13 +487,13 @@ export default function EntryDrawer({
         const safeC=v=>{try{return maskToCents(v||"0,00");}catch{return 0;}};
         const p=safeC(form.loanPrincipal);const inst=safeC(form.amount);const cnt=Math.max(2,Number(form.loanCount||12));
         const total=inst*cnt;const interest=Math.max(0,total-p);
-        return inst>0?<div className="repeat-config"><div className="repeat-preview" style={{borderTop:0,paddingTop:0}}><strong>Total a pagar: {money(total)} ({cnt}x de {money(inst)})</strong><span>Custo financeiro / juros totais: {money(interest)}</span></div></div>:null;
+        return inst>0?<div className="repeat-config"><div className="repeat-preview" style={{borderTop:0,paddingTop:0}}><strong>Total a pagar: {money(total)} ({cnt}x de {money(inst)})</strong><span>Juros embutidos no período: {money(interest)}</span></div></div>:null;
       })()}
     </>}
 
     {drawer==="goal_sim"&&<>
       <p className="hint">Simule uma compra, viagem ou bem antes de assumir o compromisso. Não gera cobrança nem altera o saldo previsto.</p>
-      <label>O que deseja planejar?<input required maxLength={120} placeholder="Ex.: Notebook, Viagem, Geladeira" value={form.description} onChange={e=>field("description",e.target.value)}/></label>
+      <label>O que deseja comprar?<input required maxLength={120} placeholder="Ex.: Notebook, Geladeira, Celular" value={form.description} onChange={e=>field("description",e.target.value)}/></label>
       <div className="form-grid">
         <label>Valor total (R$)<MoneyInput value={form.goalTarget||"0,00"} onChange={v=>field("goalTarget",v)} ariaLabel="Valor total desejado"/></label>
         <label>Entrada (R$)<MoneyInput value={form.goalDownPayment||"0,00"} onChange={v=>field("goalDownPayment",v)} ariaLabel="Valor de entrada"/></label>
@@ -539,7 +503,7 @@ export default function EntryDrawer({
         <label>Juros (% a.m. · opcional)<input type="text" inputMode="decimal" placeholder="Ex.: 1,80" value={form.goalInterestPct||""} onChange={e=>field("goalInterestPct",e.target.value)}/></label>
       </div>
       <label>Data desejada<input required type="date" min={brDay()} value={form.goalDesiredOn||brDay()} onChange={e=>field("goalDesiredOn",e.target.value)}/></label>
-      <label className="kc-check"><input type="checkbox" checked={Boolean(form.goalUseCapital)} onChange={e=>field("goalUseCapital",e.target.checked)}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Usar saldo da Carteira de Capital / Reserva na entrada</span></label>
+      <label className="kc-check"><input type="checkbox" checked={Boolean(form.goalUseCapital)} onChange={e=>field("goalUseCapital",e.target.checked)}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Considerar saldo das Caixinhas / Reserva na entrada</span></label>
       {goalPreview&&<>
         <div className={`goal-verdict ${goalPreview.isFeasible?"ok":"warn"}`}>
           <Compass size={18}/>
@@ -561,11 +525,18 @@ export default function EntryDrawer({
     </>}
 
     {drawer==="capital_goal"&&<>
-      <p className="hint">Defina quanto de capital ou reserva quer acumular até uma data para acompanhar se está no ritmo certo.</p>
-      <label>Nome da meta<input required maxLength={120} placeholder="Ex.: Reserva de emergência, Capital de giro" value={form.description} onChange={e=>field("description",e.target.value)}/></label>
+      <p className="hint">Crie uma caixinha para guardar dinheiro com objetivo e prazo claros, acompanhando quanto precisa separar por mês.</p>
+      <div className="bank-picker-row" aria-label="Sugestões de caixinhas">
+        {["Reserva de emergência","Viagem","Trocar de carro","Reformar a casa","Fundo de liberdade"].map(preset=>(
+          <button key={preset} type="button" className="bank-pick-chip" onClick={()=>field("description",preset)}>
+            <span>{preset}</span>
+          </button>
+        ))}
+      </div>
+      <label>Qual é o seu objetivo?<input required maxLength={120} placeholder="Ex.: Reserva de emergência, Viagem, Carro novo" value={form.description} onChange={e=>field("description",e.target.value)}/></label>
       <div className="form-grid">
-        <label>Quanto quero ter (R$)<MoneyInput value={form.goalTarget||"0,00"} onChange={v=>field("goalTarget",v)} ariaLabel="Valor da meta de capital"/></label>
-        <label>Até qual data<input required type="date" min={brDay()} value={form.goalDesiredOn||brDay()} onChange={e=>field("goalDesiredOn",e.target.value)}/></label>
+        <label>Quanto quer guardar (R$)<MoneyInput value={form.goalTarget||"0,00"} onChange={v=>field("goalTarget",v)} ariaLabel="Valor do objetivo em reais"/></label>
+        <label>Até quando<input required type="date" min={brDay()} value={form.goalDesiredOn||brDay()} onChange={e=>field("goalDesiredOn",e.target.value)}/></label>
       </div>
       {(()=>{
         const safeC=v=>{try{return maskToCents(v||"0,00");}catch{return 0;}};
@@ -573,8 +544,8 @@ export default function EntryDrawer({
         return pace.targetCents>0?<div className={`goal-verdict ${pace.onPace?"ok":"warn"}`}>
           <Compass size={18}/>
           <div>
-            <strong>{pace.onPace?"No ritmo com seu aporte atual":`Aporte necessário: ${money(pace.requiredMonthlyCents)}/mês`}</strong>
-            <small>{pace.onPace?`Em ${pace.monthsLeft} mês(es), seu ritmo atual de ${money(pace.monthlyContributionCents)}/mês atinge a meta.`:`Faltam ${money(pace.remainingCents)} em ${pace.monthsLeft} mês(es). Aumente ${money(pace.monthlyGapCents)}/mês no orçamento de Capital.`}</small>
+            <strong>{pace.onPace?"No ritmo certo para conquistar!":`Guarde ${money(pace.requiredMonthlyCents)}/mês para bater a meta`}</strong>
+            <small>{pace.onPace?`Em ${pace.monthsLeft} mês(es), seu ritmo atual de ${money(pace.monthlyContributionCents)}/mês alcança ${money(pace.targetCents)}.`:`Faltam ${money(pace.remainingCents)} em ${pace.monthsLeft} mês(es). Separe +${money(pace.monthlyGapCents)}/mês na sua Reserva/Caixinha.`}</small>
           </div>
         </div>:null;
       })()}
@@ -582,9 +553,9 @@ export default function EntryDrawer({
    </form>}
  </section>
  {budgetPicker&&<div className="nested-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setBudgetPicker(false);}}>
-   <div className="quick-category budget-picker-dialog" role="dialog" aria-modal="true" aria-label="Selecionar orçamento">
+   <div className="quick-category budget-picker-dialog" role="dialog" aria-modal="true" aria-label="Selecionar categoria">
      <div className="quick-head">
-       <h3>Selecionar orçamento</h3>
+       <h3>Selecionar categoria</h3>
        <button type="button" aria-label="Fechar" onClick={()=>setBudgetPicker(false)}><X size={20}/></button>
      </div>
      <div className="action-menu">
@@ -598,7 +569,7 @@ export default function EntryDrawer({
        })}
      </div>
      <button type="button" className="light-button" onClick={()=>{setBudgetPicker(false);setQuick("category");setNewName("");setQuickError("");}}>
-       <Plus size={16}/> Novo orçamento
+       <Plus size={16}/> Nova categoria
      </button>
    </div>
  </div>}
@@ -642,6 +613,6 @@ export default function EntryDrawer({
      </form>}
    </div>
  </div>}
- {quick&&<div className="nested-overlay" onMouseDown={e=>{if(e.target===e.currentTarget){setQuick(null);setTrackBudget(false);setQuickLimit("");}}}><form className="quick-category" onSubmit={createCategory}><div className="quick-head"><h3>{form.direction==="income"?"Nova origem de receita":"Novo orçamento"}</h3><button type="button" aria-label="Fechar" onClick={()=>{setQuick(null);setTrackBudget(false);setQuickLimit("");}}><X size={20}/></button></div><label>Nome<input required maxLength={80} autoFocus value={newName} onChange={e=>setNewName(e.target.value)} placeholder={form.direction==="income"?"Ex.: Freelance":"Ex.: Transporte"}/></label>{form.direction==="expense"&&<><label className="kc-check"><input type="checkbox" checked={trackBudget} onChange={e=>setTrackBudget(e.target.checked)}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Controlar limite mensal</span></label>{trackBudget&&<><label>Limite mensal (R$)<MoneyInput value={quickLimit} onChange={setQuickLimit} ariaLabel="Limite mensal em reais"/></label><p className="hint" style={{margin:"-4px 0 0"}}>Se a soma dos limites passar da renda de {selectedMonth||brDay().slice(0,7)}, os demais limites variáveis são recalculados automaticamente (preservando Reserva e Capital).</p></>}</>}{quickError&&<div className="notice error" role="alert">{quickError}</div>}<button type="submit" className="dark-button" disabled={quickBusy}>{quickBusy?"Salvando...":"Adicionar"}</button></form></div>}
+ {quick&&<div className="nested-overlay" onMouseDown={e=>{if(e.target===e.currentTarget){setQuick(null);setTrackBudget(false);setQuickLimit("");}}}><form className="quick-category" onSubmit={createCategory}><div className="quick-head"><h3>Nova categoria</h3><button type="button" aria-label="Fechar" onClick={()=>{setQuick(null);setTrackBudget(false);setQuickLimit("");}}><X size={20}/></button></div><label>Nome<input required maxLength={80} autoFocus value={newName} onChange={e=>setNewName(e.target.value)} placeholder={form.direction==="income"?"Ex.: Freelance":"Ex.: Transporte"}/></label>{form.direction==="expense"&&<><label className="kc-check"><input type="checkbox" checked={trackBudget} onChange={e=>setTrackBudget(e.target.checked)}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Controlar limite mensal</span></label>{trackBudget&&<><label>Limite mensal (R$)<MoneyInput value={quickLimit} onChange={setQuickLimit} ariaLabel="Limite mensal em reais"/></label><p className="hint" style={{margin:"-4px 0 0"}}>Se a soma dos limites passar da renda de {selectedMonth||brDay().slice(0,7)}, os demais limites variáveis são recalculados automaticamente (preservando Reserva e Capital).</p></>}</>}{quickError&&<div className="notice error" role="alert">{quickError}</div>}<button type="submit" className="dark-button" disabled={quickBusy}>{quickBusy?"Salvando...":"Adicionar"}</button></form></div>}
  </div>;
 }

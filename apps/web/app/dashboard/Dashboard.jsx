@@ -63,16 +63,17 @@ import { usePwa } from "../components/PwaProvider";
 const TABS = [
   ["overview", "Visão geral"],
   ["movements", "Movimentos"],
+  ["budgets", "Orçamentos"],
   ["planning", "Planejamento"],
   ["patrimony", "Meu Capital"],
   ["health", "Saúde financeira"],
-  ["profile", "Perfil"],
 ];
 
 const TAB_ICONS = {
   overview: LayoutGrid,
   movements: ArrowLeftRight,
-  planning: CalendarRange,
+  budgets: SlidersHorizontal,
+  planning: Compass,
   patrimony: Landmark,
   health: HeartPulse,
   profile: User,
@@ -160,6 +161,7 @@ function Empty({ children }) {
 const defaultScreenFilters = () => ({
   overview: { rangeStart: TODAY, date: lastDayOfMonth(TODAY), showPlanned: true, showRealized: true, showCategories: true, debtMode: "all_commitments" },
   movements: { rangeStart: TODAY, date: lastDayOfMonth(TODAY), direction: "all", status: "all" },
+  budgets: { rangeStart: TODAY, date: lastDayOfMonth(TODAY) },
   planning: { rangeStart: TODAY, date: lastDayOfMonth(TODAY), onlyFeasible: false },
   patrimony: { rangeStart: TODAY, date: lastDayOfMonth(TODAY), walletKind: "all" },
   health: { rangeStart: TODAY, date: lastDayOfMonth(TODAY) },
@@ -180,12 +182,14 @@ export default function Dashboard({ user }) {
   const [selectedTitle, setSelectedTitle] = useState(null);
   const [cancelTarget, setCancelTarget] = useState(null);
   const [cancelError, setCancelError] = useState("");
-  const [actionMenu, setActionMenu] = useState(null); // "add" | "create" | "budget_pick" | null
+  const [actionMenu, setActionMenu] = useState(null); // "create" | "budget_pick" | null
   const [filterOpen, setFilterOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [selectedGoal, setSelectedGoal] = useState(null);
+  const [selectedCaixinha, setSelectedCaixinha] = useState(null);
+  const [selectedWallet, setSelectedWallet] = useState(null);
+  const [confirmDialog, setConfirmDialog] = useState(null);
   const [healthModal, setHealthModal] = useState(null); // "diagnosis" | "dedoduro" | "tesouraco" | "milestones" | null
-  const [planningView, setPlanningView] = useState("goals"); // "goals" | "budgets"
   const [tourOpen, setTourOpen] = useState(false);
   const [budgetSuggestionResult, setBudgetSuggestionResult] = useState(null);
   const [manageWalletsOpen, setManageWalletsOpen] = useState(false);
@@ -513,20 +517,24 @@ export default function Dashboard({ user }) {
     setDrawer("budget");
   }
 
-  function openCapitalTransfer() {
+  function openCapitalTransfer(descriptionLabel = "") {
     const checking = wallets.find((w) => !w.is_reserved && w.wallet_kind !== "reserve" && w.wallet_kind !== "investment") || wallets[0];
-    const capital = wallets.find((w) => w.is_reserved || w.wallet_kind === "reserve" || w.wallet_kind === "investment") || wallets[1] || wallets[0];
+    const capital = wallets.find((w) => w.is_reserved || w.wallet_kind === "reserve" || w.wallet_kind === "investment") || wallets.find((w) => w.id !== checking?.id) || wallets[0];
     const suggested = capitalBudget?.limitCents > 0 ? centsToMask(capitalBudget.limitCents) : "";
     setForm({
       ...defaultForm("expense"),
+      intent: "transfer",
+      description: descriptionLabel,
       fromWalletId: checking?.id || "",
       toWalletId: capital?.id || "",
       amount: suggested,
       transferredOn: TODAY,
+      settlementState: "paid",
+      idempotencyKey: crypto.randomUUID(),
     });
     setSelectedTitle(null);
     setError("");
-    setDrawer("transfer_capital");
+    setDrawer("title");
   }
 
   async function suggestBudgets() {
@@ -580,13 +588,13 @@ export default function Dashboard({ user }) {
     }
   }
 
-  async function cancelGoal(goalId) {
+  async function cancelGoal(goalId, isCaixinha = false) {
     setBusy(true);
     setError("");
     try {
       await request("PATCH", { action: "cancel_goal", goalId });
       await refresh();
-      setNotice("Simulação removida.");
+      setNotice(isCaixinha ? "Caixinha removida." : "Planejamento de compra removido.");
     } catch (e) {
       setError(e.message);
     } finally {
@@ -629,19 +637,26 @@ export default function Dashboard({ user }) {
     setDrawer("edit_plan");
   }
 
-  async function cancelPlan(planId) {
-    if (!window.confirm("Cancelar esta previsão de gasto? Nenhuma compra já realizada será alterada.")) return;
-    setBusy(true);
-    setError("");
-    try {
-      await request("PATCH", { action: "cancel_spending_plan", planId });
-      await refresh();
-      setNotice("Previsão cancelada.");
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
+  function cancelPlan(planId) {
+    setConfirmDialog({
+      title: "Cancelar previsão de gasto?",
+      body: "Nenhuma compra já realizada será alterada.",
+      confirmLabel: "Cancelar previsão",
+      onConfirm: async () => {
+        setBusy(true);
+        setError("");
+        try {
+          await request("PATCH", { action: "cancel_spending_plan", planId });
+          await refresh();
+          setNotice("Previsão cancelada.");
+        } catch (e) {
+          setError(e.message);
+        } finally {
+          setBusy(false);
+          setConfirmDialog(null);
+        }
+      },
+    });
   }
 
   const field = (name, val) => setForm((old) => ({ ...old, [name]: val }));
@@ -683,14 +698,6 @@ export default function Dashboard({ user }) {
           liquidityKind: walletKind === "investment" ? "d_plus" : "immediate",
           isReserved: walletKind === "reserve" || walletKind === "investment",
         });
-      } else if (drawer === "transfer_capital") {
-        await request("POST", {
-          action: "transfer_capital",
-          fromWalletId: form.fromWalletId,
-          toWalletId: form.toWalletId,
-          amount: maskToDecimal(form.amount),
-          transferredOn: form.transferredOn || TODAY,
-        });
       } else if (drawer === "loan") {
         await request("POST", {
           action: "loan",
@@ -721,7 +728,7 @@ export default function Dashboard({ user }) {
         await request("POST", {
           action: "goal",
           category: "capital_goal",
-          title: form.description || "Meta de capital",
+          title: form.description || "Caixinha",
           target: maskToDecimal(form.goalTarget || "0,00"),
           downPayment: "0.00",
           installmentCount: 1,
@@ -745,18 +752,8 @@ export default function Dashboard({ user }) {
           plannedMonth: form.plannedMonth,
           plannedFor: form.plannedFor || null,
         });
-      } else if (drawer === "asset" || drawer === "liability") {
-        await request("POST", { action: drawer, label: form.label, amount: maskToDecimal(form.amount) });
-      } else if (drawer === "title" && form.direction === "expense" && form.intent === "plan") {
-        await request("POST", {
-          action: "spending_plan",
-          description: form.description,
-          category: form.category,
-          amount: maskToDecimal(form.amount),
-          plannedMonth: form.plannedMonth || TODAY.slice(0, 7),
-          plannedFor: form.plannedFor || null,
-          idempotencyKey: form.idempotencyKey || crypto.randomUUID(),
-        });
+      } else if (drawer === "asset") {
+        await request("POST", { action: "asset", label: form.label, amount: maskToDecimal(form.amount) });
       } else if (drawer === "credit_card") {
         await request("POST", {
           action: "credit_card",
@@ -826,7 +823,7 @@ export default function Dashboard({ user }) {
           });
         }
       }
-      setNotice("Operação salva. Os valores e as projeções foram atualizados.");
+      setNotice("Salvo com sucesso.");
       await refresh();
       if (!form.keepOpen || drawer !== "title") setDrawer(null);
       else setForm((old) => ({ ...old, description: "", amount: "", idempotencyKey: crypto.randomUUID() }));
@@ -854,7 +851,7 @@ export default function Dashboard({ user }) {
       setCancelTarget(null);
       setDrawer(null);
       const suffix = result.preserved_paid > 0 ? " Pagamentos já realizados foram preservados." : "";
-      setNotice(`Exclusão confirmada. Obrigações pendentes canceladas: ${result.affected || 0}.${suffix}`);
+      setNotice(`Lançamento excluído.${suffix}`);
     } catch (e) {
       setCancelError(e.message);
     } finally {
@@ -862,37 +859,51 @@ export default function Dashboard({ user }) {
     }
   }
 
-  async function reverseSettlement(id) {
-    if (!window.confirm("Desfazer esta baixa? O histórico será preservado e o valor voltará a ficar pendente.")) return;
-    setBusy(true);
-    setError("");
-    try {
-      await request("PATCH", { action: "reverse", settlementId: id });
-      await refresh();
-      setNotice("Baixa revertida. O histórico foi preservado.");
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
+  function reverseSettlement(id) {
+    setConfirmDialog({
+      title: "Desfazer este pagamento?",
+      body: "O histórico será preservado e o valor voltará a ficar pendente.",
+      confirmLabel: "Desfazer pagamento",
+      onConfirm: async () => {
+        setBusy(true);
+        setError("");
+        try {
+          await request("PATCH", { action: "reverse", settlementId: id });
+          await refresh();
+          setNotice("Pagamento desfeito. O lançamento voltou a ficar pendente.");
+        } catch (e) {
+          setError(e.message);
+        } finally {
+          setBusy(false);
+          setConfirmDialog(null);
+        }
+      },
+    });
   }
 
-  async function stopRecurring(id) {
+  function stopRecurring(id) {
     const t = titles.find((item) => item.id === id);
-    if (!t?.series_id || !window.confirm("Encerrar a repetição a partir desta ocorrência? Meses anteriores serão mantidos."))
-      return;
-    setBusy(true);
-    setError("");
-    try {
-      await request("PATCH", { action: "stop_recurring", ruleId: t.series_id, startsOn: isoDate(t.due_on) });
-      await refresh();
-      setNotice("Recorrência encerrada a partir da data escolhida.");
-      setDrawer(null);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
+    if (!t?.series_id) return;
+    setConfirmDialog({
+      title: "Encerrar recorrência?",
+      body: "A repetição será encerrada a partir desta ocorrência. Os meses anteriores serão mantidos.",
+      confirmLabel: "Encerrar recorrência",
+      onConfirm: async () => {
+        setBusy(true);
+        setError("");
+        try {
+          await request("PATCH", { action: "stop_recurring", ruleId: t.series_id, startsOn: isoDate(t.due_on) });
+          await refresh();
+          setNotice("Recorrência encerrada a partir da data escolhida.");
+          setDrawer(null);
+        } catch (e) {
+          setError(e.message);
+        } finally {
+          setBusy(false);
+          setConfirmDialog(null);
+        }
+      },
+    });
   }
 
   function handleAction(action, id) {
@@ -970,67 +981,27 @@ export default function Dashboard({ user }) {
 
   return (
     <div className="app">
-      <header className="topbar">
-        <button type="button" className="brand" onClick={() => setTab("overview")} aria-label="kuantoconta, Visão geral">
-          <span className="brand-mark">k</span>
-          <span className="brand-name">kuantoconta</span>
-        </button>
-        <div className="topbar-right">
-          <button
-            type="button"
-            className="bell-btn"
-            aria-label={`Notificações (${notifications.length})`}
-            onClick={() => setNotificationsOpen(true)}
-          >
-            <Bell size={18} aria-hidden="true" />
-            {notifications.length > 0 && <span className="bell-badge">{notifications.length}</span>}
+      <header className="topbar" aria-label="Cabeçalho e ações">
+        <div className="topbar-left">
+          <button type="button" className="brand" onClick={() => setTab("overview")} aria-label="kuantoconta, Visão geral">
+            <span className="brand-mark">k</span>
+            <span className="brand-name">kuantoconta</span>
           </button>
-          <button
-            type="button"
-            className="avatar"
-            title={user.email}
-            aria-label="Abrir Perfil"
-            onClick={() => setTab("profile")}
-          >
-            {(user.name || user.email || "U").slice(0, 1).toUpperCase()}
-          </button>
+          {active !== "profile" && (
+            <div className="topbar-actions" data-tour="actions">
+              <button type="button" className="pill pill-primary" onClick={() => open("title", null, "bill")}>
+                <Plus size={17} aria-hidden="true" />
+                Lançamento
+              </button>
+              <button type="button" className="pill pill-secondary" onClick={() => setActionMenu("create")}>
+                Novo
+              </button>
+            </div>
+          )}
         </div>
-      </header>
 
-      {active !== "profile" && (
-        <section className="toolbar" aria-label="Ações e período">
-          <div className="toolbar-left" data-tour="actions">
-            <button type="button" className="pill pill-primary" onClick={() => open("title", null, "bill")}>
-              <Plus size={17} aria-hidden="true" />
-              Lançamento
-            </button>
-            <button type="button" className="pill pill-secondary" onClick={() => setActionMenu("create")}>
-              Criar
-            </button>
-            {active === "planning" && (
-              <div className="toolbar-segmented" role="tablist" aria-label="Visão de planejamento">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={planningView === "goals"}
-                  className={planningView === "goals" ? "active" : ""}
-                  onClick={() => setPlanningView("goals")}
-                >
-                  Compras planejadas
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={planningView === "budgets"}
-                  className={planningView === "budgets" ? "active" : ""}
-                  onClick={() => setPlanningView("budgets")}
-                >
-                  Limites por categoria
-                </button>
-              </div>
-            )}
-          </div>
-          <div className="toolbar-right" data-tour="filters">
+        {active !== "profile" && (
+          <div className="topbar-center" data-tour="filters">
             {isCustomRange && (
               <button
                 type="button"
@@ -1050,20 +1021,44 @@ export default function Dashboard({ user }) {
                 <ChevronRight size={19} strokeWidth={2.5} aria-hidden="true" />
               </button>
             </div>
-            <div className="filter-wrap">
-              <button
-                type="button"
-                className="filter-btn"
-                aria-label="Abrir filtros desta tela"
-                aria-expanded={filterOpen}
-                onClick={() => setFilterOpen(true)}
-              >
-                <SlidersHorizontal size={19} aria-hidden="true" />
-              </button>
-            </div>
+            {active !== "health" && (
+              <div className="filter-wrap">
+                <button
+                  type="button"
+                  className="filter-btn"
+                  aria-label="Abrir filtros desta tela"
+                  aria-expanded={filterOpen}
+                  onClick={() => setFilterOpen(true)}
+                >
+                  <SlidersHorizontal size={19} aria-hidden="true" />
+                </button>
+              </div>
+            )}
           </div>
-        </section>
-      )}
+        )}
+
+        <div className="topbar-right">
+          <button
+            type="button"
+            className="bell-btn"
+            aria-label={`Notificações (${notifications.length})`}
+            onClick={() => setNotificationsOpen(true)}
+          >
+            <Bell size={18} aria-hidden="true" />
+            {notifications.length > 0 && <span className="bell-badge">{notifications.length}</span>}
+          </button>
+          <button
+            type="button"
+            className={`avatar${active === "profile" ? " active" : ""}`}
+            title={user.email}
+            aria-label="Abrir Perfil"
+            aria-current={active === "profile" ? "page" : undefined}
+            onClick={() => setTab("profile")}
+          >
+            {(user.name || user.email || "U").slice(0, 1).toUpperCase()}
+          </button>
+        </div>
+      </header>
 
       {error && (
         <div className="notice error" role="alert">
@@ -1118,7 +1113,7 @@ export default function Dashboard({ user }) {
                   <strong className="metric-value">{display(summary.receivable.total)}</strong>
                 </span>
               </button>
-              <button type="button" className="card metric-card clickable" onClick={() => setTab("planning")}>
+              <button type="button" className="card metric-card clickable" onClick={() => setTab("budgets")}>
                 <span className="metric-icon">
                   <TrendingUp size={24} aria-hidden="true" />
                 </span>
@@ -1129,7 +1124,7 @@ export default function Dashboard({ user }) {
                   </strong>
                   {summary.knownCash && capitalBalanceCents > 0 && (
                     <span className="metric-sub-mini">
-                      Uso: {money(checkingBalanceCents)} · Capital: {money(capitalBalanceCents)}
+                      Uso: {money(checkingBalanceCents)} · Reserva: {money(capitalBalanceCents)}
                     </span>
                   )}
                 </span>
@@ -1149,8 +1144,8 @@ export default function Dashboard({ user }) {
               <article className="card commitments">
                 <div className="card-heading">
                   <h2 className="card-title">Próximos compromissos</h2>
-                  <button type="button" className="icon-ghost-btn" aria-label="Ver todos os movimentos" title="Ver todos os movimentos" onClick={() => setTab("movements")}>
-                    <ChevronRight size={19} aria-hidden="true" />
+                  <button type="button" className="pill pill-secondary pill-compact" onClick={() => setTab("movements")}>
+                    Ver todos <ChevronRight size={15} aria-hidden="true" />
                   </button>
                 </div>
                 <div className="commitments-body">{titlesTable(true)}</div>
@@ -1159,20 +1154,15 @@ export default function Dashboard({ user }) {
               <article className="card limits">
                 <div className="limits-heading">
                   <div>
-                    <div className="eyebrow">LIMITES MENSAIS</div>
+                    <div className="eyebrow">ORÇAMENTOS DO MÊS</div>
                     <div className="month-heading">{monthLong}</div>
                   </div>
                   <button
                     type="button"
-                    className="icon-ghost-btn"
-                    aria-label="Gerenciar limites"
-                    title="Gerenciar limites"
-                    onClick={() => {
-                      setPlanningView("budgets");
-                      setTab("planning");
-                    }}
+                    className="pill pill-secondary pill-compact"
+                    onClick={() => setTab("budgets")}
                   >
-                    <SlidersHorizontal size={17} aria-hidden="true" />
+                    Ver orçamentos <ChevronRight size={15} aria-hidden="true" />
                   </button>
                 </div>
                 <div className="limits-body">
@@ -1223,39 +1213,95 @@ export default function Dashboard({ user }) {
                     <div className="eyebrow">CONTAS BANCÁRIAS</div>
                     <h2 className="chart-title">Saldos em conta</h2>
                   </div>
-                  <div style={{ display: "flex", gap: 4 }}>
-                    <button type="button" className="icon-ghost-btn" aria-label="Gerenciar contas" title="Gerenciar contas" onClick={() => setManageWalletsOpen(true)}>
-                      <SlidersHorizontal size={17} aria-hidden="true" />
-                    </button>
-                    <button type="button" className="icon-ghost-btn" aria-label="Nova conta" title="Nova conta" onClick={() => open("wallet")}>
-                      <Plus size={19} aria-hidden="true" />
-                    </button>
-                  </div>
+                  <button type="button" className="pill pill-secondary pill-compact" onClick={() => setManageWalletsOpen(true)}>
+                    Gerenciar
+                  </button>
                 </div>
                 <div className="bank-box">
                   <div className="bank-box-header">
                     <strong>Suas contas</strong>
-                    <span>{wallets.length} cadastradas</span>
+                    <span>Toque em uma conta para gerenciar</span>
                     <strong className="bank-total">{display(summary.liveCash)}</strong>
                   </div>
                   {wallets.length ? (
                     <div className="bank-rows">
-                      {wallets.slice(0, 3).map((w) => (
-                        <div className="account-row" key={w.id}>
+                      {wallets.slice(0, 4).map((w) => (
+                        <button
+                          type="button"
+                          className="account-row clickable-row"
+                          key={w.id}
+                          onClick={() => setSelectedWallet(w)}
+                        >
                           <BankIcon name={w.name} size={36} />
                           <span className="account-name">{w.name}</span>
                           <span className="account-balance">
                             <strong>{display(walletBalance(w))}</strong>
-                            <span>Saldo realizado</span>
+                            <span>{(w.is_reserved || w.wallet_kind === "reserve" || w.wallet_kind === "investment") ? "Reserva / Caixinha" : "Uso diário"}</span>
                           </span>
-                        </div>
+                        </button>
                       ))}
                     </div>
                   ) : (
-                    <Empty>Nenhuma conta cadastrada.</Empty>
+                    <Empty>Nenhuma conta cadastrada. Use Novo → Conta bancária.</Empty>
                   )}
                 </div>
               </article>
+            </section>
+
+            <section className="card panel" style={{ marginTop: 18 }} aria-label="Cartões de crédito e faturas">
+              <div className="card-heading" style={{ marginBottom: 14 }}>
+                <div>
+                  <div className="eyebrow">CRÉDITO E FATURAS DO MÊS</div>
+                  <h2 className="card-title">Cartões de crédito</h2>
+                </div>
+                <button
+                  type="button"
+                  className="pill pill-outline-orange pill-compact"
+                  onClick={() => open("credit_card")}
+                >
+                  <Plus size={15} aria-hidden="true" /> Novo cartão
+                </button>
+              </div>
+              {creditCards.length ? (
+                <div className="goals-bento-grid">
+                  {creditCards.map((c) => {
+                    const usage = computeCardUsage(c, expanded?.titles || []);
+                    const cyc = computeInvoiceCycleForPurchase({
+                      purchaseDate: TODAY,
+                      closingDay: c.closing_day,
+                      dueDay: c.due_day,
+                    });
+                    return (
+                      <button
+                        type="button"
+                        key={c.id}
+                        className="budget-card clickable-card"
+                        style={{ width: "100%" }}
+                        onClick={() => setInvoiceModal({ cardId: c.id, month: cyc.invoiceMonth })}
+                      >
+                        <div className="budget-row-top">
+                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                            <BankIcon name={c.name} size={36} />
+                            <div>
+                              <strong>{c.name}</strong>
+                              <div className="hint">Fecha dia {c.closing_day} · Vence dia {c.due_day}</div>
+                            </div>
+                          </div>
+                          <div style={{ textAlign: "right" }}>
+                            <strong style={{ color: "var(--kc-ink)" }}>{money(usage.usedLimitCents)}</strong>
+                            <div className="hint">Disponível: {money(usage.availableLimitCents)}</div>
+                          </div>
+                        </div>
+                        <div className="budget-bar" role="progressbar" aria-valuenow={usage.utilizationPct} aria-valuemin={0} aria-valuemax={100}>
+                          <div className={`budget-fill${usage.utilizationPct >= 90 ? " over" : usage.utilizationPct >= 75 ? " warn" : ""}`} style={{ width: `${usage.utilizationPct}%` }} />
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <Empty>Nenhum cartão cadastrado. Use Novo → Cartão de crédito para acompanhar faturas e limite.</Empty>
+              )}
             </section>
           </>
         )}
@@ -1298,22 +1344,146 @@ export default function Dashboard({ user }) {
                 <label className="search-input">
                   <Search size={17} />
                   <input
-                    placeholder="Buscar título ou categoria"
+                    placeholder="Buscar lançamento ou categoria"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                   />
                 </label>
               </div>
-              <div className="movements-period-nav">
-                <button type="button" onClick={() => selectMonth(-1)} aria-label="Mês anterior">
-                  ‹
+              {titlesTable()}
+            </section>
+          </div>
+        )}
+
+        {active === "budgets" && (
+          <div className="workspace planning-bento">
+            <div className="card kpi-panel bento-hero">
+              <span className="metric-label">Renda prevista em {monthOnly}</span>
+              <strong className="kpi-value kpi-hero-value">{money(monthlyIncomeCents)}</strong>
+              <span className="metric-sub">
+                {monthlyIncomeCents > 0 ? "Base para distribuição dos seus limites do mês" : "Cadastre suas receitas do mês para distribuir limites"}
+              </span>
+            </div>
+            <div className="card kpi-panel bento-kpi">
+              <span className="metric-label">Total orçado no mês</span>
+              <strong className="kpi-value">{money(allocatedBudgetCents)}</strong>
+              <span className="metric-sub">
+                {monthlyIncomeCents > 0 ? `${Math.min(100, Math.round((allocatedBudgetCents / monthlyIncomeCents) * 100))}% da renda alocada` : "Limites por categoria"}
+              </span>
+            </div>
+            <div className="card kpi-panel bento-kpi">
+              <span className="metric-label">Livre para orçar</span>
+              <strong className="kpi-value">{money(remainingAllocableCents)}</strong>
+              <span className="metric-sub">Margem ainda sem teto definido</span>
+            </div>
+
+            <section className="card panel bento-allocation">
+              <div className="card-heading" style={{ marginBottom: 10 }}>
+                <div>
+                  <div className="eyebrow">DIVISÃO INTELIGENTE DA RENDA (50/30/20)</div>
+                  <h2 className="card-title">Limites sugeridos pela sua renda</h2>
+                </div>
+              </div>
+              {monthlyIncomeCents <= 0 ? (
+                <div className="alert">
+                  <AlertTriangle size={16} />
+                  <span>
+                    Cadastre seus valores a receber de {monthLong} primeiro para liberar a criação e sugestão automática de orçamentos.
+                  </span>
+                </div>
+              ) : (
+                <div className="allocation-summary" style={{ marginBottom: 0 }}>
+                  <div>
+                    <span>A receber no mês</span>
+                    <strong>{money(monthlyIncomeCents)}</strong>
+                  </div>
+                  <div>
+                    <span>Alocado nos orçamentos · Disponível: {money(remainingAllocableCents)}</span>
+                    <strong>{money(allocatedBudgetCents)}</strong>
+                  </div>
+                </div>
+              )}
+              <div className="toolbar-buttons" style={{ marginTop: 12 }}>
+                <button
+                  type="button"
+                  className="pill pill-primary pill-compact"
+                  disabled={busy}
+                  onClick={() => {
+                    if (monthlyIncomeCents <= 0) {
+                      setNotice(`Cadastre ao menos uma receita em ${monthLong} para sugerir os limites automaticamente.`);
+                      open("income", null, "bill");
+                      return;
+                    }
+                    suggestBudgets();
+                  }}
+                >
+                  <Sparkles size={15} aria-hidden="true" /> {busy ? "Calculando..." : "Sugerir limites"}
                 </button>
-                <strong>{monthLong}</strong>
-                <button type="button" onClick={() => selectMonth(1)} aria-label="Próximo mês">
-                  ›
+                <button type="button" className="pill pill-outline-orange pill-compact" onClick={() => setActionMenu("budget_pick")}>
+                  <SlidersHorizontal size={15} aria-hidden="true" /> Configurar limite
                 </button>
               </div>
-              {titlesTable()}
+            </section>
+
+            <section className="card panel bento-budgets-list">
+              <div className="card-heading" style={{ marginBottom: 16 }}>
+                <div>
+                  <div className="eyebrow">ORÇAMENTOS DO MÊS</div>
+                  <h2 className="card-title">Limites de {monthLong}</h2>
+                </div>
+                <span className="small-flag">Mês calendário</span>
+              </div>
+              <BudgetList
+                items={budgetItems}
+                monthLabel={monthLong}
+                insufficientCash={summary.minCash !== null && summary.minCash < 0}
+                onEditBudget={openBudget}
+                onFulfillPlan={fulfillPlan}
+                onEditPlan={editPlan}
+                onCancelPlan={cancelPlan}
+              />
+            </section>
+
+            <section className="card panel bento-evolution">
+              <div className="card-heading" style={{ marginBottom: 16 }}>
+                <h2 className="card-title">Evolução mês a mês</h2>
+              </div>
+              <div className="table-scroll">
+                <table className="finance-table">
+                  <thead>
+                    <tr>
+                      <th>Mês</th>
+                      <th>Entradas</th>
+                      <th>Saídas</th>
+                      <th>Sobra/déficit</th>
+                      <th>Saldo (contratual)</th>
+                      <th>Saldo (com planos)</th>
+                      <th>Saldo (com limites)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {months.map((m) => (
+                      <tr key={m.month}>
+                        <td>
+                          <strong>
+                            {new Date(`${m.month}-15T12:00:00Z`).toLocaleDateString("pt-BR", {
+                              month: "long",
+                              year: "numeric",
+                              timeZone: "UTC",
+                            })}
+                          </strong>
+                        </td>
+                        <td>{money(m.income)}</td>
+                        <td>{money(m.expense)}</td>
+                        <td className={m.result < 0 ? "red" : ""}>{money(m.result)}</td>
+                        <td className="money-cell">{display(m.balance)}</td>
+                        <td className="money-cell">{display(m.balanceWithPlans)}</td>
+                        <td className="money-cell">{display(m.balanceWithinBudgets)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </section>
           </div>
         )}
@@ -1321,237 +1491,51 @@ export default function Dashboard({ user }) {
         {active === "planning" && (
           <div className="workspace planning-bento">
             <div className="card kpi-panel bento-hero">
-              <span className="metric-label">Saldos em contas</span>
-              <strong className="kpi-value kpi-hero-value">{display(summary.liveCash)}</strong>
-              <span className="metric-sub">
-                Uso diário: {money(checkingBalanceCents)} · Capital: {money(capitalBalanceCents)}
-              </span>
-            </div>
-            <div className="card kpi-panel bento-kpi">
-              <span className="metric-label">Limites do mês</span>
-              <strong className="kpi-value">{money(allocatedBudgetCents)}</strong>
-              <span className="metric-sub">
-                {monthlyIncomeCents > 0 ? `De ${money(monthlyIncomeCents)} a receber` : "Cadastre seus a receber"}
-              </span>
-            </div>
-            <div className="card kpi-panel bento-kpi">
-              <span className="metric-label">Endividamento total</span>
-              <strong className="kpi-value">{debtDisplay}</strong>
-              <span className="metric-sub">Soma até a última parcela</span>
-            </div>
-
-            {planningView === "goals" ? (
-              <section className="card panel bento-full">
-                <div className="card-heading" style={{ marginBottom: 16 }}>
-                  <div>
-                    <div className="eyebrow">COMPRAS E OBJETIVOS</div>
-                    <h2 className="card-title">Planejamentos salvos</h2>
-                  </div>
-                  <button type="button" className="icon-ghost-btn" aria-label="Simular compra" title="Simular compra" onClick={() => open("goal_sim")}>
-                    <Plus size={19} aria-hidden="true" />
-                  </button>
-                </div>
-                {purchaseGoals.length ? (
-                  <div className="goals-bento-grid">
-                    {purchaseGoals
-                      .map((g, idx) => ({
-                        g,
-                        idx,
-                        sim: simulateGoalPurchase(
-                          data || {},
-                          {
-                            title: g.title,
-                            targetCents: cents(g.target_cents),
-                            downPaymentCents: cents(g.down_payment_cents),
-                            installmentCount: Number(g.installment_count || 1),
-                            installmentCents: cents(g.installment_cents),
-                            interestBps: Number(g.interest_bps || 0),
-                            desiredOn: isoDate(g.desired_on) || TODAY,
-                          },
-                          { today: TODAY }
-                        ),
-                      }))
-                      .filter(({ sim }) => !screenFilters.planning.onlyFeasible || sim.isFeasible || Boolean(sim.firstFeasibleDate))
-                      .map(({ g, idx, sim }) => (
-                        <button
-                          type="button"
-                          key={g.id || idx}
-                          className="goal-bento-card"
-                          onClick={() => setSelectedGoal({ raw: g, sim })}
-                        >
-                          <div className="goal-bento-top">
-                            <span className="goal-bento-icon">
-                              <Compass size={18} />
-                            </span>
-                            <span className={`status ${sim.isFeasible ? "done" : sim.firstFeasibleDate ? "partial" : "late"}`}>
-                              {sim.isFeasible ? "Viável na data" : sim.firstFeasibleDate ? `A partir de ${fmtDate(sim.firstFeasibleDate)}` : "Ainda não cabe"}
-                            </span>
-                          </div>
-                          <strong>{g.title}</strong>
-                          <div className="goal-bento-meta">
-                            <span>{money(cents(g.target_cents))}</span>
-                            <small>{g.installment_count > 1 ? `${g.installment_count}x de ${money(cents(g.installment_cents))}` : "À vista"}</small>
-                          </div>
-                        </button>
-                      ))}
-                  </div>
-                ) : (
-                  <Empty>
-                    Nenhum planejamento de compra salvo. Clique em &ldquo;+ Novo planejamento&rdquo; para descobrir o melhor momento para comprar.
-                  </Empty>
-                )}
-              </section>
-            ) : (
-              <>
-                <section className="card panel bento-allocation">
-                  <div className="card-heading" style={{ marginBottom: 14 }}>
-                    <div>
-                      <div className="eyebrow">DIVISÃO INTELIGENTE DA RENDA</div>
-                      <h2 className="card-title">Limites sugeridos pela sua renda</h2>
-                    </div>
-                    <div className="toolbar-buttons">
-                      <button
-                        type="button"
-                        className="pill pill-primary pill-compact"
-                        disabled={busy}
-                        onClick={() => {
-                          if (monthlyIncomeCents <= 0) {
-                            setNotice(`Cadastre ao menos uma receita em ${monthLong} para sugerir os limites automaticamente.`);
-                            open("income", null, "bill");
-                            return;
-                          }
-                          suggestBudgets();
-                        }}
-                      >
-                        <Sparkles size={15} aria-hidden="true" /> {busy ? "Calculando..." : "Sugerir limites"}
-                      </button>
-                      <button type="button" className="pill pill-outline-orange pill-compact" onClick={() => setActionMenu("budget_pick")}>
-                        <SlidersHorizontal size={15} aria-hidden="true" /> Configurar limite
-                      </button>
-                      {wallets.length >= 2 && (
-                        <button type="button" className="icon-ghost-btn" aria-label="Efetivar aporte Capital" title="Efetivar aporte Capital" onClick={openCapitalTransfer}>
-                          <TrendingUp size={18} aria-hidden="true" />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  {monthlyIncomeCents <= 0 ? (
-                    <div className="alert">
-                      <AlertTriangle size={16} />
-                      <span>
-                        Cadastre seus valores a receber de {monthLong} primeiro para liberar a criação e sugestão automática de orçamentos.
-                      </span>
-                    </div>
-                  ) : (
-                    <div className="allocation-summary" style={{ marginBottom: 0 }}>
-                      <div>
-                        <span>A receber no mês</span>
-                        <strong>{money(monthlyIncomeCents)}</strong>
-                      </div>
-                      <div>
-                        <span>Alocado nos orçamentos · Disponível: {money(remainingAllocableCents)}</span>
-                        <strong>{money(allocatedBudgetCents)}</strong>
-                      </div>
-                    </div>
-                  )}
-                </section>
-
-                <section className="card panel bento-budgets-list">
-                  <div className="card-heading" style={{ marginBottom: 16 }}>
-                    <div>
-                      <div className="eyebrow">ORÇAMENTOS DO MÊS</div>
-                      <h2 className="card-title">Limites de {monthLong}</h2>
-                    </div>
-                    <span className="small-flag">Mês calendário</span>
-                  </div>
-                  <BudgetList
-                    items={budgetItems}
-                    monthLabel={monthLong}
-                    insufficientCash={summary.minCash !== null && summary.minCash < 0}
-                    onEditBudget={openBudget}
-                    onFulfillPlan={fulfillPlan}
-                    onEditPlan={editPlan}
-                    onCancelPlan={cancelPlan}
-                  />
-                </section>
-
-                <section className="card panel bento-evolution">
-                  <div className="card-heading" style={{ marginBottom: 16 }}>
-                    <h2 className="card-title">Evolução mês a mês</h2>
-                  </div>
-                  <div className="table-scroll">
-                    <table className="finance-table">
-                      <thead>
-                        <tr>
-                          <th>Mês</th>
-                          <th>Entradas</th>
-                          <th>Saídas</th>
-                          <th>Sobra/déficit</th>
-                          <th>Saldo (contratual)</th>
-                          <th>Saldo (com planos)</th>
-                          <th>Saldo (com limites)</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {months.map((m) => (
-                          <tr key={m.month}>
-                            <td>
-                              <strong>
-                                {new Date(`${m.month}-15T12:00:00Z`).toLocaleDateString("pt-BR", {
-                                  month: "long",
-                                  year: "numeric",
-                                  timeZone: "UTC",
-                                })}
-                              </strong>
-                            </td>
-                            <td>{money(m.income)}</td>
-                            <td>{money(m.expense)}</td>
-                            <td className={m.result < 0 ? "red" : ""}>{money(m.result)}</td>
-                            <td className="money-cell">{display(m.balance)}</td>
-                            <td className="money-cell">{display(m.balanceWithPlans)}</td>
-                            <td className="money-cell">{display(m.balanceWithinBudgets)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </section>
-              </>
-            )}
-          </div>
-        )}
-
-        {active === "patrimony" && (
-          <div className="workspace capital-bento">
-            <div className="card kpi-panel bento-hero">
-              <span className="metric-label">Capital formado hoje</span>
+              <span className="metric-label">Guardado em Caixinhas e Reserva</span>
               <strong className="kpi-value kpi-hero-value">{summary.knownCash ? money(capitalBalanceCents) : "A calcular"}</strong>
               <span className="metric-sub">
-                {summary.knownCash
-                  ? `${capitalProjectedAtDateCents - capitalBalanceCents >= 0 ? "+" : "−"}${money(Math.abs(capitalProjectedAtDateCents - capitalBalanceCents))} previstos até ${fmtDate(date)} · Carteiras de Capital e Reserva`
-                  : "Carteiras de Capital e Reserva"}
+                Dinheiro separado nas suas contas de Reserva e Capital · Uso diário: {money(checkingBalanceCents)}
               </span>
             </div>
             <div className="card kpi-panel bento-kpi">
-              <span className="metric-label">Capital projetado em {fmtDate(date)}</span>
-              <strong className="kpi-value">{summary.knownCash ? money(capitalProjectedAtDateCents) : "A calcular"}</strong>
-              <span className="metric-sub">Considerando aportes previstos no período</span>
+              <span className="metric-label">Ritmo para guardar</span>
+              <strong className="kpi-value">{money(capitalBudget?.limitCents || 0)}/mês</strong>
+              <span className="metric-sub">
+                {capitalBudget?.limitCents > 0 ? "Definido no seu orçamento mensal" : "Defina na aba Orçamentos"}
+              </span>
             </div>
             <div className="card kpi-panel bento-kpi">
-              <span className="metric-label">Endividamento total</span>
-              <strong className="kpi-value">{debtDisplay}</strong>
-              <span className="metric-sub">Soma até a última parcela</span>
+              <span className="metric-label">Objetivos e compras</span>
+              <strong className="kpi-value">{capitalGoals.length + purchaseGoals.length}</strong>
+              <span className="metric-sub">
+                {capitalGoals.length} caixinha(s) · {purchaseGoals.length} compra(s)
+              </span>
             </div>
 
-            <section className="card panel bento-goals">
+            <section className="card panel bento-caixinhas">
               <div className="card-heading" style={{ marginBottom: 14 }}>
                 <div>
-                  <div className="eyebrow">RITMO DE FORMAÇÃO DE CAPITAL</div>
-                  <h2 className="card-title">Metas de capital</h2>
+                  <div className="eyebrow">GUARDAR DINHEIRO · ESTILO CAIXINHAS</div>
+                  <h2 className="card-title">Meus objetivos</h2>
                 </div>
-                <button type="button" className="icon-ghost-btn" aria-label="Nova meta de capital" title="Nova meta de capital" onClick={() => open("capital_goal")}>
-                  <Target size={18} aria-hidden="true" />
-                </button>
+                <div className="toolbar-buttons">
+                  {wallets.length >= 2 && (
+                    <button
+                      type="button"
+                      className="pill pill-secondary pill-compact"
+                      onClick={() => openCapitalTransfer("Guardar na Caixinha")}
+                    >
+                      <ArrowLeftRight size={14} aria-hidden="true" /> Guardar valor
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="pill pill-outline-orange pill-compact"
+                    onClick={() => open("capital_goal")}
+                  >
+                    <Plus size={15} aria-hidden="true" /> Nova caixinha
+                  </button>
+                </div>
               </div>
               {capitalGoals.length ? (
                 <div className="budget-list">
@@ -1564,26 +1548,30 @@ export default function Dashboard({ user }) {
                       today: TODAY,
                     });
                     return (
-                      <article className="budget-card" key={g.id}>
+                      <button
+                        type="button"
+                        className="budget-card clickable-card"
+                        style={{ width: "100%" }}
+                        key={g.id}
+                        onClick={() => setSelectedCaixinha({ raw: g, pace })}
+                      >
                         <div className="budget-row-top">
-                          <div className="budget-expand">
-                            <strong>{g.title}</strong>
-                            <span className={`status ${pace.onPace ? "done" : "late"}`}>
-                              {pace.onPace ? "No ritmo" : "Abaixo do ritmo"}
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <span className="goal-bento-icon" style={{ width: 32, height: 32 }}>
+                              <Target size={16} />
                             </span>
+                            <div>
+                              <strong>{g.title}</strong>
+                              <div className="hint">Meta para {fmtDate(g.desired_on)}</div>
+                            </div>
                           </div>
-                          <div className="budget-right">
-                            <span className="budget-remaining">
-                              Meta: <strong>{money(pace.targetCents)}</strong> até {fmtDate(g.desired_on)}
+                          <div style={{ textAlign: "right" }}>
+                            <span className={`status ${pace.onPace ? "done" : "late"}`}>
+                              {pace.onPace ? "No ritmo" : "Atenção ao prazo"}
                             </span>
-                            <button
-                              type="button"
-                              className="tiny-btn"
-                              aria-label={`Remover meta ${g.title}`}
-                              onClick={() => cancelGoal(g.id)}
-                            >
-                              <Trash2 size={13} />
-                            </button>
+                            <div className="hint" style={{ marginTop: 4 }}>
+                              <strong>{money(pace.currentCapitalCents)}</strong> de {money(pace.targetCents)}
+                            </div>
                           </div>
                         </div>
                         <div className="budget-bar" role="progressbar" aria-valuenow={pace.progressPct} aria-valuemin={0} aria-valuemax={100}>
@@ -1591,22 +1579,159 @@ export default function Dashboard({ user }) {
                         </div>
                         <div className="budget-meta">
                           <span>
-                            Acumulado: <strong>{money(pace.currentCapitalCents)}</strong> ({pace.progressPct}%) ·{" "}
                             {pace.onPace
-                              ? `Aporte atual (${money(pace.monthlyContributionCents)}/mês) bate a meta`
-                              : `Precisa de ${money(pace.requiredMonthlyCents)}/mês (faltam +${money(pace.monthlyGapCents)}/mês)`}
+                              ? `Ritmo atual (${money(pace.monthlyContributionCents)}/mês) alcança o objetivo`
+                              : `Guarde ${money(pace.requiredMonthlyCents)}/mês para alcançar no prazo`}
                           </span>
-                          <span>Faltam: {money(pace.remainingCents)}</span>
+                          <span>{pace.progressPct}% · Toque para detalhes ›</span>
                         </div>
-                      </article>
+                      </button>
                     );
                   })}
                 </div>
               ) : (
                 <Empty>
-                  Defina uma meta de capital (ex.: R$ 5.000 até dezembro) para acompanhar se seus aportes estão no ritmo certo.
+                  Crie uma caixinha (ex.: Reserva de emergência, Viagem, Carro novo) em &ldquo;+ Nova caixinha&rdquo; para guardar dinheiro e acompanhar seu progresso.
                 </Empty>
               )}
+            </section>
+
+            <section className="card panel bento-purchases">
+              <div className="card-heading" style={{ marginBottom: 14 }}>
+                <div>
+                  <div className="eyebrow">SIMULADOR DE VIABILIDADE</div>
+                  <h2 className="card-title">Compras planejadas</h2>
+                </div>
+                <button
+                  type="button"
+                  className="pill pill-outline-orange pill-compact"
+                  onClick={() => open("goal_sim")}
+                >
+                  <Plus size={15} aria-hidden="true" /> Simular compra
+                </button>
+              </div>
+              {purchaseGoals.length ? (
+                <div className="goals-bento-grid">
+                  {purchaseGoals
+                    .map((g, idx) => ({
+                      g,
+                      idx,
+                      sim: simulateGoalPurchase(
+                        data || {},
+                        {
+                          title: g.title,
+                          targetCents: cents(g.target_cents),
+                          downPaymentCents: cents(g.down_payment_cents),
+                          installmentCount: Number(g.installment_count || 1),
+                          installmentCents: cents(g.installment_cents),
+                          interestBps: Number(g.interest_bps || 0),
+                          desiredOn: isoDate(g.desired_on) || TODAY,
+                        },
+                        { today: TODAY }
+                      ),
+                    }))
+                    .filter(({ sim }) => !screenFilters.planning.onlyFeasible || sim.isFeasible || Boolean(sim.firstFeasibleDate))
+                    .map(({ g, idx, sim }) => (
+                      <button
+                        type="button"
+                        key={g.id || idx}
+                        className="goal-bento-card"
+                        onClick={() => setSelectedGoal({ raw: g, sim })}
+                      >
+                        <div className="goal-bento-top">
+                          <span className="goal-bento-icon">
+                            <Compass size={18} />
+                          </span>
+                          <span className={`status ${sim.isFeasible ? "done" : sim.firstFeasibleDate ? "partial" : "late"}`}>
+                            {sim.isFeasible ? "Viável na data" : sim.firstFeasibleDate ? `A partir de ${fmtDate(sim.firstFeasibleDate)}` : "Ainda não cabe"}
+                          </span>
+                        </div>
+                        <strong>{g.title}</strong>
+                        <div className="goal-bento-meta">
+                          <span>{money(cents(g.target_cents))}</span>
+                          <small>{g.installment_count > 1 ? `${g.installment_count}x de ${money(cents(g.installment_cents))}` : "À vista"}</small>
+                        </div>
+                      </button>
+                    ))}
+                </div>
+              ) : (
+                <Empty>
+                  Nenhuma compra planejada salva. Toque em &ldquo;+ Simular compra&rdquo; para descobrir o melhor momento para comprar sem apertar seu mês.
+                </Empty>
+              )}
+            </section>
+          </div>
+        )}
+
+        {active === "patrimony" && (
+          <div className="workspace capital-bento">
+            <div className="card kpi-panel bento-hero">
+              <span className="metric-label">Capital formado hoje</span>
+              <strong className="kpi-value kpi-hero-value">{summary.knownCash ? money(capitalBalanceCents) : "A calcular"}</strong>
+              <span className="metric-sub">
+                {summary.knownCash
+                  ? `${capitalProjectedAtDateCents - capitalBalanceCents >= 0 ? "+" : "−"}${money(Math.abs(capitalProjectedAtDateCents - capitalBalanceCents))} previstos até ${fmtDate(date)} · Contas de Reserva e Capital`
+                  : "Contas de Reserva e Capital"}
+              </span>
+            </div>
+            <div className="card kpi-panel bento-kpi">
+              <span className="metric-label">Capital projetado em {fmtDate(date)}</span>
+              <strong className="kpi-value">{summary.knownCash ? money(capitalProjectedAtDateCents) : "A calcular"}</strong>
+              <span className="metric-sub">Considerando o ritmo mensal planejado</span>
+            </div>
+            <div className="card kpi-panel bento-kpi">
+              <span className="metric-label">Patrimônio líquido em {fmtDate(date)}</span>
+              <strong className="kpi-value">{display(netWorthAtDateCents)}</strong>
+              <span className="metric-sub">Caixa + bens − dívidas ({debtDisplay})</span>
+            </div>
+
+            <section className="card panel bento-wallets">
+              <div className="card-heading" style={{ marginBottom: 14 }}>
+                <div>
+                  <div className="eyebrow">ONDE ESTÁ SEU DINHEIRO</div>
+                  <h2 className="card-title">Contas bancárias e carteiras</h2>
+                </div>
+                <button type="button" className="pill pill-secondary pill-compact" onClick={() => setManageWalletsOpen(true)}>
+                  Gerenciar contas
+                </button>
+              </div>
+              <div className="wallet-list">
+                {wallets.length ? (
+                  wallets
+                    .filter((w) => {
+                      const wf = screenFilters.patrimony.walletKind || "all";
+                      const isCap = w.is_reserved || w.wallet_kind === "reserve" || w.wallet_kind === "investment";
+                      if (wf === "checking") return !isCap;
+                      if (wf === "capital") return isCap;
+                      return true;
+                    })
+                    .map((w) => {
+                      const isCap = w.is_reserved || w.wallet_kind === "reserve" || w.wallet_kind === "investment";
+                      return (
+                        <button
+                          type="button"
+                          className="account-panel-row clickable-row"
+                          key={w.id}
+                          onClick={() => setSelectedWallet(w)}
+                        >
+                          <BankIcon name={w.name} size={40} />
+                          <div className="account-info">
+                            <h3>
+                              {w.name}{" "}
+                              <span className="small-flag" style={{ marginLeft: 6, fontSize: 10 }}>
+                                {isCap ? "Reserva / Caixinha" : "Uso diário"}
+                              </span>
+                            </h3>
+                            <p>Toque para transferir, lançar ou arquivar · Abertura em {w.opening_at ? fmtDate(w.opening_at) : "data não informada"}</p>
+                          </div>
+                          <strong>{display(walletBalance(w))} ›</strong>
+                        </button>
+                      );
+                    })
+                ) : (
+                  <Empty>Nenhuma conta cadastrada. Use Novo → Conta bancária.</Empty>
+                )}
+              </div>
             </section>
 
             <section className="card panel bento-chart">
@@ -1628,129 +1753,18 @@ export default function Dashboard({ user }) {
               )}
             </section>
 
-            <section className="card panel bento-wallets">
-              <div className="card-heading" style={{ marginBottom: 14 }}>
-                <h2 className="card-title">Contas bancárias e carteiras</h2>
-                <div className="toolbar-buttons">
-                  {wallets.length >= 2 && (
-                    <button type="button" className="icon-ghost-btn" aria-label="Efetivar aporte" title="Efetivar aporte" onClick={openCapitalTransfer}>
-                      <TrendingUp size={18} aria-hidden="true" />
-                    </button>
-                  )}
-                  <button type="button" className="icon-ghost-btn" aria-label="Gerenciar contas" title="Gerenciar contas" onClick={() => setManageWalletsOpen(true)}>
-                    <SlidersHorizontal size={17} aria-hidden="true" />
-                  </button>
-                  <button type="button" className="icon-ghost-btn" aria-label="Nova conta" title="Nova conta" onClick={() => open("wallet")}>
-                    <Plus size={19} aria-hidden="true" />
-                  </button>
-                </div>
-              </div>
-              <div className="wallet-list">
-                {wallets.length ? (
-                  wallets
-                    .filter((w) => {
-                      const wf = screenFilters.patrimony.walletKind || "all";
-                      const isCap = w.is_reserved || w.wallet_kind === "reserve" || w.wallet_kind === "investment";
-                      if (wf === "checking") return !isCap;
-                      if (wf === "capital") return isCap;
-                      return true;
-                    })
-                    .map((w) => {
-                      const isCap = w.is_reserved || w.wallet_kind === "reserve" || w.wallet_kind === "investment";
-                      return (
-                        <article className="account-panel-row" key={w.id}>
-                          <BankIcon name={w.name} size={40} />
-                          <div className="account-info">
-                            <h3>
-                              {w.name}{" "}
-                              <span className="small-flag" style={{ marginLeft: 6, fontSize: 10 }}>
-                                {isCap ? "Capital / Reserva" : "Uso diário"}
-                              </span>
-                            </h3>
-                            <p>Saldo inicial em {w.opening_at ? fmtDate(w.opening_at) : "data não informada"}</p>
-                          </div>
-                          <strong>{display(walletBalance(w))}</strong>
-                        </article>
-                      );
-                    })
-                ) : (
-                  <Empty>Nenhuma conta cadastrada.</Empty>
-                )}
-              </div>
-            </section>
-
-            <section className="card panel bento-cards">
-              <div className="card-heading" style={{ marginBottom: 14 }}>
-                <div>
-                  <div className="eyebrow">CRÉDITO E FATURAS</div>
-                  <h2 className="card-title">Cartões de crédito</h2>
-                </div>
-                <button
-                  type="button"
-                  className="icon-ghost-btn"
-                  aria-label="Novo cartão de crédito"
-                  title="Novo cartão de crédito"
-                  onClick={() => open("credit_card")}
-                >
-                  <Plus size={19} aria-hidden="true" />
-                </button>
-              </div>
-              {creditCards.length ? (
-                <div className="budget-list">
-                  {creditCards.map((c) => {
-                    const usage = computeCardUsage(c, expanded?.titles || []);
-                    const cyc = computeInvoiceCycleForPurchase({
-                      purchaseDate: TODAY,
-                      closingDay: c.closing_day,
-                      dueDay: c.due_day,
-                    });
-                    return (
-                      <button
-                        type="button"
-                        key={c.id}
-                        className="budget-card clickable-card"
-                        style={{ width: "100%" }}
-                        onClick={() => setInvoiceModal({ cardId: c.id, month: cyc.invoiceMonth })}
-                      >
-                        <div className="budget-row-top">
-                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                            <BankIcon name={c.name} size={36} />
-                            <div>
-                              <strong>{c.name}</strong>
-                              <div className="hint">Fecha dia {c.closing_day} · Vence dia {c.due_day}</div>
-                            </div>
-                          </div>
-                          <div style={{ textAlign: "right" }}>
-                            <strong style={{ color: "var(--kc-ink)" }}>{money(usage.usedLimitCents)}</strong>
-                            <div className="hint">Disponível: {money(usage.availableLimitCents)}</div>
-                          </div>
-                        </div>
-                        <div className="budget-bar" role="progressbar" aria-valuenow={usage.utilizationPct} aria-valuemin={0} aria-valuemax={100}>
-                          <div className={`budget-fill${usage.utilizationPct >= 90 ? " over" : usage.utilizationPct >= 75 ? " warn" : ""}`} style={{ width: `${usage.utilizationPct}%` }} />
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : (
-                <Empty>Nenhum cartão cadastrado. Use Criar → Cartão de crédito para acompanhar faturas e limite.</Empty>
-              )}
-            </section>
-
             <section className="card panel bento-loans">
               <div className="card-heading" style={{ marginBottom: 14 }}>
                 <div>
-                  <div className="eyebrow">CARTEIRA DE PESSOAS</div>
-                  <h2 className="card-title">Empréstimos a terceiros</h2>
+                  <div className="eyebrow">VALORES A RECEBER DE TERCEIROS</div>
+                  <h2 className="card-title">Carteira de pessoas</h2>
                 </div>
                 <button
                   type="button"
-                  className="icon-ghost-btn"
-                  aria-label="Emprestar dinheiro"
-                  title="Emprestar dinheiro"
+                  className="pill pill-outline-orange pill-compact"
                   onClick={() => open("title", null, "lend")}
                 >
-                  <HandCoins size={19} aria-hidden="true" />
+                  <Plus size={15} aria-hidden="true" /> Emprestar
                 </button>
               </div>
               {peopleLoans.length ? (
@@ -1784,32 +1798,23 @@ export default function Dashboard({ user }) {
                   ))}
                 </div>
               ) : (
-                <Empty>Nenhum empréstimo para terceiros registrado. Use + Lançamento → Emprestar para acompanhar.</Empty>
+                <Empty>Nenhum empréstimo para terceiros registrado. Use + Emprestar para acompanhar.</Empty>
               )}
             </section>
 
-            <div className="register-grid bento-extra">
-              <section className="card panel" style={{ opacity: 0.92 }}>
-                <div className="card-heading">
-                  <div>
-                    <div className="eyebrow">VISÃO COMPLEMENTAR</div>
-                    <h2 className="card-title">Patrimônio líquido em {fmtDate(date)}</h2>
-                  </div>
+            <section className="card panel bento-extra">
+              <div className="card-heading">
+                <div>
+                  <div className="eyebrow">PATRIMÔNIO IMOBILIZADO</div>
+                  <h2 className="card-title">Bens e imóveis</h2>
                 </div>
-                <div className="large-line">{display(netWorthAtDateCents)}</div>
-                <p className="hint">Caixa total projetado + bens declarados − endividamento restante.</p>
-              </section>
-              <section className="card panel" style={{ opacity: 0.92 }}>
-                <div className="card-heading">
-                  <h2 className="card-title">Bens e imóveis (secundário)</h2>
-                  <button type="button" className="tiny-btn" onClick={() => open("asset")}>
-                    <Plus size={15} /> Adicionar
-                  </button>
-                </div>
-                <div className="large-line">{money(summary.assets)}</div>
-                <p className="hint">Bens imobilizados fora do capital líquido.</p>
-              </section>
-            </div>
+                <button type="button" className="pill pill-outline-orange pill-compact" onClick={() => open("asset")}>
+                  <Plus size={15} /> Adicionar bem
+                </button>
+              </div>
+              <div className="large-line">{money(summary.assets)}</div>
+              <p className="hint">Imóveis, veículos ou investimentos registrados fora do saldo das contas bancárias.</p>
+            </section>
           </div>
         )}
 
@@ -1937,11 +1942,11 @@ export default function Dashboard({ user }) {
                 <section className="card panel">
                   <div className="card-heading" style={{ marginBottom: 10 }}>
                     <div>
-                      <div className="eyebrow">DEDO DURO · PADRÕES DE CONSUMO</div>
+                      <div className="eyebrow">PADRÕES DE CONSUMO</div>
                       <h2 className="card-title">Onde o dinheiro escoa</h2>
                     </div>
-                    <button type="button" className="icon-ghost-btn" aria-label="Detalhes de consumo" title="Detalhes de consumo" onClick={() => setHealthModal("dedoduro")}>
-                      <ChevronRight size={19} aria-hidden="true" />
+                    <button type="button" className="pill pill-secondary pill-compact" onClick={() => setHealthModal("dedoduro")}>
+                      Ver detalhes <ChevronRight size={14} aria-hidden="true" />
                     </button>
                   </div>
                   {habits.topLeaks.length > 0 ? (
@@ -1968,11 +1973,11 @@ export default function Dashboard({ user }) {
                 <section className="card panel">
                   <div className="card-heading" style={{ marginBottom: 10 }}>
                     <div>
-                      <div className="eyebrow">TESOURAÇO · REEDUCAÇÃO</div>
+                      <div className="eyebrow">REEDUCAÇÃO</div>
                       <h2 className="card-title">Potencial de corte</h2>
                     </div>
-                    <button type="button" className="icon-ghost-btn" aria-label="Ver onde cortar" title="Ver onde cortar" onClick={() => setHealthModal("tesouraco")}>
-                      <Scissors size={18} aria-hidden="true" />
+                    <button type="button" className="pill pill-secondary pill-compact" onClick={() => setHealthModal("tesouraco")}>
+                      <Scissors size={14} aria-hidden="true" /> Ver cortes
                     </button>
                   </div>
                   {habits.tesouraco.potentialMonthlySavingsCents > 0 ? (
@@ -2079,60 +2084,12 @@ export default function Dashboard({ user }) {
           <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="actionDialogTitle">
             <div className="dialog-head">
               <h2 id="actionDialogTitle">
-                {actionMenu === "add"
-                  ? "Adicionar"
-                  : actionMenu === "create"
-                    ? "Criar"
-                    : "Definir limite mensal"}
+                {actionMenu === "create" ? "Novo" : "Definir limite mensal"}
               </h2>
               <button type="button" className="dialog-close" onClick={() => setActionMenu(null)} aria-label="Fechar">
                 <X size={17} />
               </button>
             </div>
-
-            {actionMenu === "add" && (
-              <div className="action-menu">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActionMenu(null);
-                    open("title", null, "spent");
-                  }}
-                >
-                  <span>
-                    Gastei
-                    <small>Registrar uma despesa realizada ou no crédito</small>
-                  </span>
-                  <span>›</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActionMenu(null);
-                    open("title", null, "bill");
-                  }}
-                >
-                  <span>
-                    Tenho uma conta
-                    <small>Registrar um compromisso a pagar ou a receber</small>
-                  </span>
-                  <span>›</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActionMenu(null);
-                    open("title", null, "transfer");
-                  }}
-                >
-                  <span>
-                    Transferência
-                    <small>Mover saldo entre suas contas bancárias</small>
-                  </span>
-                  <span>›</span>
-                </button>
-              </div>
-            )}
 
             {actionMenu === "create" && (
               <div className="action-menu">
@@ -2157,7 +2114,7 @@ export default function Dashboard({ user }) {
                   }}
                 >
                   <span>
-                    Nova conta
+                    Conta bancária
                     <small>Cadastrar uma conta bancária ou carteira</small>
                   </span>
                   <span>›</span>
@@ -2167,8 +2124,8 @@ export default function Dashboard({ user }) {
                   onClick={() => setActionMenu("budget_pick")}
                 >
                   <span>
-                    Novo limite
-                    <small>Definir limite mensal para uma categoria</small>
+                    Orçamento
+                    <small>Definir um orçamento mensal</small>
                   </span>
                   <span>›</span>
                 </button>
@@ -2180,7 +2137,7 @@ export default function Dashboard({ user }) {
                   }}
                 >
                   <span>
-                    Novo planejamento de compra
+                    Planejamento de compra
                     <small>Descobrir o melhor momento para comprar sem gerar cobrança</small>
                   </span>
                   <span>›</span>
@@ -2193,8 +2150,8 @@ export default function Dashboard({ user }) {
                   }}
                 >
                   <span>
-                    Nova meta de capital
-                    <small>Definir quanto quer acumular até uma data e acompanhar o ritmo</small>
+                    Caixinha (Guardar dinheiro)
+                    <small>Definir quanto quer guardar até uma data e acompanhar o ritmo</small>
                   </span>
                   <span>›</span>
                 </button>
@@ -2206,8 +2163,8 @@ export default function Dashboard({ user }) {
                   }}
                 >
                   <span>
-                    Novo ativo
-                    <small>Registrar bem ou investimento fora das contas</small>
+                    Bem
+                    <small>Registrar imóvel ou investimento fora das contas</small>
                   </span>
                   <span>›</span>
                 </button>
@@ -2219,7 +2176,7 @@ export default function Dashboard({ user }) {
                   }}
                 >
                   <span>
-                    Novo empréstimo / financiamento
+                    Empréstimo / financiamento
                     <small>Creditar valor recebido e gerar parcelas no endividamento</small>
                   </span>
                   <span>›</span>
@@ -2430,7 +2387,7 @@ export default function Dashboard({ user }) {
                     {[
                       ["all", "Todas"],
                       ["checking", "Uso diário"],
-                      ["capital", "Capital / Reserva"],
+                      ["capital", "Reserva / Caixinha"],
                     ].map(([k, l]) => (
                       <button
                         key={k}
@@ -2441,6 +2398,24 @@ export default function Dashboard({ user }) {
                         {l}
                       </button>
                     ))}
+                  </div>
+                  <div style={{ marginTop: 6, display: "grid", gap: 6 }}>
+                    <span className="field-caption">Composição do endividamento</span>
+                    <div className="filter-pills">
+                      {[
+                        ["all_commitments", "Todos os compromissos"],
+                        ["financial_only", "Apenas dívidas financeiras"],
+                      ].map(([k, l]) => (
+                        <button
+                          key={k}
+                          type="button"
+                          className={`filter-pill${debtMode === k ? " active" : ""}`}
+                          onClick={() => setDebtMode(k)}
+                        >
+                          {l}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
@@ -2564,7 +2539,7 @@ export default function Dashboard({ user }) {
                 </>
               )}
               {healthModal === "milestones" && (
-                <PlanningGoalsPanel rawData={data} healthPlan={healthPlan} busy={busy} section="health" />
+                <PlanningGoalsPanel healthPlan={healthPlan} />
               )}
             </div>
           </div>
@@ -2654,10 +2629,204 @@ export default function Dashboard({ user }) {
                 onClick={async () => {
                   const id = selectedGoal.raw.id;
                   setSelectedGoal(null);
-                  await cancelGoal(id);
+                  await cancelGoal(id, false);
                 }}
               >
                 <Trash2 size={15} /> Remover planejamento
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedCaixinha && (
+        <div
+          className="action-overlay open"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setSelectedCaixinha(null);
+          }}
+        >
+          <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="caixinhaDetailTitle">
+            <div className="dialog-head">
+              <div>
+                <div className="eyebrow">CAIXINHA · GUARDAR DINHEIRO</div>
+                <h2 id="caixinhaDetailTitle">{selectedCaixinha.raw.title}</h2>
+              </div>
+              <button type="button" className="dialog-close" onClick={() => setSelectedCaixinha(null)} aria-label="Fechar">
+                <X size={17} />
+              </button>
+            </div>
+            <div className="detail-layout" style={{ padding: 0 }}>
+              <div className={`goal-verdict ${selectedCaixinha.pace.onPace ? "ok" : "warn"}`}>
+                <Target size={18} />
+                <div>
+                  <strong>
+                    {selectedCaixinha.pace.onPace
+                      ? "Você está no ritmo certo para atingir esta meta!"
+                      : `Guarde ${money(selectedCaixinha.pace.requiredMonthlyCents)}/mês para alcançar até ${fmtDate(selectedCaixinha.raw.desired_on)}`}
+                  </strong>
+                  <small>
+                    Acumulado em Reserva/Caixinhas: {money(selectedCaixinha.pace.currentCapitalCents)} ({selectedCaixinha.pace.progressPct}%) de{" "}
+                    {money(selectedCaixinha.pace.targetCents)}. Faltam {money(selectedCaixinha.pace.remainingCents)}.
+                  </small>
+                </div>
+              </div>
+              <div className="budget-bar" role="progressbar" aria-valuenow={selectedCaixinha.pace.progressPct} aria-valuemin={0} aria-valuemax={100}>
+                <div className="budget-fill" style={{ width: `${selectedCaixinha.pace.progressPct}%` }} />
+              </div>
+              <div style={{ display: "grid", gap: 10, marginTop: 8 }}>
+                <button
+                  type="button"
+                  className="dark-button"
+                  onClick={() => {
+                    const label = `Guardar em ${selectedCaixinha.raw.title}`;
+                    setSelectedCaixinha(null);
+                    openCapitalTransfer(label);
+                  }}
+                >
+                  <ArrowLeftRight size={16} /> Guardar dinheiro agora (Transferir)
+                </button>
+                <button
+                  type="button"
+                  className="light-button"
+                  disabled={busy}
+                  onClick={async () => {
+                    const id = selectedCaixinha.raw.id;
+                    setSelectedCaixinha(null);
+                    await cancelGoal(id, true);
+                  }}
+                >
+                  <Trash2 size={15} /> Excluir caixinha
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedWallet && (
+        <div
+          className="action-overlay open"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setSelectedWallet(null);
+          }}
+        >
+          <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="walletActionTitle">
+            <div className="dialog-head">
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <BankIcon name={selectedWallet.name} size={42} />
+                <div>
+                  <div className="eyebrow">
+                    {(selectedWallet.is_reserved || selectedWallet.wallet_kind === "reserve" || selectedWallet.wallet_kind === "investment")
+                      ? "CONTA DE RESERVA / CAIXINHA"
+                      : "CONTA DE USO DIÁRIO"}
+                  </div>
+                  <h2 id="walletActionTitle">{selectedWallet.name}</h2>
+                </div>
+              </div>
+              <button type="button" className="dialog-close" onClick={() => setSelectedWallet(null)} aria-label="Fechar">
+                <X size={17} />
+              </button>
+            </div>
+            <div style={{ display: "grid", gap: 14 }}>
+              <div className="invoice-limit-box">
+                <span className="hint">Saldo realizado atual</span>
+                <strong style={{ fontSize: 24, color: "var(--kc-ink)" }}>{display(walletBalance(selectedWallet))}</strong>
+                <span className="hint">
+                  Abertura registrada em {selectedWallet.opening_at ? fmtDate(selectedWallet.opening_at) : "data não informada"}
+                </span>
+              </div>
+              <div className="action-menu">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const w = selectedWallet;
+                    setSelectedWallet(null);
+                    setForm({
+                      ...defaultForm("expense"),
+                      intent: "bill",
+                      walletId: w.id,
+                      idempotencyKey: crypto.randomUUID(),
+                    });
+                    setSelectedTitle(null);
+                    setError("");
+                    setDrawer("title");
+                  }}
+                >
+                  <span>
+                    Novo lançamento nesta conta
+                    <small>Registrar conta a pagar ou valor a receber em {selectedWallet.name}</small>
+                  </span>
+                  <span>›</span>
+                </button>
+                {wallets.length >= 2 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const w = selectedWallet;
+                      const other = wallets.find((x) => x.id !== w.id) || wallets[0];
+                      setSelectedWallet(null);
+                      setForm({
+                        ...defaultForm("expense"),
+                        intent: "transfer",
+                        fromWalletId: w.id,
+                        toWalletId: other?.id || "",
+                        transferredOn: TODAY,
+                        settlementState: "paid",
+                        idempotencyKey: crypto.randomUUID(),
+                      });
+                      setSelectedTitle(null);
+                      setError("");
+                      setDrawer("title");
+                    }}
+                  >
+                    <span>
+                      Transferir ou guardar dinheiro
+                      <small>Mover saldo entre {selectedWallet.name} e outra conta ou caixinha</small>
+                    </span>
+                    <span>›</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedWallet(null);
+                    setManageWalletsOpen(true);
+                  }}
+                >
+                  <span>
+                    Arquivar ou gerenciar contas
+                    <small>Abrir painel de contas ativas, arquivadas e cadastrar nova conta</small>
+                  </span>
+                  <span>›</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmDialog && (
+        <div
+          className="action-overlay open"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget && !busy) setConfirmDialog(null);
+          }}
+        >
+          <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="confirmDialogTitle">
+            <div className="dialog-head">
+              <h2 id="confirmDialogTitle">{confirmDialog.title}</h2>
+              <button type="button" className="dialog-close" onClick={() => setConfirmDialog(null)} aria-label="Fechar" disabled={busy}>
+                <X size={17} />
+              </button>
+            </div>
+            <p className="hint" style={{ margin: "0 0 18px" }}>{confirmDialog.body}</p>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button type="button" className="pill pill-secondary pill-compact" onClick={() => setConfirmDialog(null)} disabled={busy}>
+                Voltar
+              </button>
+              <button type="button" className="pill pill-primary pill-compact" onClick={confirmDialog.onConfirm} disabled={busy}>
+                {busy ? "Processando..." : confirmDialog.confirmLabel || "Confirmar"}
               </button>
             </div>
           </div>
