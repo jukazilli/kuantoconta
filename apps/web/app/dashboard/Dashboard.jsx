@@ -98,6 +98,10 @@ async function request(method = "GET", body = null) {
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
+  if (res.status === 401 && typeof window !== "undefined") {
+    window.location.replace("/auth/sign-in");
+    throw new Error("Sessão expirada. Redirecionando para o login...");
+  }
   const reply = await res.json().catch(() => ({ error: "Resposta inesperada." }));
   if (!res.ok) throw new Error(reply.error || "Não foi possível concluir.");
   return reply;
@@ -209,7 +213,10 @@ export default function Dashboard({ user }) {
   const showCategories = screenFilters.overview.showCategories !== false;
   const setShowCategories = (v) => setScreenFilter("overview", { showCategories: v });
 
+  const lastRefreshRef = useRef(0);
+
   async function refresh() {
+    lastRefreshRef.current = Date.now();
     try {
       const x = await request();
       setData(x);
@@ -223,6 +230,28 @@ export default function Dashboard({ user }) {
 
   useEffect(() => {
     refresh();
+
+    const syncIfStale = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      if (Date.now() - lastRefreshRef.current < 3000) return;
+      refresh();
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") syncIfStale();
+    };
+
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", syncIfStale);
+    window.addEventListener("online", syncIfStale);
+    window.addEventListener("pageshow", syncIfStale);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", syncIfStale);
+      window.removeEventListener("online", syncIfStale);
+      window.removeEventListener("pageshow", syncIfStale);
+    };
   }, []);
 
   useEffect(() => {
