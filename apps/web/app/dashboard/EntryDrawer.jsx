@@ -10,6 +10,7 @@ import {isSeries} from "../../lib/cancel-scope";
 import {findMatchingSpendingPlans,computePlanRemainingCents} from "../../lib/spending-plans";
 import {simulateGoalPurchase} from "../../lib/goal-planner";
 import {computeCapitalPace} from "../../lib/capital-pace";
+import {computeInvoiceCycleForPurchase} from "../../lib/credit-cards";
 
 const fdate=d=>{const s=isoDate(d).split("-");return s.length===3?`${s[2]}/${s[1]}/${s[0]}`:"—";};
 
@@ -34,6 +35,7 @@ export default function EntryDrawer({
   onAddCategory,
   people=[],
   onAddPerson,
+  creditCards=[],
   cancellations=[]
 }){
  const [quick,setQuick]=useState(null),[budgetPicker,setBudgetPicker]=useState(false),[personPicker,setPersonPicker]=useState(false),[personQuery,setPersonQuery]=useState(""),[newPersonMode,setNewPersonMode]=useState(false),[personMore,setPersonMore]=useState(false),[pName,setPName]=useState(""),[pRel,setPRel]=useState("Amigo"),[pEmail,setPEmail]=useState(""),[pPhone,setPPhone]=useState(""),[pNotes,setPNotes]=useState(""),[pBusy,setPBusy]=useState(false),[pErr,setPErr]=useState(""),[newName,setNewName]=useState(""),[trackBudget,setTrackBudget]=useState(false),[quickLimit,setQuickLimit]=useState(""),[quickError,setQuickError]=useState(""),[quickBusy,setQuickBusy]=useState(false),[showMore,setShowMore]=useState(false);
@@ -129,6 +131,7 @@ export default function EntryDrawer({
   drawer==="edit"?"Editar lançamento":
   drawer==="edit_plan"?"Ajustar previsão de gasto":
   drawer==="wallet"?"Nova conta":
+  drawer==="credit_card"?"Novo cartão de crédito":
   drawer==="transfer_capital"?"Aporte para Carteira de Capital":
   drawer==="loan"?"Novo empréstimo / financiamento":
   drawer==="goal_sim"?"Novo planejamento de compra":
@@ -229,7 +232,7 @@ export default function EntryDrawer({
       <div className="repeat-preview"><strong>{Math.max(0,Number(form.count)-Number(form.startIndex)+1)||0} parcelas futuras</strong><span>{form.valueMode==="installment"?"Valor mensal: "+money(amountValue()):"Valor total: "+money(amountValue())}</span></div></div>}
       {form.mode==="monthly"&&<div className="repeat-config"><strong>Conta recorrente</strong><p>As próximas ocorrências são projetadas automaticamente sem precisar recadastrar.</p><label>Encerrar em (opcional)<input type="date" min={form.dueOn} max="2099-12-31" value={form.endsOn||""} onChange={ev=>field("endsOn",ev.target.value)}/></label></div>}
       </>}
-      {newTitle&&form.mode==="single"&&form.direction!=="income"&&<div className="direction-cards compact" role="group" aria-label="Situação da conta">
+      {newTitle&&form.mode==="single"&&form.direction!=="income"&&!form.creditCardId&&<div className="direction-cards compact" role="group" aria-label="Situação da conta">
         <button type="button" className={`direction-card neutral${form.settlementState!=="paid"?" active":""}`} aria-pressed={form.settlementState!=="paid"} onClick={()=>field("settlementState","pending")}>
           <Clock3 size={18} aria-hidden="true"/>
           <div><strong>A pagar</strong></div>
@@ -249,7 +252,15 @@ export default function EntryDrawer({
           <div><strong>Já recebido</strong></div>
         </button>
       </div>}
-      {newTitle&&form.mode==="single"&&form.settlementState==="paid"?
+      {newTitle&&form.direction!=="income"&&form.creditCardId?(()=>{
+        const card=creditCards.find(c=>c.id===form.creditCardId);
+        const pDate=form.occurredOn||brDay();
+        const cyc=card?computeInvoiceCycleForPurchase({purchaseDate:pDate,closingDay:card.closing_day,dueDay:card.due_day}):null;
+        return <>
+          <div className="field-row"><CalendarDays/><label><small>Data da compra</small><input required type="date" value={pDate} onChange={e=>setForm(old=>({...old,occurredOn:e.target.value,dueOn:e.target.value}))}/></label></div>
+          {cyc&&<div className="repeat-config" style={{padding:"10px 12px"}}><strong style={{fontSize:13}}>Fatura prevista: {cyc.invoiceMonth}</strong><p style={{margin:0}}>Vencimento em <strong>{fdate(cyc.dueDate)}</strong> (fecha dia {card.closing_day}). O valor compromete o limite do cartão e o saldo previsto na fatura.</p></div>}
+        </>;
+      })():newTitle&&form.mode==="single"&&form.settlementState==="paid"?
         <div className="field-row"><CalendarDays/><label><small>{form.direction==="income"?"Data do recebimento":"Data do pagamento"}</small><input required type="date" max={brDay()} value={form.settledOn||brDay()} onChange={e=>field("settledOn",e.target.value)}/></label></div>:
         <div className="field-row"><CalendarDays/><label><small>Data de vencimento</small><input required type="date" value={form.dueOn} onChange={e=>field("dueOn",e.target.value)}/></label></div>
       }
@@ -269,7 +280,30 @@ export default function EntryDrawer({
             <button type="button" className="inline-plus" aria-label="Criar orçamento" onClick={()=>{setQuick("category");setNewName("");setQuickError("");}}><Plus size={20}/></button>
           </div>
         )}
-        <label>Conta<select required value={form.walletId} onChange={e=>field("walletId",e.target.value)}><option value="">Selecione uma conta</option>{wallets.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}</select></label>
+        {newTitle&&form.direction!=="income"&&creditCards.length>0?(
+          <label>Conta ou cartão de crédito
+            <select required value={form.creditCardId?`card:${form.creditCardId}`:form.walletId} onChange={e=>{
+              const v=e.target.value;
+              if(v.startsWith("card:")){
+                const cid=v.slice(5);
+                const c=creditCards.find(x=>x.id===cid);
+                setForm(old=>({...old,creditCardId:cid,walletId:c?.default_wallet_id||old.walletId||wallets[0]?.id||"",settlementState:"pending",occurredOn:old.occurredOn||brDay()}));
+              }else{
+                setForm(old=>({...old,creditCardId:"",walletId:v}));
+              }
+            }}>
+              <option value="">Selecione a conta ou cartão</option>
+              <optgroup label="Contas bancárias">
+                {wallets.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}
+              </optgroup>
+              <optgroup label="Cartões de crédito">
+                {creditCards.map(c=><option key={c.id} value={`card:${c.id}`}>💳 {c.name} (vence dia {c.due_day})</option>)}
+              </optgroup>
+            </select>
+          </label>
+        ):(
+          <label>Conta<select required value={form.walletId} onChange={e=>field("walletId",e.target.value)}><option value="">Selecione uma conta</option>{wallets.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}</select></label>
+        )}
       </div>
       {!wallets.length&&<p className="hint">Cadastre uma conta antes de registrar receitas ou contas.</p>}
       {newTitle&&<label className="kc-check"><input type="checkbox" checked={form.keepOpen} onChange={e=>field("keepOpen",e.target.checked)}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Salvar e continuar</span></label>}
@@ -305,6 +339,32 @@ export default function EntryDrawer({
       </select></label>
       <label>Saldo de abertura (R$)<MoneyInput value={form.balance} allowNegative onChange={v=>field("balance",v)} ariaLabel="Saldo de abertura"/></label>
       <label className="kc-check"><input type="checkbox" checked={String(form.balance).startsWith("-")} onChange={e=>field("balance",e.target.checked?"-"+(form.balance||"0,00").replace("-",""):(form.balance||"0,00").replace("-",""))}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Saldo negativo (devedor)</span></label>
+    </>}
+
+    {drawer==="credit_card"&&<>
+      <p className="hint">Cadastre seu cartão para acompanhar limite disponível, fechamento da fatura e impacto no saldo previsto sem dupla contagem.</p>
+      <div className="bank-picker-preview">
+        <BankIcon name={form.name} size={40}/>
+        <label style={{flex:1}}>Nome do cartão<input required maxLength={90} value={form.name} onChange={e=>field("name",e.target.value)} placeholder="Ex.: Nubank, Itaú Black, Inter"/></label>
+      </div>
+      <div className="bank-picker-row" aria-label="Atalhos de bancos">
+        {["nubank","itau","bradesco","bb","caixa","santander","inter","c6","picpay","mercado_pago","pagbank","neon","maree","sicredi","sicoob"].map(bid=>{
+          const b=BANK_BRANDS.find(x=>x.id===bid);
+          if(!b)return null;
+          return <button key={b.id} type="button" className="bank-pick-chip" onClick={()=>field("name",b.name)} title={b.name}><BankIcon name={b.name} size={22}/><span>{b.name}</span></button>;
+        })}
+      </div>
+      <label>Limite total (R$)<MoneyInput value={form.cardLimit||"0,00"} onChange={v=>field("cardLimit",v)} ariaLabel="Limite do cartão em reais"/></label>
+      <div className="form-grid">
+        <label>Dia de fechamento<input required type="number" min="1" max="31" value={form.closingDay||"5"} onChange={e=>field("closingDay",e.target.value)}/></label>
+        <label>Dia de vencimento<input required type="number" min="1" max="31" value={form.dueDay||"10"} onChange={e=>field("dueDay",e.target.value)}/></label>
+      </div>
+      <label>Conta padrão para pagar a fatura
+        <select value={form.walletId||""} onChange={e=>field("walletId",e.target.value)}>
+          <option value="">Escolher na hora de pagar</option>
+          {wallets.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}
+        </select>
+      </label>
     </>}
 
     {drawer==="transfer_capital"&&<>

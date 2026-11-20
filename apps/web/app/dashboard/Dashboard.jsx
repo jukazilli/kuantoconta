@@ -30,6 +30,7 @@ import {
   User,
   Sparkles,
   HandCoins,
+  CreditCard,
 } from "lucide-react";
 import { authClient } from "../../lib/auth/client";
 import { money, cents, brDay, isoDate } from "../../lib/finance";
@@ -40,6 +41,7 @@ import { simulateGoalPurchase } from "../../lib/goal-planner";
 import { computeCapitalPace } from "../../lib/capital-pace";
 import { analyzeConsumptionHabits } from "../../lib/habit-analyzer";
 import { rolloverOverdueLoanRepayments, summarizePeopleLoans } from "../../lib/lending";
+import { consolidateCreditCardTitles, computeCardUsage, computeInvoiceCycleForPurchase } from "../../lib/credit-cards";
 import { maskToDecimal, centsToMask } from "../../lib/money-input";
 import { expandRecurring } from "../../lib/recurring";
 import { buildFinancialHealthPlan } from "../../lib/financial-health";
@@ -54,6 +56,7 @@ import GuidedTour from "./GuidedTour";
 import BankIcon from "./BankIcon";
 import McpConnectionsCard from "./McpConnectionsCard";
 import ManageWalletsModal from "./ManageWalletsModal";
+import CreditCardInvoiceModal from "./CreditCardInvoiceModal";
 import InstallAppCard from "../components/InstallAppCard";
 import { usePwa } from "../components/PwaProvider";
 
@@ -186,6 +189,7 @@ export default function Dashboard({ user }) {
   const [tourOpen, setTourOpen] = useState(false);
   const [budgetSuggestionResult, setBudgetSuggestionResult] = useState(null);
   const [manageWalletsOpen, setManageWalletsOpen] = useState(false);
+  const [invoiceModal, setInvoiceModal] = useState(null); // { cardId, month } | null
   const filterRef = useRef(null);
 
   useEffect(() => {
@@ -290,6 +294,7 @@ export default function Dashboard({ user }) {
 
   const allWallets = data?.wallets || [];
   const wallets = allWallets.filter((w) => !w.archived_at);
+  const creditCards = (data?.creditCards || []).filter((c) => !c.archived_at);
   const debtMode = screenFilters.overview.debtMode || "all_commitments";
   const setDebtMode = (v) => setScreenFilter("overview", { debtMode: v });
   const titles = expanded?.titles || [];
@@ -440,6 +445,25 @@ export default function Dashboard({ user }) {
       await request("PATCH", { action: "unarchive_wallet", walletId });
       await refresh();
       setNotice("Conta desarquivada com saldo zerado (R$ 0,00).");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function payCreditCardInvoice({ creditCardId, invoiceMonth, walletId, amount, paidOn }) {
+    setBusy(true);
+    setError("");
+    try {
+      await request("PATCH", {
+        action: "pay_credit_card_invoice",
+        creditCardId,
+        invoiceMonth,
+        walletId,
+        amount,
+        paidOn,
+      });
+      await refresh();
+      setNotice("Pagamento da fatura registrado e limite liberado.");
     } finally {
       setBusy(false);
     }
@@ -728,6 +752,15 @@ export default function Dashboard({ user }) {
           plannedFor: form.plannedFor || null,
           idempotencyKey: form.idempotencyKey || crypto.randomUUID(),
         });
+      } else if (drawer === "credit_card") {
+        await request("POST", {
+          action: "credit_card",
+          name: form.name,
+          limit: maskToDecimal(form.cardLimit || "0"),
+          closingDay: Number(form.closingDay || 5),
+          dueDay: Number(form.dueDay || 10),
+          defaultWalletId: form.walletId || null,
+        });
       } else if (drawer === "title" && form.intent === "lend") {
         await request("POST", {
           action: "lend",
@@ -756,6 +789,7 @@ export default function Dashboard({ user }) {
           await request("POST", {
             action: "title",
             ...payload,
+            creditCardId: form.creditCardId || null,
             mode: form.mode,
             valueMode: form.valueMode,
             count: form.count,
@@ -871,15 +905,32 @@ export default function Dashboard({ user }) {
   };
 
   function titlesTable(compact = false) {
-    const source = compact ? overviewRows.filter((x) => cents(x.amount_cents) > cents(x.settled_cents)).slice(0, 5) : rows;
+    const rawSource = compact ? overviewRows.filter((x) => cents(x.amount_cents) > cents(x.settled_cents)) : rows;
+    const consolidated = consolidateCreditCardTitles(rawSource, creditCards, TODAY);
+    const source = compact ? consolidated.slice(0, 5) : consolidated;
+    const openRow = (id) => {
+      if (String(id).startsWith("invoice:")) {
+        const [, cardId, ym] = String(id).split(":");
+        setInvoiceModal({ cardId, month: ym });
+        return;
+      }
+      open("detail", id);
+    };
     return (
       <MovementList
         items={source}
         compact={compact}
         today={TODAY}
         walletName={walletName}
-        onDetails={(id) => open("detail", id)}
-        onAction={handleAction}
+        onDetails={openRow}
+        onAction={(act, id) => {
+          if (String(id).startsWith("invoice:")) {
+            const [, cardId, ym] = String(id).split(":");
+            setInvoiceModal({ cardId, month: ym });
+            return;
+          }
+          handleAction(act, id);
+        }}
       />
     );
   }
@@ -1088,7 +1139,16 @@ export default function Dashboard({ user }) {
                     <div className="eyebrow">LIMITES MENSAIS</div>
                     <div className="month-heading">{monthLong}</div>
                   </div>
-                  <button type="button" className="icon-ghost-btn" aria-label="Gerenciar limites" title="Gerenciar limites" onClick={() => setTab("planning")}>
+                  <button
+                    type="button"
+                    className="icon-ghost-btn"
+                    aria-label="Gerenciar limites"
+                    title="Gerenciar limites"
+                    onClick={() => {
+                      setPlanningView("budgets");
+                      setTab("planning");
+                    }}
+                  >
                     <SlidersHorizontal size={17} aria-hidden="true" />
                   </button>
                 </div>
@@ -1329,27 +1389,27 @@ export default function Dashboard({ user }) {
                       <h2 className="card-title">Limites sugeridos pela sua renda</h2>
                     </div>
                     <div className="toolbar-buttons">
-                      {monthlyIncomeCents > 0 ? (
-                        <>
-                          <button type="button" className="pill pill-primary pill-compact" disabled={busy} onClick={suggestBudgets}>
-                            <Sparkles size={15} aria-hidden="true" /> {busy ? "Calculando..." : "Sugerir limites"}
-                          </button>
-                          <button type="button" className="pill pill-outline-orange pill-compact" onClick={() => setActionMenu("budget_pick")}>
-                            <SlidersHorizontal size={15} aria-hidden="true" /> Configurar limite
-                          </button>
-                          {wallets.length >= 2 && (
-                            <button type="button" className="icon-ghost-btn" aria-label="Efetivar aporte Capital" title="Efetivar aporte Capital" onClick={openCapitalTransfer}>
-                              <TrendingUp size={18} aria-hidden="true" />
-                            </button>
-                          )}
-                        </>
-                      ) : (
-                        <button
-                          type="button"
-                          className="pill pill-primary"
-                          onClick={() => open("income", null, "bill")}
-                        >
-                          <Plus size={15} /> Cadastrar a receber
+                      <button
+                        type="button"
+                        className="pill pill-primary pill-compact"
+                        disabled={busy}
+                        onClick={() => {
+                          if (monthlyIncomeCents <= 0) {
+                            setNotice(`Cadastre ao menos uma receita em ${monthLong} para sugerir os limites automaticamente.`);
+                            open("income", null, "bill");
+                            return;
+                          }
+                          suggestBudgets();
+                        }}
+                      >
+                        <Sparkles size={15} aria-hidden="true" /> {busy ? "Calculando..." : "Sugerir limites"}
+                      </button>
+                      <button type="button" className="pill pill-outline-orange pill-compact" onClick={() => setActionMenu("budget_pick")}>
+                        <SlidersHorizontal size={15} aria-hidden="true" /> Configurar limite
+                      </button>
+                      {wallets.length >= 2 && (
+                        <button type="button" className="icon-ghost-btn" aria-label="Efetivar aporte Capital" title="Efetivar aporte Capital" onClick={openCapitalTransfer}>
+                          <TrendingUp size={18} aria-hidden="true" />
                         </button>
                       )}
                     </div>
@@ -1594,6 +1654,64 @@ export default function Dashboard({ user }) {
                   <Empty>Nenhuma conta cadastrada.</Empty>
                 )}
               </div>
+            </section>
+
+            <section className="card panel">
+              <div className="card-heading" style={{ marginBottom: 14 }}>
+                <div>
+                  <div className="eyebrow">CRÉDITO E FATURAS</div>
+                  <h2 className="card-title">Cartões de crédito</h2>
+                </div>
+                <button
+                  type="button"
+                  className="icon-ghost-btn"
+                  aria-label="Novo cartão de crédito"
+                  title="Novo cartão de crédito"
+                  onClick={() => open("credit_card")}
+                >
+                  <Plus size={19} aria-hidden="true" />
+                </button>
+              </div>
+              {creditCards.length ? (
+                <div className="budget-list">
+                  {creditCards.map((c) => {
+                    const usage = computeCardUsage(c, expanded?.titles || []);
+                    const cyc = computeInvoiceCycleForPurchase({
+                      purchaseDate: TODAY,
+                      closingDay: c.closing_day,
+                      dueDay: c.due_day,
+                    });
+                    return (
+                      <button
+                        type="button"
+                        key={c.id}
+                        className="budget-card clickable-card"
+                        style={{ width: "100%" }}
+                        onClick={() => setInvoiceModal({ cardId: c.id, month: cyc.invoiceMonth })}
+                      >
+                        <div className="budget-row-top">
+                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                            <BankIcon name={c.name} size={36} />
+                            <div>
+                              <strong>{c.name}</strong>
+                              <div className="hint">Fecha dia {c.closing_day} · Vence dia {c.due_day}</div>
+                            </div>
+                          </div>
+                          <div style={{ textAlign: "right" }}>
+                            <strong style={{ color: "var(--kc-ink)" }}>{money(usage.usedLimitCents)}</strong>
+                            <div className="hint">Disponível: {money(usage.availableLimitCents)}</div>
+                          </div>
+                        </div>
+                        <div className="budget-bar" role="progressbar" aria-valuenow={usage.utilizationPct} aria-valuemin={0} aria-valuemax={100}>
+                          <div className={`budget-fill${usage.utilizationPct >= 90 ? " over" : usage.utilizationPct >= 75 ? " warn" : ""}`} style={{ width: `${usage.utilizationPct}%` }} />
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <Empty>Nenhum cartão cadastrado. Use Criar → Cartão de crédito para acompanhar faturas e limite.</Empty>
+              )}
             </section>
 
             <section className="card panel">
@@ -1982,6 +2100,19 @@ export default function Dashboard({ user }) {
 
             {actionMenu === "create" && (
               <div className="action-menu">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActionMenu(null);
+                    open("credit_card");
+                  }}
+                >
+                  <span>
+                    Cartão de crédito
+                    <small>Controlar limite, fechamento, vencimento e faturas</small>
+                  </span>
+                  <span>›</span>
+                </button>
                 <button
                   type="button"
                   onClick={() => {
@@ -2521,6 +2652,7 @@ export default function Dashboard({ user }) {
           onAddCategory={addCategory}
           people={data?.people || []}
           onAddPerson={addPerson}
+          creditCards={creditCards}
           cancellations={data?.cancellations || []}
         />
       )}
@@ -2535,6 +2667,36 @@ export default function Dashboard({ user }) {
           onConfirm={confirmCancel}
         />
       )}
+
+      <CreditCardInvoiceModal
+        key={invoiceModal ? `${invoiceModal.cardId}:${invoiceModal.month}` : "closed"}
+        open={Boolean(invoiceModal)}
+        card={invoiceModal ? creditCards.find((c) => c.id === invoiceModal.cardId) || null : null}
+        initialMonth={invoiceModal?.month || TODAY.slice(0, 7)}
+        titles={expanded?.titles || []}
+        wallets={wallets}
+        today={TODAY}
+        busy={busy}
+        onClose={() => setInvoiceModal(null)}
+        onPayInvoice={payCreditCardInvoice}
+        onNewPurchase={(cardId) => {
+          const card = creditCards.find((c) => c.id === cardId);
+          setForm({
+            ...defaultForm("expense"),
+            intent: "bill",
+            direction: "expense",
+            creditCardId: cardId,
+            walletId: card?.default_wallet_id || wallets[0]?.id || "",
+            settlementState: "pending",
+            occurredOn: TODAY,
+            dueOn: TODAY,
+          });
+          setSelectedTitle(null);
+          setError("");
+          setDrawer("title");
+        }}
+        onSelectTitle={(titleId) => open("detail", titleId)}
+      />
 
       <ManageWalletsModal
         open={manageWalletsOpen}

@@ -10,6 +10,7 @@ import { buildFinancialHealthPlan } from "./financial-health.js";
 import { analyzeConsumptionHabits } from "./habit-analyzer.js";
 import { simulateGoalPurchase } from "./goal-planner.js";
 import { computeCapitalPace } from "./capital-pace.js";
+import { buildCardInvoices, computeCardUsage } from "./credit-cards.js";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -58,6 +59,8 @@ export const MCP_TOOL_NAMES = [
   "transfer_to_capital",
   "create_capital_goal",
   "cancel_title_with_scope",
+  "list_credit_cards",
+  "create_credit_card_purchase",
 ];
 
 export const MCP_PROMPT_NAMES = [
@@ -663,6 +666,91 @@ export function createKuantoContaMcpServer(ownerId, deps = {}) {
     async ({ titleId, scope }) =>
       runTool("cancel_title_with_scope", async () => {
         const res = await patchAction(ownerId, { action: "cancel_scope", titleId, scope });
+        return res.ok ? jsonText(res.data) : errText(res.error);
+      })
+  );
+
+  // 16. list_credit_cards
+  server.registerTool(
+    "list_credit_cards",
+    {
+      title: "Listar cartões de crédito e faturas",
+      description: "Retorna cartões de crédito ativos, limite total, limite usado/disponível e resumo das faturas (aberta, fechada, paga, atrasada).",
+      inputSchema: {},
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    },
+    async () =>
+      runTool("list_credit_cards", async () => {
+        const today = brDay();
+        const data = await getPortfolio(ownerId);
+        const cards = (data.creditCards || []).filter((c) => !c.archived_at);
+        return jsonText({
+          count: cards.length,
+          cards: cards.map((card) => ({
+            id: card.id,
+            name: card.name,
+            closingDay: card.closing_day,
+            dueDay: card.due_day,
+            usage: computeCardUsage(card, data.titles || []),
+            invoices: buildCardInvoices(card, data.titles || [], today).map((inv) => ({
+              month: inv.month,
+              status: inv.status,
+              closingDate: inv.closingDate,
+              dueDate: inv.dueDate,
+              totalCents: inv.totalCents,
+              paidCents: inv.paidCents,
+              remainingCents: inv.remainingCents,
+              itemCount: inv.items.length,
+            })),
+          })),
+        });
+      })
+  );
+
+  // 17. create_credit_card_purchase
+  server.registerTool(
+    "create_credit_card_purchase",
+    {
+      title: "Registrar compra no cartão de crédito",
+      description: "Lança uma compra à vista ou parcelada no cartão de crédito, alocando automaticamente na fatura correta conforme o fechamento.",
+      inputSchema: {
+        creditCard: z.string().min(1).describe("ID ou nome do cartão de crédito"),
+        description: z.string().min(1).max(140),
+        amountReais: z.number().positive(),
+        category: z.string().min(1).max(70),
+        purchaseDate: z.string().regex(DATE_RE).optional(),
+        installments: z.number().int().min(1).max(60).optional(),
+        valueMode: z.enum(["total", "installment"]).optional(),
+        idempotencyKey: z.string().uuid().optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    async ({ creditCard, description, amountReais, category, purchaseDate, installments = 1, valueMode = "total", idempotencyKey }) =>
+      runTool("create_credit_card_purchase", async () => {
+        const data = await getPortfolio(ownerId);
+        const activeCards = (data.creditCards || []).filter((c) => !c.archived_at);
+        const q = String(creditCard).trim().toLowerCase();
+        const card = activeCards.find((c) => c.id === creditCard)
+          || activeCards.find((c) => String(c.name || "").trim().toLowerCase() === q)
+          || activeCards.find((c) => String(c.name || "").trim().toLowerCase().includes(q));
+        if (!card) return errText(`Cartão de crédito '${creditCard}' não encontrado.`);
+        const pDate = purchaseDate || brDay();
+        const res = await postAction(ownerId, {
+          action: "title",
+          direction: "expense",
+          creditCardId: card.id,
+          walletId: card.default_wallet_id || (data.wallets || [])[0]?.id,
+          description,
+          category,
+          amount: String(amountReais),
+          occurredOn: pDate,
+          dueOn: pDate,
+          mode: installments > 1 ? "installments" : "single",
+          count: installments,
+          valueMode,
+          settlementState: "pending",
+          idempotencyKey,
+        });
         return res.ok ? jsonText(res.data) : errText(res.error);
       })
   );
