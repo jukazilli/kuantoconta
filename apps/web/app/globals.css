@@ -242,6 +242,18 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
   color: var(--kc-ink);
 }
 .bank-pick-chip:active { transform: scale(.97); border-color: var(--kc-orange); }
+
+/* Credit Card Invoice Modal */
+.invoice-dialog { display: grid; gap: 14px; max-height: 88vh; overflow-y: auto; }
+.invoice-limit-box { display: grid; gap: 6px; padding: 12px 14px; border-radius: 14px; background: var(--kc-surface-inner); border: 1px solid var(--kc-line); }
+.invoice-month-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 8px; border-radius: 14px; background: #fafafd; border: 1px solid var(--kc-line); }
+.invoice-summary-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 4px 2px; }
+.invoice-items-list { display: grid; gap: 8px; max-height: 290px; overflow-y: auto; }
+.invoice-item-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--kc-line); background: #fff; cursor: pointer; }
+.invoice-item-row:active { background: var(--kc-surface-inner); }
+@media (max-width: 670px) {
+  .invoice-dialog { width: 100%; max-height: 95vh; border-radius: 22px 22px 0 0; }
+}
 .health-chips-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 
 /* Horizontal Recovery Timeline */

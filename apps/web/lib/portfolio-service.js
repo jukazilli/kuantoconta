@@ -5,6 +5,7 @@ import { isValidMonth, computeMonthlyIncomeCeilingCents, validateBudgetAllocatio
 import { decodeOccurrenceId } from "./recurring.js";
 import { validScope } from "./cancel-scope.js";
 import { computePriceInstallmentCents } from "./goal-planner.js";
+import { computeInvoiceCycleForPurchase } from "./credit-cards.js";
 
 export const isDay = (s) =>
   typeof s === "string" &&
@@ -94,7 +95,7 @@ export async function loadPortfolio(ownerId) {
     spendingPlanApplications,
   ] = await Promise.all([
     sql`SELECT id,name,opening_balance_cents::text,opening_at,wallet_kind,liquidity_kind,is_reserved,archived_at,created_at FROM public.kc_wallets WHERE user_id=${owner.id} ORDER BY created_at LIMIT 100`,
-    sql`SELECT id,wallet_id,description,direction,category,subcategory,category_id,subcategory_id,economic_event_id,amount_cents::text,settled_cents::text,due_on::text,recurrence,installment_index,installment_total,series_id,is_essential,income_confidence,entry_kind,liability_id,person_id,created_at FROM public.kc_titles WHERE user_id=${owner.id} AND cancelled_at IS NULL ORDER BY due_on,id LIMIT 4000`,
+    sql`SELECT id,wallet_id,description,direction,category,subcategory,category_id,subcategory_id,economic_event_id,amount_cents::text,settled_cents::text,due_on::text,recurrence,installment_index,installment_total,series_id,is_essential,income_confidence,entry_kind,liability_id,person_id,credit_card_id,invoice_month,created_at FROM public.kc_titles WHERE user_id=${owner.id} AND cancelled_at IS NULL ORDER BY due_on,id LIMIT 4000`,
     sql`SELECT s.id,s.title_id,s.wallet_id,s.amount_cents::text,s.settled_on::text,s.created_at,s.reversed_at,s.reversal_reason,t.direction,t.category FROM public.kc_settlements s JOIN public.kc_titles t ON t.id=s.title_id AND t.user_id=s.user_id WHERE s.user_id=${owner.id} ORDER BY s.settled_on,s.created_at LIMIT 7000`,
     sql`SELECT id,label,value_cents::text,valued_on::text,asset_kind,liquidity_kind,linked_wallet_id FROM public.kc_assets WHERE user_id=${owner.id} ORDER BY label LIMIT 200`,
     sql`SELECT id,label,principal_cents::text,valued_on::text,debt_kind,interest_rate_bps,cet_bps,monthly_installment_cents::text,remaining_installments,maturity_on::text,status,series_id FROM public.kc_liabilities WHERE user_id=${owner.id} ORDER BY label LIMIT 200`,
@@ -117,6 +118,12 @@ export async function loadPortfolio(ownerId) {
   } catch (e) {
     if (e?.code !== "42P01") throw e;
   }
+  let creditCards = [];
+  try {
+    creditCards = await sql`SELECT id,name,limit_cents::text,closing_day,due_day,default_wallet_id,archived_at,created_at FROM public.kc_credit_cards WHERE user_id=${owner.id} ORDER BY created_at LIMIT 50`;
+  } catch (e) {
+    if (e?.code !== "42P01") throw e;
+  }
   return {
     wallets,
     titles,
@@ -136,6 +143,7 @@ export async function loadPortfolio(ownerId) {
     spendingPlans,
     spendingPlanApplications,
     people,
+    creditCards,
     as_of: new Date().toISOString(),
   };
 }
@@ -276,6 +284,23 @@ export async function executePortfolioPost(ownerId, x) {
     return ok({ saved: true, liabilityId, seriesId }, 201);
   }
 
+  if (x.action === "credit_card") {
+    const name = textValue(x.name, 90);
+    if (!name) return fail("Informe o nome do cartão de crédito.");
+    const limitCents = amount(x.limit ?? "0", true, false);
+    const closingDay = Number(x.closingDay);
+    const dueDay = Number(x.dueDay);
+    if (!Number.isInteger(closingDay) || closingDay < 1 || closingDay > 31) return fail("Dia de fechamento deve ser entre 1 e 31.");
+    if (!Number.isInteger(dueDay) || dueDay < 1 || dueDay > 31) return fail("Dia de vencimento deve ser entre 1 e 31.");
+    const defaultWalletId = uuid(x.defaultWalletId) ? x.defaultWalletId : null;
+    if (defaultWalletId) {
+      const w = await sql`SELECT id FROM public.kc_wallets WHERE id=${defaultWalletId}::uuid AND user_id=${owner.id} LIMIT 1`;
+      if (!w.length) return fail("Conta padrão de pagamento não encontrada.", 404);
+    }
+    const rows = await sql`INSERT INTO public.kc_credit_cards(user_id,name,limit_cents,closing_day,due_day,default_wallet_id) VALUES(${owner.id},${name},${limitCents},${closingDay},${dueDay},${defaultWalletId}::uuid) RETURNING id,name,limit_cents::text,closing_day,due_day,default_wallet_id`;
+    return ok({ saved: true, id: rows[0]?.id, creditCard: rows[0] }, 201);
+  }
+
   if (x.action === "person") {
     const name = textValue(x.name, 120);
     if (!name) return fail("Informe o nome da pessoa.");
@@ -347,10 +372,27 @@ export async function executePortfolioPost(ownerId, x) {
   if (x.action === "title") {
     const description = textValue(x.description, 140);
     const category = textValue(x.category, 70);
-    if (!description || !category || !day(x.dueOn) || !["income", "expense"].includes(x.direction) || !uuid(x.walletId)) {
+    const hasCard = x.direction === "expense" && uuid(x.creditCardId);
+    let card = null;
+    let effectiveWalletId = x.walletId;
+    let effectiveDueOn = x.dueOn;
+    const occurredOn = x.occurredOn && day(x.occurredOn) ? String(x.occurredOn) : day(x.dueOn) ? String(x.dueOn) : brDay();
+
+    if (hasCard) {
+      const cRows = await sql`SELECT id,name,closing_day,due_day,default_wallet_id FROM public.kc_credit_cards WHERE id=${x.creditCardId}::uuid AND user_id=${owner.id} AND archived_at IS NULL LIMIT 1`;
+      if (!cRows.length) return fail("Cartão de crédito não encontrado.", 404);
+      card = cRows[0];
+      const cycle = computeInvoiceCycleForPurchase({ purchaseDate: occurredOn, closingDay: card.closing_day, dueDay: card.due_day });
+      effectiveDueOn = cycle.dueDate;
+      if (!uuid(effectiveWalletId)) {
+        effectiveWalletId = card.default_wallet_id || (await sql`SELECT id FROM public.kc_wallets WHERE user_id=${owner.id} AND archived_at IS NULL ORDER BY created_at LIMIT 1`)[0]?.id;
+      }
+    }
+
+    if (!description || !category || !day(effectiveDueOn) || !["income", "expense"].includes(x.direction) || !uuid(effectiveWalletId)) {
       return fail("Descrição, data, tipo, categoria ou conta inválidos.");
     }
-    const w = await sql`SELECT id FROM public.kc_wallets WHERE id=${x.walletId}::uuid AND user_id=${owner.id}`;
+    const w = await sql`SELECT id FROM public.kc_wallets WHERE id=${effectiveWalletId}::uuid AND user_id=${owner.id}`;
     if (!w.length) return fail("Conta não encontrada.", 404);
     let root = await sql`SELECT id,name FROM public.kc_categories WHERE user_id=${owner.id} AND direction=${x.direction} AND parent_id IS NULL AND name=${category} LIMIT 1`;
     if (!root.length && allowedRoot(x.direction, category)) {
@@ -370,17 +412,16 @@ export async function executePortfolioPost(ownerId, x) {
     const base = amount(x.amount);
     const mode = ["single", "installments", "monthly"].includes(x.mode) ? x.mode : "single";
     if (mode === "monthly") {
-      if (x.dueOn > "2099-12-31") return fail("Recorrência só é permitida até 2099.");
+      if (effectiveDueOn > "2099-12-31") return fail("Recorrência só é permitida até 2099.");
       const end = x.endsOn ? String(x.endsOn) : null;
-      if (end && (!day(end) || end < x.dueOn || end > "2099-12-31")) return fail("Data final da recorrência inválida.");
+      if (end && (!day(end) || end < effectiveDueOn || end > "2099-12-31")) return fail("Data final da recorrência inválida.");
       const rule = await sql`INSERT INTO public.kc_recurring_rules(user_id,wallet_id,direction,description,category,subcategory,category_id,subcategory_id,amount_cents,starts_on,ends_on)
-       VALUES(${owner.id},${x.walletId}::uuid,${x.direction},${description},${category},${subcategory},${categoryId}::uuid,${subcategoryId}::uuid,${base},${x.dueOn}::date,${end}::date)
+       VALUES(${owner.id},${effectiveWalletId}::uuid,${x.direction},${description},${category},${subcategory},${categoryId}::uuid,${subcategoryId}::uuid,${base},${effectiveDueOn}::date,${end}::date)
        RETURNING id`;
       return ok({ saved: true, recurringRuleId: rule[0]?.id, createdOccurrences: 0 }, 201);
     }
-    const occurredOn = x.occurredOn ? String(x.occurredOn) : x.dueOn;
     if (!day(occurredOn)) return fail("Data da compra/competência inválida.");
-    const settlementState = x.settlementState === "paid" ? "paid" : "pending";
+    const settlementState = card ? "pending" : x.settlementState === "paid" ? "paid" : "pending";
     const settledOn = settlementState === "paid" ? String(x.settledOn || occurredOn) : null;
     if (settlementState === "paid" && !validSettlementDay(settledOn, brDay())) {
       return fail("A baixa realizada não pode ter uma data futura.");
@@ -392,20 +433,23 @@ export async function executePortfolioPost(ownerId, x) {
     const perMode = x.valueMode === "installment" ? "installment" : "total";
     const idempotencyKey = uuid(x.idempotencyKey) ? x.idempotencyKey : crypto.randomUUID();
     const rows = await sql`SELECT public.kc_create_financial_event(
-     ${owner.id},${x.walletId}::uuid,${x.direction},${description},
+     ${owner.id},${effectiveWalletId}::uuid,${x.direction},${description},
      ${categoryId}::uuid,${subcategoryId}::uuid,${category},${subcategory},
-     ${base},${occurredOn}::date,${x.dueOn}::date,${mode},${count},${start},${perMode},
+     ${base},${occurredOn}::date,${effectiveDueOn}::date,${mode},${count},${start},${perMode},
      ${settlementState},${settledOn}::date,${idempotencyKey}::uuid
     ) AS info`;
     const info = rows[0]?.info || {};
     const eventId = info.event_id || info.economic_event_id;
+    if (card && uuid(eventId)) {
+      await sql`UPDATE public.kc_titles SET credit_card_id=${card.id}::uuid, invoice_month=to_char(due_on,'YYYY-MM') WHERE user_id=${owner.id} AND economic_event_id=${eventId}::uuid`;
+    }
     let reconciliation = null;
     if (x.direction === "expense" && uuid(x.spendingPlanId) && uuid(eventId)) {
       const recKey = uuid(x.reconcileIdempotencyKey) ? x.reconcileIdempotencyKey : crypto.randomUUID();
       const recRows = await sql`SELECT public.kc_apply_event_to_spending_plan(${owner.id},${x.spendingPlanId}::uuid,${eventId}::uuid,NULL,${x.closeSpendingPlan !== false},${recKey}::uuid) AS info`;
       reconciliation = recRows[0]?.info || null;
     }
-    return ok({ saved: true, ...info, reconciliation }, 201);
+    return ok({ saved: true, ...info, reconciliation, creditCardId: card?.id || null, invoiceDueOn: card ? effectiveDueOn : null }, 201);
   }
 
   if (x.action === "spending_plan") {
@@ -639,6 +683,52 @@ export async function executePortfolioPatch(ownerId, x) {
   if (x.action === "cancel_goal") {
     if (!uuid(x.goalId)) return fail("Objetivo inválido.");
     await sql`UPDATE public.kc_financial_goals SET status='cancelled' WHERE id=${x.goalId}::uuid AND user_id=${owner.id}`;
+    return ok({ saved: true });
+  }
+
+  if (x.action === "pay_credit_card_invoice") {
+    if (!uuid(x.creditCardId) || !isValidMonth(x.invoiceMonth) || !uuid(x.walletId)) {
+      return fail("Cartão, mês da fatura ou conta de pagamento inválidos.");
+    }
+    const paidOn = day(x.paidOn) ? x.paidOn : brDay();
+    if (!validSettlementDay(paidOn, brDay())) return fail("A data de pagamento não pode ser futura.");
+    const payCents = amount(x.amount, false, false);
+    const wRows = await sql`SELECT id FROM public.kc_wallets WHERE id=${x.walletId}::uuid AND user_id=${owner.id} AND archived_at IS NULL LIMIT 1`;
+    if (!wRows.length) return fail("Conta de pagamento não encontrada.", 404);
+    const openTitles = await sql`
+      SELECT id, wallet_id, amount_cents::text, settled_cents::text
+      FROM public.kc_titles
+      WHERE user_id=${owner.id}
+        AND credit_card_id=${x.creditCardId}::uuid
+        AND COALESCE(invoice_month, to_char(due_on, 'YYYY-MM'))=${x.invoiceMonth}
+        AND cancelled_at IS NULL
+        AND settled_cents < amount_cents
+      ORDER BY due_on, created_at
+    `;
+    const totalOpen = openTitles.reduce((s, t) => s + Math.max(0, Number(t.amount_cents) - Number(t.settled_cents)), 0);
+    if (totalOpen <= 0) return fail("Esta fatura já está totalmente paga.");
+    if (payCents > totalOpen) return fail("Valor maior que o saldo em aberto desta fatura.", 409);
+
+    let left = payCents;
+    let settledCount = 0;
+    for (const t of openTitles) {
+      if (left <= 0) break;
+      const rem = Math.max(0, Number(t.amount_cents) - Number(t.settled_cents));
+      const chunk = Math.min(left, rem);
+      if (chunk <= 0) continue;
+      if (t.wallet_id !== x.walletId) {
+        await sql`UPDATE public.kc_titles SET wallet_id=${x.walletId}::uuid WHERE id=${t.id}::uuid AND user_id=${owner.id}`;
+      }
+      await sql`SELECT public.kc_settle_title(${owner.id},${t.id}::uuid,${chunk},${paidOn}::date,${crypto.randomUUID()}::uuid)`;
+      left -= chunk;
+      settledCount += 1;
+    }
+    return ok({ saved: true, paidCents: payCents - left, settledCount, remainingCents: totalOpen - (payCents - left) });
+  }
+
+  if (x.action === "archive_credit_card") {
+    if (!uuid(x.creditCardId)) return fail("Cartão inválido.");
+    await sql`UPDATE public.kc_credit_cards SET archived_at=now() WHERE id=${x.creditCardId}::uuid AND user_id=${owner.id}`;
     return ok({ saved: true });
   }
 
