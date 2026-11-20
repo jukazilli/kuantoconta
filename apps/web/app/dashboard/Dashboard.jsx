@@ -476,8 +476,11 @@ export default function Dashboard({ user }) {
     setForm({
       ...defaultForm(dir),
       intent: nextIntent,
-      settlementState: "pending",
+      settlementState: nextIntent === "transfer" ? "paid" : "pending",
       walletId: t?.wallet_id || wallets[0]?.id || "",
+      fromWalletId: t?.wallet_id || wallets[0]?.id || "",
+      toWalletId: wallets.find((w) => w.id !== (t?.wallet_id || wallets[0]?.id))?.id || wallets[1]?.id || "",
+      transferredOn: TODAY,
       lentOn: TODAY,
       expectedRepaymentOn: lastDayOfMonth(TODAY),
       category: t?.category || "",
@@ -760,6 +763,23 @@ export default function Dashboard({ user }) {
           closingDay: Number(form.closingDay || 5),
           dueDay: Number(form.dueDay || 10),
           defaultWalletId: form.walletId || null,
+        });
+      } else if (drawer === "title" && form.intent === "transfer") {
+        const fromW = form.fromWalletId;
+        const toW = form.toWalletId;
+        if (!fromW || !toW) throw new Error("Selecione as contas de origem e destino.");
+        if (fromW === toW) throw new Error("As contas de origem e destino devem ser diferentes.");
+        const amountDec = maskToDecimal(form.amount);
+        if (!amountDec || Number(amountDec) <= 0) throw new Error("Informe o valor da transferência.");
+        const transferredOn = form.transferredOn || form.dueOn || TODAY;
+        await request("POST", {
+          action: "transfer",
+          description: form.description?.trim() || "",
+          amount: amountDec,
+          fromWalletId: fromW,
+          toWalletId: toW,
+          transferredOn,
+          settled: form.settlementState === "paid",
         });
       } else if (drawer === "title" && form.intent === "lend") {
         await request("POST", {
@@ -2092,6 +2112,19 @@ export default function Dashboard({ user }) {
                   <span>
                     Tenho uma conta
                     <small>Registrar um compromisso a pagar ou a receber</small>
+                  </span>
+                  <span>›</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActionMenu(null);
+                    open("title", null, "transfer");
+                  }}
+                >
+                  <span>
+                    Transferência
+                    <small>Mover saldo entre suas contas bancárias</small>
                   </span>
                   <span>›</span>
                 </button>

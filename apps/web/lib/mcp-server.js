@@ -61,6 +61,7 @@ export const MCP_TOOL_NAMES = [
   "cancel_title_with_scope",
   "list_credit_cards",
   "create_credit_card_purchase",
+  "transfer_between_wallets",
 ];
 
 export const MCP_PROMPT_NAMES = [
@@ -750,6 +751,44 @@ export function createKuantoContaMcpServer(ownerId, deps = {}) {
           valueMode,
           settlementState: "pending",
           idempotencyKey,
+        });
+        return res.ok ? jsonText(res.data) : errText(res.error);
+      })
+  );
+
+  // 18. transfer_between_wallets
+  server.registerTool(
+    "transfer_between_wallets",
+    {
+      title: "Transferência entre contas",
+      description: "Transfere saldo entre duas contas bancárias ou carteiras da mesma pessoa sem duplicar receitas ou despesas.",
+      inputSchema: {
+        amountReais: z.number().positive().describe("Valor em reais da transferência"),
+        fromWallet: z.string().describe("ID ou nome da conta de origem"),
+        toWallet: z.string().describe("ID ou nome da conta de destino"),
+        transferredOn: z.string().regex(DATE_RE).optional().describe("Data da transferência (YYYY-MM-DD), padrão hoje"),
+        description: z.string().max(140).optional().describe("Descrição opcional (ex: Pix para PagBank)"),
+        settled: z.boolean().optional().describe("Se já realizada (padrão true se data <= hoje)"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    },
+    async ({ amountReais, fromWallet, toWallet, transferredOn, description, settled }) =>
+      runTool("transfer_between_wallets", async () => {
+        const data = await getPortfolio(ownerId);
+        const wallets = data.wallets || [];
+        const fromId = resolveWalletId(wallets, fromWallet);
+        const toId = resolveWalletId(wallets, toWallet);
+        if (!fromId || !toId || fromId === toId) {
+          return errText("Informe contas de origem e destino diferentes e válidas.");
+        }
+        const res = await postAction(ownerId, {
+          action: "transfer",
+          fromWalletId: fromId,
+          toWalletId: toId,
+          amount: String(amountReais),
+          transferredOn: transferredOn || brDay(),
+          description,
+          settled: settled !== undefined ? settled : true,
         });
         return res.ok ? jsonText(res.data) : errText(res.error);
       })

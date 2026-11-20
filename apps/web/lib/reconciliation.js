@@ -115,9 +115,9 @@ export function reconcilePortfolio(data) {
     totalInterestCostCents += Math.max(0, cents(p.interest_fee_cents));
   }
 
-  // Filter consumption vs internal reserve transfers (FH-07)
+  // Filter consumption vs internal transfers (FH-07)
   const consumptionTitles = titles.filter(
-    (t) => (t.entry_kind || "standard") !== "reserve_transfer"
+    (t) => (t.entry_kind || "standard") !== "reserve_transfer" && (t.entry_kind || "standard") !== "transfer"
   );
   const reserveTransferTitles = titles.filter(
     (t) => t.entry_kind === "reserve_transfer"

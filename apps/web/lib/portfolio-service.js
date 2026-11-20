@@ -58,7 +58,7 @@ export async function loadBudgetCeilingInputs(userId) {
     sql`SELECT id,name,direction,parent_id,canonical_key,active,is_essential FROM public.kc_categories WHERE user_id=${userId} ORDER BY name LIMIT 300`,
     sql`SELECT id,category_id,limit_cents::text,starts_month,ends_month,active,created_at FROM public.kc_budget_rules WHERE user_id=${userId} ORDER BY created_at LIMIT 300`,
     sql`SELECT id,category_id,month,limit_cents::text,source_rule_id,version,updated_at FROM public.kc_budget_periods WHERE user_id=${userId} ORDER BY month DESC LIMIT 1200`,
-    sql`SELECT id,wallet_id,description,direction,category,category_id,amount_cents::text,settled_cents::text,due_on::text,entry_kind,cancelled_at FROM public.kc_titles WHERE user_id=${userId} AND cancelled_at IS NULL LIMIT 4000`,
+    sql`SELECT id,wallet_id,description,direction,category,category_id,amount_cents::text,settled_cents::text,due_on::text,entry_kind,transfer_id,cancelled_at FROM public.kc_titles WHERE user_id=${userId} AND cancelled_at IS NULL LIMIT 4000`,
     sql`SELECT id,wallet_id,direction,description,category,category_id,amount_cents::text,starts_on::text,ends_on::text,paused_at::text,entry_kind FROM public.kc_recurring_rules WHERE user_id=${userId} LIMIT 300`,
     sql`SELECT series_id,installment_index FROM public.kc_titles WHERE user_id=${userId} AND cancelled_at IS NOT NULL AND series_id IS NOT NULL LIMIT 4000`,
   ]);
@@ -95,7 +95,7 @@ export async function loadPortfolio(ownerId) {
     spendingPlanApplications,
   ] = await Promise.all([
     sql`SELECT id,name,opening_balance_cents::text,opening_at,wallet_kind,liquidity_kind,is_reserved,archived_at,created_at FROM public.kc_wallets WHERE user_id=${owner.id} ORDER BY created_at LIMIT 100`,
-    sql`SELECT id,wallet_id,description,direction,category,subcategory,category_id,subcategory_id,economic_event_id,amount_cents::text,settled_cents::text,due_on::text,recurrence,installment_index,installment_total,series_id,is_essential,income_confidence,entry_kind,liability_id,person_id,credit_card_id,invoice_month,created_at FROM public.kc_titles WHERE user_id=${owner.id} AND cancelled_at IS NULL ORDER BY due_on,id LIMIT 4000`,
+    sql`SELECT id,wallet_id,description,direction,category,subcategory,category_id,subcategory_id,economic_event_id,amount_cents::text,settled_cents::text,due_on::text,recurrence,installment_index,installment_total,series_id,is_essential,income_confidence,entry_kind,liability_id,person_id,credit_card_id,invoice_month,transfer_id,created_at FROM public.kc_titles WHERE user_id=${owner.id} AND cancelled_at IS NULL ORDER BY due_on,id LIMIT 4000`,
     sql`SELECT s.id,s.title_id,s.wallet_id,s.amount_cents::text,s.settled_on::text,s.created_at,s.reversed_at,s.reversal_reason,t.direction,t.category FROM public.kc_settlements s JOIN public.kc_titles t ON t.id=s.title_id AND t.user_id=s.user_id WHERE s.user_id=${owner.id} ORDER BY s.settled_on,s.created_at LIMIT 7000`,
     sql`SELECT id,label,value_cents::text,valued_on::text,asset_kind,liquidity_kind,linked_wallet_id FROM public.kc_assets WHERE user_id=${owner.id} ORDER BY label LIMIT 200`,
     sql`SELECT id,label,principal_cents::text,valued_on::text,debt_kind,interest_rate_bps,cet_bps,monthly_installment_cents::text,remaining_installments,maturity_on::text,status,series_id FROM public.kc_liabilities WHERE user_id=${owner.id} ORDER BY label LIMIT 200`,
@@ -379,6 +379,72 @@ export async function executePortfolioPost(ownerId, x) {
     return ok({ saved: true }, 201);
   }
 
+  if (x.action === "transfer") {
+    if (!uuid(x.fromWalletId) || !uuid(x.toWalletId) || x.fromWalletId === x.toWalletId) {
+      return fail("Selecione contas de origem e destino diferentes.");
+    }
+    const transferCents = amount(x.amount, false, false);
+    const transferDay = day(x.transferredOn) ? x.transferredOn : brDay();
+    const isSettled = x.settled !== false && transferDay <= brDay();
+    const settledCents = isSettled ? transferCents : 0;
+
+    const wallets = await sql`
+      SELECT id, name FROM public.kc_wallets
+      WHERE user_id=${owner.id} AND id IN (${x.fromWalletId}::uuid, ${x.toWalletId}::uuid) AND archived_at IS NULL
+    `;
+    if (wallets.length !== 2) return fail("Contas não encontradas ou arquivadas.", 404);
+
+    const fromWallet = wallets.find((w) => w.id === x.fromWalletId);
+    const toWallet = wallets.find((w) => w.id === x.toWalletId);
+
+    const descRaw = textValue(x.description, 140);
+    const outDesc = descRaw || `Transferência para ${toWallet.name}`;
+    const inDesc = descRaw || `Transferência de ${fromWallet.name}`;
+
+    const transferId = crypto.randomUUID();
+
+    const outTitle = await sql`
+      INSERT INTO public.kc_titles(
+        user_id, wallet_id, description, direction, category,
+        amount_cents, settled_cents, due_on, recurrence,
+        entry_kind, transfer_id
+      ) VALUES (
+        ${owner.id}, ${x.fromWalletId}::uuid, ${outDesc}, 'expense', 'Transferência',
+        ${transferCents}, ${settledCents}, ${transferDay}::date, 'single',
+        'transfer', ${transferId}::uuid
+      ) RETURNING id
+    `;
+
+    const inTitle = await sql`
+      INSERT INTO public.kc_titles(
+        user_id, wallet_id, description, direction, category,
+        amount_cents, settled_cents, due_on, recurrence,
+        entry_kind, transfer_id
+      ) VALUES (
+        ${owner.id}, ${x.toWalletId}::uuid, ${inDesc}, 'income', 'Transferência',
+        ${transferCents}, ${settledCents}, ${transferDay}::date, 'single',
+        'transfer', ${transferId}::uuid
+      ) RETURNING id
+    `;
+
+    if (isSettled) {
+      await sql`
+        INSERT INTO public.kc_settlements(user_id, title_id, wallet_id, amount_cents, settled_on, idempotency_key)
+        VALUES
+          (${owner.id}, ${outTitle[0].id}::uuid, ${x.fromWalletId}::uuid, ${transferCents}, ${transferDay}::date, ${crypto.randomUUID()}::uuid),
+          (${owner.id}, ${inTitle[0].id}::uuid, ${x.toWalletId}::uuid, ${transferCents}, ${transferDay}::date, ${crypto.randomUUID()}::uuid)
+      `;
+    }
+
+    return ok({
+      saved: true,
+      transferId,
+      outTitleId: outTitle[0]?.id,
+      inTitleId: inTitle[0]?.id,
+      isSettled
+    }, 201);
+  }
+
   if (x.action === "materialize") {
     const occ = decodeOccurrenceId(x.occurrenceId);
     if (!occ) return fail("Ocorrência mensal inválida.");
@@ -582,12 +648,44 @@ export async function executePortfolioPatch(ownerId, x) {
     if (!validSettlementDay(x.settledOn, brDay())) return fail("A baixa realizada não pode ter uma data futura.");
     const value = amount(x.amount);
     const rows = await sql`SELECT public.kc_settle_title(${owner.id},${x.titleId}::uuid,${value},${x.settledOn}::date,${x.idempotency}::uuid) AS id`;
+    const tRows = await sql`SELECT transfer_id FROM public.kc_titles WHERE user_id=${owner.id} AND id=${x.titleId}::uuid LIMIT 1`;
+    if (tRows.length && tRows[0].transfer_id) {
+      const counterpart = await sql`
+        SELECT id FROM public.kc_titles
+        WHERE user_id=${owner.id} AND transfer_id=${tRows[0].transfer_id}::uuid AND id<>${x.titleId}::uuid AND cancelled_at IS NULL LIMIT 1
+      `;
+      if (counterpart.length) {
+        await sql`SELECT public.kc_settle_title(${owner.id},${counterpart[0].id}::uuid,${value},${x.settledOn}::date,${crypto.randomUUID()}::uuid)`;
+      }
+    }
     return ok({ saved: true, id: rows[0]?.id });
   }
 
   if (x.action === "reverse") {
     if (!uuid(x.settlementId)) return fail("Baixa inválida.");
+    const sRows = await sql`
+      SELECT s.title_id, t.transfer_id, s.amount_cents
+      FROM public.kc_settlements s
+      JOIN public.kc_titles t ON t.id = s.title_id AND t.user_id = s.user_id
+      WHERE s.id=${x.settlementId}::uuid AND s.user_id=${owner.id} LIMIT 1
+    `;
     const reversal = await sql`SELECT public.kc_reverse_settlement(${owner.id},${x.settlementId}::uuid,'Reversão solicitada pelo titular') AS id`;
+    if (sRows.length && sRows[0].transfer_id) {
+      const counterpartS = await sql`
+        SELECT s2.id
+        FROM public.kc_settlements s2
+        JOIN public.kc_titles t2 ON t2.id = s2.title_id AND t2.user_id = s2.user_id
+        WHERE t2.user_id=${owner.id}
+          AND t2.transfer_id=${sRows[0].transfer_id}::uuid
+          AND t2.id<>${sRows[0].title_id}::uuid
+          AND s2.reversed_at IS NULL
+          AND s2.amount_cents=${sRows[0].amount_cents}
+        LIMIT 1
+      `;
+      if (counterpartS.length) {
+        await sql`SELECT public.kc_reverse_settlement(${owner.id},${counterpartS[0].id}::uuid,'Reversão solicitada pelo titular')`;
+      }
+    }
     return ok({ saved: true, reversedId: reversal[0]?.id });
   }
 
@@ -643,8 +741,18 @@ export async function executePortfolioPatch(ownerId, x) {
       return ok({ saved: true, ...result[0]?.info });
     }
     if (!uuid(x.titleId)) return fail("Lançamento inválido.");
-    const title = await sql`SELECT id,series_id,recurrence,installment_index FROM public.kc_titles WHERE id=${x.titleId}::uuid AND user_id=${owner.id} AND cancelled_at IS NULL LIMIT 1`;
+    const title = await sql`SELECT id,series_id,recurrence,installment_index,transfer_id FROM public.kc_titles WHERE id=${x.titleId}::uuid AND user_id=${owner.id} AND cancelled_at IS NULL LIMIT 1`;
     if (!title.length) return fail("Lançamento não encontrado.", 404);
+    if (title[0].transfer_id) {
+      const pair = await sql`SELECT id FROM public.kc_titles WHERE user_id=${owner.id} AND transfer_id=${title[0].transfer_id}::uuid AND cancelled_at IS NULL`;
+      let info = null;
+      for (const p of pair) {
+        const res = await sql`SELECT public.kc_cancel_title_scope(${owner.id},${p.id}::uuid,'only') AS info`;
+        await sql`SELECT public.kc_sync_cancelled_economic_events(${owner.id},${p.id}::uuid)`;
+        if (!info) info = res[0]?.info;
+      }
+      return ok({ saved: true, cancelled_titles: pair.length, ...info });
+    }
     if (title[0].series_id && title[0].recurrence === "monthly") {
       const rule = await sql`SELECT id FROM public.kc_recurring_rules WHERE id=${title[0].series_id}::uuid AND user_id=${owner.id} LIMIT 1`;
       if (rule.length) {
@@ -769,6 +877,18 @@ export async function executePortfolioPatch(ownerId, x) {
 
   if (x.action === "cancel") {
     if (!uuid(x.titleId)) return fail("Título inválido.");
+    const tRows = await sql`SELECT id,transfer_id FROM public.kc_titles WHERE id=${x.titleId}::uuid AND user_id=${owner.id} AND cancelled_at IS NULL LIMIT 1`;
+    if (!tRows.length) return fail("Título não encontrado.", 404);
+    if (tRows[0].transfer_id) {
+      const pair = await sql`SELECT id FROM public.kc_titles WHERE user_id=${owner.id} AND transfer_id=${tRows[0].transfer_id}::uuid AND cancelled_at IS NULL`;
+      let info = null;
+      for (const p of pair) {
+        const res = await sql`SELECT public.kc_cancel_title_scope(${owner.id},${p.id}::uuid,'only') AS info`;
+        await sql`SELECT public.kc_sync_cancelled_economic_events(${owner.id},${p.id}::uuid)`;
+        if (!info) info = res[0]?.info;
+      }
+      return ok({ saved: true, cancelledCount: pair.length, ...info });
+    }
     const result = await sql`SELECT public.kc_cancel_title_scope(${owner.id},${x.titleId}::uuid,'only') AS info`;
     await sql`SELECT public.kc_sync_cancelled_economic_events(${owner.id},${x.titleId}::uuid)`;
     return ok({ saved: true, ...result[0]?.info });
