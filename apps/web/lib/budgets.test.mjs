@@ -6,6 +6,7 @@ import {
   listConfiguredBudgets,
   computeBudgetSummary,
   computeMultiMonthBudgets,
+  computeBudgetRebalance,
   isValidMonth
 } from "./budgets.js";
 
@@ -184,4 +185,79 @@ test("LC-02, LC-12, LC-13, LC-22: budget separates realized, committed unrealize
   assert.equal(after[0].plannedRemainingCents, 0);
   assert.equal(after[0].remainingLimitCents, 32000);
   assert.equal(after[0].unallocatedCents, 32000);
+});
+
+test("computeBudgetRebalance proportionally scales flexible budgets and preserves Reserva e Capital", () => {
+  const categories = [
+    { id: "c1", name: "Alimentação", direction: "expense", parent_id: null, canonical_key: "expense.alimentacao", active: true },
+    { id: "c2", name: "Transporte", direction: "expense", parent_id: null, canonical_key: "expense.transporte", active: true },
+    { id: "c3", name: "Saúde", direction: "expense", parent_id: null, canonical_key: "expense.saude", active: true },
+    { id: "c4", name: "Lazer", direction: "expense", parent_id: null, canonical_key: "expense.lazer", active: true },
+    { id: "c5", name: "Outros", direction: "expense", parent_id: null, canonical_key: "expense.outros", active: true },
+    { id: "c6", name: "Reserva e Capital", direction: "expense", parent_id: null, canonical_key: "expense.reserva_e_capital", active: true }
+  ];
+  const budgetPeriods = [
+    { category_id: "c1", month: "2026-12", limit_cents: 151847 },
+    { category_id: "c2", month: "2026-12", limit_cents: 91108 },
+    { category_id: "c3", month: "2026-12", limit_cents: 60739 },
+    { category_id: "c4", month: "2026-12", limit_cents: 91108 },
+    { category_id: "c5", month: "2026-12", limit_cents: 91108 },
+    { category_id: "c6", month: "2026-12", limit_cents: 121480 }
+  ];
+  const titles = [
+    { id: "inc1", direction: "income", amount_cents: 607390, settled_cents: 0, due_on: "2026-12-05" }
+  ];
+
+  // Adding R$ 70,00 (7000 cents) new budget when 100% allocated
+  const res = computeBudgetRebalance({
+    month: "2026-12",
+    targetCategoryId: null,
+    newLimitCents: 7000,
+    categories,
+    budgetPeriods,
+    titles
+  });
+  assert.equal(res.ok, true);
+  assert.equal(res.rebalanced, true);
+  assert.equal(res.excessCents, 7000);
+  // Reserva e Capital (c6) must NOT be reduced
+  assert.equal(res.adjustments.some(a => a.categoryId === "c6"), false);
+  const totalDelta = res.adjustments.reduce((s, a) => s + a.deltaCents, 0);
+  assert.equal(totalDelta, -7000);
+  const newSum = budgetPeriods.reduce((s, p) => {
+    const adj = res.adjustments.find(a => a.categoryId === p.category_id);
+    return s + (adj ? adj.newLimitCents : p.limit_cents);
+  }, 0) + 7000;
+  assert.equal(newSum, 607390);
+
+  // Guardrail: single limit > monthly income is still rejected
+  const tooBig = computeBudgetRebalance({
+    month: "2026-12",
+    targetCategoryId: null,
+    newLimitCents: 700000,
+    categories,
+    budgetPeriods,
+    titles
+  });
+  assert.equal(tooBig.ok, false);
+  assert.equal(tooBig.code, "EXCEEDS_SINGLE_INCOME");
+
+  // Fallback to Reserva e Capital only when flexible pool cannot absorb full excess
+  const huge = computeBudgetRebalance({
+    month: "2026-12",
+    targetCategoryId: null,
+    newLimitCents: 500000,
+    categories,
+    budgetPeriods,
+    titles
+  });
+  assert.equal(huge.ok, true);
+  assert.equal(huge.rebalanced, true);
+  const capAdj = huge.adjustments.find(a => a.categoryId === "c6");
+  assert.ok(capAdj && capAdj.deltaCents < 0);
+  const hugeSum = budgetPeriods.reduce((s, p) => {
+    const adj = huge.adjustments.find(a => a.categoryId === p.category_id);
+    return s + (adj ? adj.newLimitCents : p.limit_cents);
+  }, 0) + 500000;
+  assert.equal(hugeSum, 607390);
 });

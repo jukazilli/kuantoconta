@@ -1,7 +1,7 @@
 import { sql } from "./db.js";
 import { brDay, validSettlementDay } from "./finance.js";
 import { DEFAULT_CATEGORIES, allowedRoot, canonicalCategoryKey, normalizeCategoryName } from "./taxonomy.js";
-import { isValidMonth, computeMonthlyIncomeCeilingCents, validateBudgetAllocationCeiling, suggestBudgetsFromIncome } from "./budgets.js";
+import { isValidMonth, computeMonthlyIncomeCeilingCents, validateBudgetAllocationCeiling, computeBudgetRebalance, suggestBudgetsFromIncome } from "./budgets.js";
 import { decodeOccurrenceId } from "./recurring.js";
 import { validScope } from "./cancel-scope.js";
 import { computePriceInstallmentCents } from "./goal-planner.js";
@@ -178,18 +178,30 @@ export async function executePortfolioPost(ownerId, x) {
       const hasLimit = direction === "expense" && x.limit !== undefined && x.limit !== null && x.limit !== "";
       const limitCents = hasLimit ? amount(x.limit, true, false) : 0;
       const targetMonth = isValidMonth(x.month) ? x.month : brDay().slice(0, 7);
+      let rebalance = { rebalanced: false, adjustments: [] };
       if (hasLimit && limitCents > 0) {
         const inputs = await loadBudgetCeilingInputs(owner.id);
-        const check = validateBudgetAllocationCeiling({ month: targetMonth, targetCategoryId: null, newLimitCents: limitCents, active: true, ...inputs });
-        if (!check.ok) return fail(check.error, 400);
+        const autoRebalance = x.autoRebalance !== false;
+        if (autoRebalance) {
+          rebalance = computeBudgetRebalance({ month: targetMonth, targetCategoryId: null, newLimitCents: limitCents, ...inputs });
+          if (!rebalance.ok) return fail(rebalance.error, 400);
+        } else {
+          const check = validateBudgetAllocationCeiling({ month: targetMonth, targetCategoryId: null, newLimitCents: limitCents, active: true, ...inputs });
+          if (!check.ok) return fail(check.error, 400);
+        }
       }
       const key = canonicalCategoryKey(direction, name);
       const inserted = await sql`INSERT INTO public.kc_categories(user_id,name,direction,canonical_key) VALUES(${owner.id},${name},${direction},${key}) RETURNING id`;
       const catId = inserted[0]?.id;
       if (catId && hasLimit) {
-        await sql`SELECT public.kc_upsert_budget_rule(${owner.id},${catId}::uuid,${limitCents},${targetMonth},true,NULL)`;
+        if (rebalance.rebalanced && rebalance.adjustments.length) {
+          for (const adj of rebalance.adjustments) {
+            await upsertBudgetSafe(owner.id, adj.categoryId, adj.newLimitCents, targetMonth, adj.newLimitCents > 0, null);
+          }
+        }
+        await upsertBudgetSafe(owner.id, catId, limitCents, targetMonth, limitCents > 0, null);
       }
-      return ok({ saved: true, id: catId }, 201);
+      return ok({ saved: true, id: catId, rebalanced: Boolean(rebalance.rebalanced), adjustments: rebalance.adjustments || [] }, 201);
     }
     const parentName = textValue(x.parentName, 80);
     if (!parentName) return fail("Selecione uma categoria antes de adicionar subcategoria.");
@@ -212,11 +224,21 @@ export async function executePortfolioPost(ownerId, x) {
     const active = x.active !== false;
     const limitCents = active ? amount(x.limit, true, false) : 0;
     const inputs = await loadBudgetCeilingInputs(owner.id);
-    const check = validateBudgetAllocationCeiling({ month: targetMonth, targetCategoryId: x.categoryId, newLimitCents: limitCents, active, ...inputs });
-    if (!check.ok) return fail(check.error, 400);
+    const autoRebalance = x.autoRebalance !== false;
+    let rebalance = { rebalanced: false, adjustments: [] };
+    if (active && limitCents > 0 && autoRebalance) {
+      rebalance = computeBudgetRebalance({ month: targetMonth, targetCategoryId: x.categoryId, newLimitCents: limitCents, ...inputs });
+      if (!rebalance.ok) return fail(rebalance.error, 400);
+      for (const adj of rebalance.adjustments) {
+        await upsertBudgetSafe(owner.id, adj.categoryId, adj.newLimitCents, targetMonth, adj.newLimitCents > 0, null);
+      }
+    } else {
+      const check = validateBudgetAllocationCeiling({ month: targetMonth, targetCategoryId: x.categoryId, newLimitCents: limitCents, active, ...inputs });
+      if (!check.ok) return fail(check.error, 400);
+    }
     const expectedVersion = Number.isInteger(x.expectedVersion) ? x.expectedVersion : null;
     const rows = await upsertBudgetSafe(owner.id, x.categoryId, limitCents, targetMonth, active, expectedVersion);
-    return ok({ saved: true, ...rows[0]?.info }, 201);
+    return ok({ saved: true, rebalanced: Boolean(rebalance.rebalanced), adjustments: rebalance.adjustments || [], ...rows[0]?.info }, 201);
   }
 
   if (x.action === "suggest_budgets") {

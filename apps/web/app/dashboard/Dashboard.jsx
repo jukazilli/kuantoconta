@@ -2639,6 +2639,7 @@ export default function Dashboard({ user }) {
           wallets={wallets}
           categories={data?.categories || []}
           budgets={budgetItems}
+          selectedMonth={selectedMonth}
           monthlyIncomeCents={monthlyIncomeCents}
           rawData={data}
           rules={data?.recurringRules || []}

@@ -23,6 +23,7 @@ export default function EntryDrawer({
   wallets=[],
   categories=[],
   budgets=[],
+  selectedMonth="",
   monthlyIncomeCents=0,
   rawData=null,
   spendingPlans=[],
@@ -118,7 +119,8 @@ export default function EntryDrawer({
   }
   setQuickBusy(true);
   try{
-    const extra=form.direction==="expense"&&trackBudget?{limit:maskToDecimal(quickLimit),month:(form.occurredOn||brDay()).slice(0,7)}:{};
+    const targetBudgetMonth=selectedMonth||(form.dueOn||form.occurredOn||brDay()).slice(0,7);
+    const extra=form.direction==="expense"&&trackBudget?{limit:maskToDecimal(quickLimit),month:targetBudgetMonth}:{};
     await onAddCategory({name:newName.trim(),direction:form.direction,...extra});
     setForm(old=>({...old,category:newName.trim()}));
     setQuick(null);setNewName("");setTrackBudget(false);setQuickLimit("");
@@ -527,6 +529,6 @@ export default function EntryDrawer({
      </form>}
    </div>
  </div>}
- {quick&&<div className="nested-overlay" onMouseDown={e=>{if(e.target===e.currentTarget){setQuick(null);setTrackBudget(false);setQuickLimit("");}}}><form className="quick-category" onSubmit={createCategory}><div className="quick-head"><h3>{form.direction==="income"?"Nova origem de receita":"Novo orçamento"}</h3><button type="button" aria-label="Fechar" onClick={()=>{setQuick(null);setTrackBudget(false);setQuickLimit("");}}><X size={20}/></button></div><label>Nome<input required maxLength={80} autoFocus value={newName} onChange={e=>setNewName(e.target.value)} placeholder={form.direction==="income"?"Ex.: Freelance":"Ex.: Transporte"}/></label>{form.direction==="expense"&&<><label className="kc-check"><input type="checkbox" checked={trackBudget} onChange={e=>setTrackBudget(e.target.checked)}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Controlar limite mensal</span></label>{trackBudget&&<label>Limite mensal (R$)<MoneyInput value={quickLimit} onChange={setQuickLimit} ariaLabel="Limite mensal em reais"/></label>}</>}{quickError&&<div className="notice error" role="alert">{quickError}</div>}<button type="submit" className="dark-button" disabled={quickBusy}>{quickBusy?"Salvando...":"Adicionar"}</button></form></div>}
+ {quick&&<div className="nested-overlay" onMouseDown={e=>{if(e.target===e.currentTarget){setQuick(null);setTrackBudget(false);setQuickLimit("");}}}><form className="quick-category" onSubmit={createCategory}><div className="quick-head"><h3>{form.direction==="income"?"Nova origem de receita":"Novo orçamento"}</h3><button type="button" aria-label="Fechar" onClick={()=>{setQuick(null);setTrackBudget(false);setQuickLimit("");}}><X size={20}/></button></div><label>Nome<input required maxLength={80} autoFocus value={newName} onChange={e=>setNewName(e.target.value)} placeholder={form.direction==="income"?"Ex.: Freelance":"Ex.: Transporte"}/></label>{form.direction==="expense"&&<><label className="kc-check"><input type="checkbox" checked={trackBudget} onChange={e=>setTrackBudget(e.target.checked)}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Controlar limite mensal</span></label>{trackBudget&&<><label>Limite mensal (R$)<MoneyInput value={quickLimit} onChange={setQuickLimit} ariaLabel="Limite mensal em reais"/></label><p className="hint" style={{margin:"-4px 0 0"}}>Se a soma dos limites passar da renda de {selectedMonth||brDay().slice(0,7)}, os demais limites variáveis são recalculados automaticamente (preservando Reserva e Capital).</p></>}</>}{quickError&&<div className="notice error" role="alert">{quickError}</div>}<button type="submit" className="dark-button" disabled={quickBusy}>{quickBusy?"Salvando...":"Adicionar"}</button></form></div>}
  </div>;
 }

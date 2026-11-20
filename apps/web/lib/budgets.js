@@ -386,6 +386,137 @@ export function validateBudgetAllocationCeiling({
   };
 }
 
+function reducePoolProportionally(pool, amountToAbsorbCents) {
+  let remaining = Math.max(0, cents(amountToAbsorbCents));
+  const poolTotal = pool.reduce((s, b) => s + Math.max(0, cents(b.limitCents)), 0);
+  if (remaining <= 0 || poolTotal <= 0) {
+    return { adjustments: [], absorbed: 0 };
+  }
+  const targetAbsorb = Math.min(remaining, poolTotal);
+  const working = pool.map(b => {
+    const current = Math.max(0, cents(b.limitCents));
+    const exactShare = (current / poolTotal) * targetAbsorb;
+    const cut = Math.min(current, Math.floor(exactShare));
+    return {
+      ...b,
+      current,
+      cut,
+      frac: exactShare - cut
+    };
+  });
+  let cutSum = working.reduce((s, w) => s + w.cut, 0);
+  let leftover = targetAbsorb - cutSum;
+  // Distribute remaining cents to items with highest fractional share (tie-break by largest remaining limit)
+  working.sort((a, b) => b.frac - a.frac || (b.current - b.cut) - (a.current - a.cut));
+  for (const w of working) {
+    if (leftover <= 0) break;
+    if (w.current - w.cut > 0) {
+      w.cut += 1;
+      leftover -= 1;
+    }
+  }
+  const adjustments = working
+    .filter(w => w.cut > 0)
+    .map(w => ({
+      categoryId: String(w.categoryId),
+      categoryName: w.categoryName,
+      previousLimitCents: w.current,
+      newLimitCents: w.current - w.cut,
+      deltaCents: -w.cut
+    }));
+  return {
+    adjustments,
+    absorbed: adjustments.reduce((s, a) => s + (-a.deltaCents), 0)
+  };
+}
+
+/**
+ * Computes proportional budget rebalancing when adding or increasing a budget limit
+ * causes the monthly total to exceed monthly income.
+ * Preserves "Reserva e Capital" first (Pague-se primeiro), only drawing from it if
+ * the flexible spending envelopes alone cannot absorb the excess.
+ */
+export function computeBudgetRebalance({
+  month,
+  targetCategoryId = null,
+  newLimitCents,
+  categories = [],
+  budgetRules = [],
+  budgetPeriods = [],
+  titles = [],
+  recurringRules = [],
+  cancelledRecurring = []
+}) {
+  if (!isValidMonth(month)) {
+    return { ok: false, code: "INVALID_MONTH", error: "Competência inválida." };
+  }
+  const limit = Math.max(0, cents(newLimitCents));
+  const monthlyIncomeCents = computeMonthlyIncomeCeilingCents({
+    month,
+    titles,
+    recurringRules,
+    cancelledRecurring
+  });
+  if (limit <= 0) {
+    return { ok: true, rebalanced: false, monthlyIncomeCents, excessCents: 0, adjustments: [] };
+  }
+  if (monthlyIncomeCents <= 0) {
+    return {
+      ok: false,
+      code: "NO_INCOME",
+      error: "Cadastre seus valores a receber deste mês antes de definir limites de orçamento.",
+      monthlyIncomeCents: 0
+    };
+  }
+  if (limit > monthlyIncomeCents) {
+    return {
+      ok: false,
+      code: "EXCEEDS_SINGLE_INCOME",
+      error: "Este limite sozinho ultrapassa o total a receber deste mês.",
+      monthlyIncomeCents
+    };
+  }
+
+  const configured = listConfiguredBudgets({
+    month,
+    categories,
+    budgetRules,
+    budgetPeriods
+  });
+  const others = configured.filter(
+    b => String(b.categoryId) !== String(targetCategoryId || "") && cents(b.limitCents) > 0
+  );
+  const otherAllocatedCents = others.reduce((s, b) => s + cents(b.limitCents), 0);
+  const excessCents = otherAllocatedCents + limit - monthlyIncomeCents;
+
+  if (excessCents <= 0) {
+    return { ok: true, rebalanced: false, monthlyIncomeCents, excessCents: 0, adjustments: [] };
+  }
+
+  const isCapitalBudget = b => {
+    const key = String(b.canonicalKey || "").toLowerCase();
+    const norm = normalizeCategoryName(b.categoryName || "");
+    return key.includes("reserva") || norm.includes("reserva");
+  };
+  const flexiblePool = others.filter(b => !isCapitalBudget(b));
+  const capitalPool = others.filter(b => isCapitalBudget(b));
+
+  const flexResult = reducePoolProportionally(flexiblePool, excessCents);
+  const remainingExcess = excessCents - flexResult.absorbed;
+  const capResult = remainingExcess > 0
+    ? reducePoolProportionally(capitalPool, remainingExcess)
+    : { adjustments: [], absorbed: 0 };
+
+  const adjustments = [...flexResult.adjustments, ...capResult.adjustments];
+  return {
+    ok: true,
+    rebalanced: adjustments.length > 0,
+    monthlyIncomeCents,
+    excessCents,
+    adjustments
+  };
+}
+
 /**
  * Generates an initial 50-30-20 personal-finance budget split from monthly income.
  * Fixed contractual categories (Moradia, Educação, Assinaturas, Empréstimos) default to
