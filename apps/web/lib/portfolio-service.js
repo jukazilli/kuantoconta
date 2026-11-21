@@ -40,6 +40,60 @@ function monthOffset(d, delta) {
   return dt.toISOString().slice(0, 10);
 }
 
+const safeUrl = (raw) => {
+  if (typeof raw !== "string") return "";
+  const trimmed = raw.trim().slice(0, 500);
+  if (!trimmed) return "";
+  return /^https?:\/\//i.test(trimmed) ? trimmed : "";
+};
+
+function sanitizePlanningQuotes(rawQuotes, amountFn, uuidFn) {
+  if (!Array.isArray(rawQuotes)) return [];
+  return rawQuotes.slice(0, 12).map((q, idx) => {
+    const items = Array.isArray(q?.items)
+      ? q.items.slice(0, 40).map((it, itemIdx) => ({
+          id: textValue(String(it?.id || `item-${itemIdx + 1}`), 60) || `item-${itemIdx + 1}`,
+          title: textValue(String(it?.title || "Item"), 120) || "Item",
+          amountCents: Math.max(0, Number.isSafeInteger(Number(it?.amountCents)) ? Number(it.amountCents) : 0),
+          paymentMethod: it?.paymentMethod === "credit_card" && uuidFn(it?.creditCardId) ? "credit_card" : "standard",
+          creditCardId: it?.paymentMethod === "credit_card" && uuidFn(it?.creditCardId) ? it.creditCardId : null,
+          installmentCount: Math.max(1, Math.min(60, parseInt(it?.installmentCount, 10) || 1)),
+          checked: Boolean(it?.checked),
+        }))
+      : [];
+    const targetCentsRaw = Number(q?.targetCents);
+    const targetCents = Number.isSafeInteger(targetCentsRaw) && targetCentsRaw > 0
+      ? targetCentsRaw
+      : items.reduce((s, it) => s + it.amountCents, 0);
+    const downRaw = Number(q?.downPaymentCents);
+    const downPaymentCents = Number.isSafeInteger(downRaw) && downRaw >= 0 ? Math.min(targetCents, downRaw) : 0;
+    const instCount = Math.max(1, Math.min(120, parseInt(q?.installmentCount, 10) || 1));
+    const instCentsRaw = Number(q?.installmentCents);
+    const installmentCents = Number.isSafeInteger(instCentsRaw) && instCentsRaw >= 0 ? instCentsRaw : 0;
+    const interestBps = Math.min(10000, Math.max(0, Math.round(Number(q?.interestBps || 0))));
+    return {
+      id: textValue(String(q?.id || `q-${idx + 1}`), 60) || `q-${idx + 1}`,
+      label: textValue(String(q?.label || `Cotação ${idx + 1}`), 120) || `Cotação ${idx + 1}`,
+      url: safeUrl(q?.url || ""),
+      targetCents,
+      downPaymentCents,
+      installmentCount: instCount,
+      installmentCents,
+      interestBps,
+      paymentStructure: ["upfront", "installments", "hybrid"].includes(q?.paymentStructure) ? q.paymentStructure : "upfront",
+      paymentMethod: q?.paymentMethod === "credit_card" && uuidFn(q?.creditCardId) ? "credit_card" : "standard",
+      creditCardId: q?.paymentMethod === "credit_card" && uuidFn(q?.creditCardId) ? q.creditCardId : null,
+      selectedWalletId: uuidFn(q?.selectedWalletId) ? q.selectedWalletId : null,
+      downPaymentSource: ["checking", "caixinha", "create_caixinha"].includes(q?.downPaymentSource) ? q.downPaymentSource : "checking",
+      sourceGoalId: uuidFn(q?.sourceGoalId) ? q.sourceGoalId : null,
+      parentWalletId: uuidFn(q?.parentWalletId) ? q.parentWalletId : null,
+      notes: typeof q?.notes === "string" ? q.notes.trim().slice(0, 300) : "",
+      items,
+      isChosen: Boolean(q?.isChosen),
+    };
+  });
+}
+
 const ok = (data, status = 200) => ({ ok: true, status, data });
 const fail = (error, status = 400) => ({ ok: false, status, error });
 
@@ -107,7 +161,7 @@ export async function loadPortfolio(ownerId) {
     sql`SELECT id,category_id,month,limit_cents::text,source_rule_id,version,updated_at FROM public.kc_budget_periods WHERE user_id=${owner.id} ORDER BY month DESC LIMIT 1200`,
     sql`SELECT id,direction,description,amount_cents::text,occurred_on::text,category_id,subcategory_id,event_kind,competence_source,status,recurring_rule_id,parent_event_id,created_at FROM public.kc_economic_events WHERE user_id=${owner.id} AND cancelled_at IS NULL ORDER BY occurred_on DESC,created_at DESC LIMIT 4000`,
     sql`SELECT id,liability_id,wallet_id,settlement_id,principal_cents::text,interest_fee_cents::text,paid_on::text,created_at FROM public.kc_debt_payments WHERE user_id=${owner.id} ORDER BY paid_on DESC LIMIT 1000`,
-    sql`SELECT id,title,category,target_cents::text,down_payment_cents::text,installment_count,installment_cents::text,interest_bps,desired_on::text,priority,status,wallet_id,parent_wallet_id,caixinha_purpose,source_goal_id,created_at FROM public.kc_financial_goals WHERE user_id=${owner.id} AND status<>'cancelled' ORDER BY priority,created_at DESC LIMIT 100`,
+    sql`SELECT id,title,category,target_cents::text,down_payment_cents::text,installment_count,installment_cents::text,interest_bps,desired_on::text,priority,status,wallet_id,parent_wallet_id,caixinha_purpose,source_goal_id,payment_method,credit_card_id,plan_type,payment_structure,quotes_json,budget_category_id,selected_wallet_id,created_at FROM public.kc_financial_goals WHERE user_id=${owner.id} AND status<>'cancelled' ORDER BY priority,created_at DESC LIMIT 100`,
     sql`SELECT as_of::text,state,policy_version,reason_codes,stable_streak_months,updated_at FROM public.kc_health_snapshots WHERE user_id=${owner.id} ORDER BY as_of DESC LIMIT 1`,
     sql`SELECT id,description,category_id,subcategory_id,estimated_amount_cents::text,planned_for::text,planned_month,expected_payment_on::text,status,source,created_at,updated_at,cancelled_at FROM public.kc_spending_plans WHERE user_id=${owner.id} AND status<>'cancelled' ORDER BY planned_month,planned_for NULLS LAST,created_at DESC LIMIT 500`,
     sql`SELECT id,plan_id,economic_event_id,allocated_cents::text,created_at FROM public.kc_spending_plan_applications WHERE user_id=${owner.id} ORDER BY created_at DESC LIMIT 2000`,
@@ -356,11 +410,12 @@ export async function executePortfolioPost(ownerId, x) {
 
     const outLabel = `${description} (${person.name})`;
     const inLabel = `Devolução: ${description} (${person.name})`;
-    const outTitle = await sql`INSERT INTO public.kc_titles(user_id,wallet_id,description,direction,category,amount_cents,settled_cents,due_on,recurrence,entry_kind,person_id) VALUES(${owner.id},${x.walletId}::uuid,${outLabel.slice(0, 140)},'expense','Empréstimos',${amountCents},${amountCents},${lentOn}::date,'single','loan_out',${person.id}::uuid) RETURNING id`;
+    const linkId = crypto.randomUUID();
+    const outTitle = await sql`INSERT INTO public.kc_titles(user_id,wallet_id,description,direction,category,amount_cents,settled_cents,due_on,recurrence,entry_kind,person_id,transfer_id) VALUES(${owner.id},${x.walletId}::uuid,${outLabel.slice(0, 140)},'expense','Empréstimos',${amountCents},${amountCents},${lentOn}::date,'single','loan_out',${person.id}::uuid,${linkId}::uuid) RETURNING id`;
     await sql`INSERT INTO public.kc_settlements(user_id,title_id,wallet_id,amount_cents,settled_on,idempotency_key) VALUES(${owner.id},${outTitle[0].id}::uuid,${x.walletId}::uuid,${amountCents},${lentOn}::date,${crypto.randomUUID()}::uuid)`;
-    const inTitle = await sql`INSERT INTO public.kc_titles(user_id,wallet_id,description,direction,category,amount_cents,settled_cents,due_on,recurrence,entry_kind,person_id) VALUES(${owner.id},${x.walletId}::uuid,${inLabel.slice(0, 140)},'income','Reembolsos',${amountCents},0,${expectedRepaymentOn}::date,'single','loan_repayment',${person.id}::uuid) RETURNING id`;
+    const inTitle = await sql`INSERT INTO public.kc_titles(user_id,wallet_id,description,direction,category,amount_cents,settled_cents,due_on,recurrence,entry_kind,person_id,transfer_id) VALUES(${owner.id},${x.walletId}::uuid,${inLabel.slice(0, 140)},'income','Reembolsos',${amountCents},0,${expectedRepaymentOn}::date,'single','loan_repayment',${person.id}::uuid,${linkId}::uuid) RETURNING id`;
 
-    return ok({ saved: true, outTitleId: outTitle[0]?.id, repaymentTitleId: inTitle[0]?.id, person }, 201);
+    return ok({ saved: true, outTitleId: outTitle[0]?.id, repaymentTitleId: inTitle[0]?.id, linkId, person }, 201);
   }
 
   if (x.action === "transfer_capital") {
@@ -643,7 +698,7 @@ export async function executePortfolioPost(ownerId, x) {
       const isRes = purpose === "reserve";
       const createdW = await sql`
         INSERT INTO public.kc_wallets(user_id,name,opening_balance_cents,opening_at,wallet_kind,liquidity_kind,is_reserved,parent_wallet_id,caixinha_purpose)
-        VALUES(${owner.id},${String(goal.title).slice(0, 90)},0,now(),${wKind},${lKind},${isRes},${bankWallet.id}::uuid,${purpose})
+        VALUES(${owner.id},${String(goal.title).slice(0, 90)},0,now() - interval '1 second',${wKind},${lKind},${isRes},${bankWallet.id}::uuid,${purpose})
         RETURNING id
       `;
       caixinhaWalletId = createdW[0]?.id;
@@ -652,6 +707,31 @@ export async function executePortfolioPost(ownerId, x) {
         SET wallet_id=${caixinhaWalletId}::uuid, parent_wallet_id=COALESCE(parent_wallet_id, ${bankWallet.id}::uuid)
         WHERE id=${goal.id}::uuid AND user_id=${owner.id}
       `;
+    }
+
+    if (direction === "withdraw" && caixinhaWalletId) {
+      const balRows = await sql`
+        SELECT
+          COALESCE(w.opening_balance_cents, 0)::text AS opening_cents,
+          COALESCE((
+            SELECT SUM(CASE WHEN t.direction = 'income' THEN s.amount_cents ELSE -s.amount_cents END)
+            FROM public.kc_settlements s
+            JOIN public.kc_titles t ON t.id = s.title_id AND t.user_id = s.user_id
+            WHERE s.user_id = ${owner.id}
+              AND s.wallet_id = ${caixinhaWalletId}::uuid
+              AND s.reversed_at IS NULL
+              AND (w.opening_at IS NULL OR s.created_at >= w.opening_at)
+          ), 0)::text AS posted_cents
+        FROM public.kc_wallets w
+        WHERE w.id = ${caixinhaWalletId}::uuid AND w.user_id = ${owner.id}
+        LIMIT 1
+      `;
+      const caixinhaBalanceCents = balRows.length
+        ? Number(balRows[0].opening_cents || 0) + Number(balRows[0].posted_cents || 0)
+        : 0;
+      if (transferCents > caixinhaBalanceCents) {
+        return fail("Saldo insuficiente nesta caixinha para realizar o resgate.", 400);
+      }
     }
 
     const sourceId = direction === "withdraw" ? caixinhaWalletId : bankWallet.id;
@@ -710,7 +790,7 @@ export async function executePortfolioPost(ownerId, x) {
       const isRes = purpose === "reserve";
       const createdWallet = await sql`
         INSERT INTO public.kc_wallets(user_id,name,opening_balance_cents,opening_at,wallet_kind,liquidity_kind,is_reserved,parent_wallet_id,caixinha_purpose)
-        VALUES(${owner.id},${title.slice(0, 90)},0,now(),${wKind},${lKind},${isRes},${parentWalletId}::uuid,${purpose})
+        VALUES(${owner.id},${title.slice(0, 90)},0,now() - interval '1 second',${wKind},${lKind},${isRes},${parentWalletId}::uuid,${purpose})
         RETURNING id
       `;
       const caixinhaWalletId = createdWallet[0]?.id;
@@ -751,29 +831,58 @@ export async function executePortfolioPost(ownerId, x) {
     if (sourceGoalId) {
       const sg = await sql`SELECT id FROM public.kc_financial_goals WHERE id=${sourceGoalId}::uuid AND user_id=${owner.id} AND category='capital_goal' AND status<>'cancelled' LIMIT 1`;
       if (!sg.length) return fail("Caixinha selecionada para entrada não foi encontrada.", 404);
-    } else if (x.createLinkedCaixinha && downPaymentCents > 0 && uuid(x.parentWalletId)) {
+    } else if (x.createLinkedCaixinha && uuid(x.parentWalletId)) {
       const pw = await sql`SELECT id FROM public.kc_wallets WHERE id=${x.parentWalletId}::uuid AND user_id=${owner.id} AND archived_at IS NULL LIMIT 1`;
       if (!pw.length) return fail("Conta bancária para a nova caixinha não encontrada.", 404);
-      const caixinhaTitle = `Entrada: ${title}`.slice(0, 120);
+      const caixinhaTargetCents = downPaymentCents > 0 ? downPaymentCents : targetCents;
+      const caixinhaTitle = (downPaymentCents > 0 ? `Entrada: ${title}` : `Caixinha: ${title}`).slice(0, 120);
       const cw = await sql`
         INSERT INTO public.kc_wallets(user_id,name,opening_balance_cents,opening_at,wallet_kind,liquidity_kind,is_reserved,parent_wallet_id,caixinha_purpose)
-        VALUES(${owner.id},${caixinhaTitle.slice(0, 90)},0,now(),'investment','d_plus',false,${x.parentWalletId}::uuid,'goal')
+        VALUES(${owner.id},${caixinhaTitle.slice(0, 90)},0,now() - interval '1 second','investment','d_plus',false,${x.parentWalletId}::uuid,'goal')
         RETURNING id
       `;
       const cg = await sql`
         INSERT INTO public.kc_financial_goals(user_id,title,category,target_cents,down_payment_cents,installment_count,installment_cents,interest_bps,desired_on,status,wallet_id,parent_wallet_id,caixinha_purpose)
-        VALUES(${owner.id},${caixinhaTitle},'capital_goal',${downPaymentCents},0,1,0,0,${desiredOn}::date,'simulated',${cw[0].id}::uuid,${x.parentWalletId}::uuid,'goal')
+        VALUES(${owner.id},${caixinhaTitle},'capital_goal',${caixinhaTargetCents},0,1,0,0,${desiredOn}::date,'simulated',${cw[0].id}::uuid,${x.parentWalletId}::uuid,'goal')
         RETURNING id
       `;
       sourceGoalId = cg[0]?.id || null;
     }
 
+    const paymentMethod = x.paymentMethod === "credit_card" && uuid(x.creditCardId) ? "credit_card" : "standard";
+    const creditCardId = paymentMethod === "credit_card" ? x.creditCardId : null;
+    if (creditCardId) {
+      const cc = await sql`SELECT id FROM public.kc_credit_cards WHERE id=${creditCardId}::uuid AND user_id=${owner.id} AND archived_at IS NULL LIMIT 1`;
+      if (!cc.length) return fail("Cartão de crédito selecionado não foi encontrado.", 404);
+    }
+
+    const planType = ["purchase", "trip", "shopping_list"].includes(x.planType) ? x.planType : "purchase";
+    const paymentStructure = ["upfront", "installments", "hybrid"].includes(x.paymentStructure)
+      ? x.paymentStructure
+      : downPaymentCents > 0 && installmentCount > 1
+        ? "hybrid"
+        : installmentCount > 1
+          ? "installments"
+          : "upfront";
+    const budgetCategoryId = uuid(x.budgetCategoryId) ? x.budgetCategoryId : null;
+    const selectedWalletId = uuid(x.selectedWalletId) ? x.selectedWalletId : null;
+    const quotesSanitized = sanitizePlanningQuotes(x.quotes, amount, uuid);
+    const quotesJsonStr = JSON.stringify(quotesSanitized);
+
     const rows = await sql`
-      INSERT INTO public.kc_financial_goals(user_id,title,category,target_cents,down_payment_cents,installment_count,installment_cents,interest_bps,desired_on,status,source_goal_id)
-      VALUES(${owner.id},${title},${category},${targetCents},${downPaymentCents},${installmentCount},${installmentCents},${interestBps},${desiredOn}::date,'simulated',${sourceGoalId}::uuid)
+      INSERT INTO public.kc_financial_goals(
+        user_id,title,category,target_cents,down_payment_cents,installment_count,installment_cents,
+        interest_bps,desired_on,status,source_goal_id,payment_method,credit_card_id,
+        plan_type,payment_structure,quotes_json,budget_category_id,selected_wallet_id
+      )
+      VALUES(
+        ${owner.id},${title},${category},${targetCents},${downPaymentCents},${installmentCount},${installmentCents},
+        ${interestBps},${desiredOn}::date,'simulated',${sourceGoalId}::uuid,${paymentMethod},${creditCardId}::uuid,
+        ${planType},${paymentStructure},${quotesJsonStr}::jsonb,${budgetCategoryId}::uuid,${selectedWalletId}::uuid
+      )
       RETURNING id
     `;
-    return ok({ saved: true, id: rows[0]?.id, sourceGoalId }, 201);
+    return ok({ saved: true, id: rows[0]?.id, sourceGoalId, paymentMethod, creditCardId, planType, paymentStructure }, 201);
   }
 
   return fail("Ação não reconhecida.");
@@ -790,8 +899,8 @@ export async function executePortfolioPatch(ownerId, x) {
     if (!validSettlementDay(x.settledOn, brDay())) return fail("A baixa realizada não pode ter uma data futura.");
     const value = amount(x.amount);
     const rows = await sql`SELECT public.kc_settle_title(${owner.id},${x.titleId}::uuid,${value},${x.settledOn}::date,${x.idempotency}::uuid) AS id`;
-    const tRows = await sql`SELECT transfer_id FROM public.kc_titles WHERE user_id=${owner.id} AND id=${x.titleId}::uuid LIMIT 1`;
-    if (tRows.length && tRows[0].transfer_id) {
+    const tRows = await sql`SELECT transfer_id,entry_kind FROM public.kc_titles WHERE user_id=${owner.id} AND id=${x.titleId}::uuid LIMIT 1`;
+    if (tRows.length && tRows[0].transfer_id && ["transfer", "reserve_transfer"].includes(tRows[0].entry_kind)) {
       const counterpart = await sql`
         SELECT id FROM public.kc_titles
         WHERE user_id=${owner.id} AND transfer_id=${tRows[0].transfer_id}::uuid AND id<>${x.titleId}::uuid AND cancelled_at IS NULL LIMIT 1
@@ -806,13 +915,13 @@ export async function executePortfolioPatch(ownerId, x) {
   if (x.action === "reverse") {
     if (!uuid(x.settlementId)) return fail("Baixa inválida.");
     const sRows = await sql`
-      SELECT s.title_id, t.transfer_id, s.amount_cents
+      SELECT s.title_id, t.transfer_id, t.entry_kind, s.amount_cents
       FROM public.kc_settlements s
       JOIN public.kc_titles t ON t.id = s.title_id AND t.user_id = s.user_id
       WHERE s.id=${x.settlementId}::uuid AND s.user_id=${owner.id} LIMIT 1
     `;
     const reversal = await sql`SELECT public.kc_reverse_settlement(${owner.id},${x.settlementId}::uuid,'Reversão solicitada pelo titular') AS id`;
-    if (sRows.length && sRows[0].transfer_id) {
+    if (sRows.length && sRows[0].transfer_id && ["transfer", "reserve_transfer"].includes(sRows[0].entry_kind)) {
       const counterpartS = await sql`
         SELECT s2.id
         FROM public.kc_settlements s2
@@ -888,9 +997,9 @@ export async function executePortfolioPatch(ownerId, x) {
       return ok({ saved: true, ...result[0]?.info });
     }
     if (!uuid(x.titleId)) return fail("Lançamento inválido.");
-    const title = await sql`SELECT id,series_id,recurrence,installment_index,transfer_id FROM public.kc_titles WHERE id=${x.titleId}::uuid AND user_id=${owner.id} AND cancelled_at IS NULL LIMIT 1`;
+    const title = await sql`SELECT id,series_id,recurrence,installment_index,transfer_id,entry_kind FROM public.kc_titles WHERE id=${x.titleId}::uuid AND user_id=${owner.id} AND cancelled_at IS NULL LIMIT 1`;
     if (!title.length) return fail("Lançamento não encontrado.", 404);
-    if (title[0].transfer_id) {
+    if (title[0].transfer_id && ["transfer", "reserve_transfer"].includes(title[0].entry_kind)) {
       const pair = await sql`SELECT id FROM public.kc_titles WHERE user_id=${owner.id} AND transfer_id=${title[0].transfer_id}::uuid AND cancelled_at IS NULL`;
       let info = null;
       for (const p of pair) {
@@ -899,6 +1008,15 @@ export async function executePortfolioPatch(ownerId, x) {
         if (!info) info = res[0]?.info;
       }
       return ok({ saved: true, cancelled_titles: pair.length, ...info });
+    }
+    if (title[0].transfer_id && title[0].entry_kind === "loan_out") {
+      const result = await sql`SELECT public.kc_cancel_title_scope(${owner.id},${x.titleId}::uuid,'only') AS info`;
+      await sql`SELECT public.kc_sync_cancelled_economic_events(${owner.id},${x.titleId}::uuid)`;
+      const openRepays = await sql`SELECT id FROM public.kc_titles WHERE user_id=${owner.id} AND transfer_id=${title[0].transfer_id}::uuid AND id<>${x.titleId}::uuid AND entry_kind='loan_repayment' AND settled_cents=0 AND cancelled_at IS NULL`;
+      for (const r of openRepays) {
+        await sql`SELECT public.kc_cancel_title_scope(${owner.id},${r.id}::uuid,'only')`;
+      }
+      return ok({ saved: true, ...result[0]?.info });
     }
     if (title[0].series_id && title[0].recurrence === "monthly") {
       const rule = await sql`SELECT id FROM public.kc_recurring_rules WHERE id=${title[0].series_id}::uuid AND user_id=${owner.id} LIMIT 1`;
@@ -957,6 +1075,77 @@ export async function executePortfolioPatch(ownerId, x) {
     return ok({ saved: true });
   }
 
+  if (x.action === "update_goal") {
+    if (!uuid(x.goalId)) return fail("Planejamento inválido.");
+    const existingRows = await sql`SELECT id FROM public.kc_financial_goals WHERE id=${x.goalId}::uuid AND user_id=${owner.id} AND status<>'cancelled' LIMIT 1`;
+    if (!existingRows.length) return fail("Planejamento não encontrado.", 404);
+    const title = textValue(x.title, 120);
+    if (!title) return fail("Informe o nome do planejamento.");
+    const targetCents = amount(x.target);
+    const downPaymentCents = x.downPayment !== undefined && x.downPayment !== null && x.downPayment !== "" ? amount(x.downPayment, true) : 0;
+    if (downPaymentCents > targetCents) return fail("Entrada não pode superar o valor total.");
+    const installmentCount = Number(x.installmentCount || 1);
+    if (!Number.isInteger(installmentCount) || installmentCount < 1 || installmentCount > 120) return fail("Quantidade de parcelas inválida.");
+    const interestBps = Math.min(10000, Math.max(0, Math.round(Number(x.interestBps || 0))));
+    const installmentCents = x.installmentAmount
+      ? amount(x.installmentAmount, true)
+      : computePriceInstallmentCents({ financedCents: targetCents - downPaymentCents, installmentCount, monthlyInterestBps: interestBps });
+    const desiredOn = x.desiredOn && day(x.desiredOn) ? x.desiredOn : null;
+    let sourceGoalId = uuid(x.sourceGoalId) ? x.sourceGoalId : null;
+    if (!sourceGoalId && x.createLinkedCaixinha && uuid(x.parentWalletId)) {
+      const pw = await sql`SELECT id FROM public.kc_wallets WHERE id=${x.parentWalletId}::uuid AND user_id=${owner.id} AND archived_at IS NULL LIMIT 1`;
+      if (!pw.length) return fail("Conta bancária para a nova caixinha não encontrada.", 404);
+      const caixinhaTargetCents = downPaymentCents > 0 ? downPaymentCents : targetCents;
+      const caixinhaTitle = (downPaymentCents > 0 ? `Entrada: ${title}` : `Caixinha: ${title}`).slice(0, 120);
+      const cw = await sql`
+        INSERT INTO public.kc_wallets(user_id,name,opening_balance_cents,opening_at,wallet_kind,liquidity_kind,is_reserved,parent_wallet_id,caixinha_purpose)
+        VALUES(${owner.id},${caixinhaTitle.slice(0, 90)},0,now() - interval '1 second','investment','d_plus',false,${x.parentWalletId}::uuid,'goal')
+        RETURNING id
+      `;
+      const cg = await sql`
+        INSERT INTO public.kc_financial_goals(user_id,title,category,target_cents,down_payment_cents,installment_count,installment_cents,interest_bps,desired_on,status,wallet_id,parent_wallet_id,caixinha_purpose)
+        VALUES(${owner.id},${caixinhaTitle},'capital_goal',${caixinhaTargetCents},0,1,0,0,${desiredOn}::date,'simulated',${cw[0].id}::uuid,${x.parentWalletId}::uuid,'goal')
+        RETURNING id
+      `;
+      sourceGoalId = cg[0]?.id || null;
+    }
+    const paymentMethod = x.paymentMethod === "credit_card" && uuid(x.creditCardId) ? "credit_card" : "standard";
+    const creditCardId = paymentMethod === "credit_card" ? x.creditCardId : null;
+    const planType = ["purchase", "trip", "shopping_list"].includes(x.planType) ? x.planType : "purchase";
+    const paymentStructure = ["upfront", "installments", "hybrid"].includes(x.paymentStructure)
+      ? x.paymentStructure
+      : downPaymentCents > 0 && installmentCount > 1
+        ? "hybrid"
+        : installmentCount > 1
+          ? "installments"
+          : "upfront";
+    const budgetCategoryId = uuid(x.budgetCategoryId) ? x.budgetCategoryId : null;
+    const selectedWalletId = uuid(x.selectedWalletId) ? x.selectedWalletId : null;
+    const quotesSanitized = sanitizePlanningQuotes(x.quotes, amount, uuid);
+    const quotesJsonStr = JSON.stringify(quotesSanitized);
+
+    await sql`
+      UPDATE public.kc_financial_goals
+      SET title=${title},
+          target_cents=${targetCents},
+          down_payment_cents=${downPaymentCents},
+          installment_count=${installmentCount},
+          installment_cents=${installmentCents},
+          interest_bps=${interestBps},
+          desired_on=${desiredOn}::date,
+          source_goal_id=${sourceGoalId}::uuid,
+          payment_method=${paymentMethod},
+          credit_card_id=${creditCardId}::uuid,
+          plan_type=${planType},
+          payment_structure=${paymentStructure},
+          quotes_json=${quotesJsonStr}::jsonb,
+          budget_category_id=${budgetCategoryId}::uuid,
+          selected_wallet_id=${selectedWalletId}::uuid
+      WHERE id=${x.goalId}::uuid AND user_id=${owner.id}
+    `;
+    return ok({ saved: true, id: x.goalId, sourceGoalId, paymentMethod, creditCardId, planType, paymentStructure });
+  }
+
   if (x.action === "cancel_goal") {
     if (!uuid(x.goalId)) return fail("Objetivo inválido.");
     const gRows = await sql`SELECT id,category,wallet_id,parent_wallet_id FROM public.kc_financial_goals WHERE id=${x.goalId}::uuid AND user_id=${owner.id} AND status<>'cancelled' LIMIT 1`;
@@ -965,6 +1154,23 @@ export async function executePortfolioPatch(ownerId, x) {
       await sql`UPDATE public.kc_financial_goals SET status='cancelled' WHERE id=${x.goalId}::uuid AND user_id=${owner.id}`;
       const g = gRows[0];
       if (g.wallet_id) {
+        // Falha 5: Converte reserve_transfer da caixinha excluída para 'transfer' antes de migrar para a conta mãe
+        await sql`
+          UPDATE public.kc_titles
+          SET entry_kind = 'transfer'
+          WHERE user_id = ${owner.id}
+            AND entry_kind = 'reserve_transfer'
+            AND (
+              wallet_id = ${g.wallet_id}::uuid
+              OR transfer_id IN (
+                SELECT DISTINCT transfer_id
+                FROM public.kc_titles
+                WHERE user_id = ${owner.id}
+                  AND wallet_id = ${g.wallet_id}::uuid
+                  AND transfer_id IS NOT NULL
+              )
+            )
+        `;
         let targetId = g.parent_wallet_id;
         if (targetId) {
           const pw = await sql`SELECT id FROM public.kc_wallets WHERE id=${targetId}::uuid AND user_id=${owner.id} AND archived_at IS NULL LIMIT 1`;
@@ -1045,9 +1251,9 @@ export async function executePortfolioPatch(ownerId, x) {
 
   if (x.action === "cancel") {
     if (!uuid(x.titleId)) return fail("Título inválido.");
-    const tRows = await sql`SELECT id,transfer_id FROM public.kc_titles WHERE id=${x.titleId}::uuid AND user_id=${owner.id} AND cancelled_at IS NULL LIMIT 1`;
+    const tRows = await sql`SELECT id,transfer_id,entry_kind FROM public.kc_titles WHERE id=${x.titleId}::uuid AND user_id=${owner.id} AND cancelled_at IS NULL LIMIT 1`;
     if (!tRows.length) return fail("Título não encontrado.", 404);
-    if (tRows[0].transfer_id) {
+    if (tRows[0].transfer_id && ["transfer", "reserve_transfer"].includes(tRows[0].entry_kind)) {
       const pair = await sql`SELECT id FROM public.kc_titles WHERE user_id=${owner.id} AND transfer_id=${tRows[0].transfer_id}::uuid AND cancelled_at IS NULL`;
       let info = null;
       for (const p of pair) {
@@ -1056,6 +1262,15 @@ export async function executePortfolioPatch(ownerId, x) {
         if (!info) info = res[0]?.info;
       }
       return ok({ saved: true, cancelledCount: pair.length, ...info });
+    }
+    if (tRows[0].transfer_id && tRows[0].entry_kind === "loan_out") {
+      const result = await sql`SELECT public.kc_cancel_title_scope(${owner.id},${x.titleId}::uuid,'only') AS info`;
+      await sql`SELECT public.kc_sync_cancelled_economic_events(${owner.id},${x.titleId}::uuid)`;
+      const openRepays = await sql`SELECT id FROM public.kc_titles WHERE user_id=${owner.id} AND transfer_id=${tRows[0].transfer_id}::uuid AND id<>${x.titleId}::uuid AND entry_kind='loan_repayment' AND settled_cents=0 AND cancelled_at IS NULL`;
+      for (const r of openRepays) {
+        await sql`SELECT public.kc_cancel_title_scope(${owner.id},${r.id}::uuid,'only')`;
+      }
+      return ok({ saved: true, ...result[0]?.info });
     }
     const result = await sql`SELECT public.kc_cancel_title_scope(${owner.id},${x.titleId}::uuid,'only') AS info`;
     await sql`SELECT public.kc_sync_cancelled_economic_events(${owner.id},${x.titleId}::uuid)`;

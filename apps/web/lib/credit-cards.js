@@ -65,6 +65,25 @@ export function computeCardUsage(card, titles = []) {
   return { limitCents, usedLimitCents, availableLimitCents, utilizationPct };
 }
 
+export function computeCardUsageAtDate(card, titles = [], asOfDate, today = isoDate(new Date())) {
+  const refDay = isoDate(asOfDate) || isoDate(today);
+  const curDay = isoDate(today) || refDay;
+  const limitCents = Math.max(0, cents(card?.limit_cents));
+  const usedLimitCents = (titles || [])
+    .filter((t) => {
+      if (t.cancelled_at || t.direction !== "expense" || t.credit_card_id !== card?.id) return false;
+      const rem = Math.max(0, cents(t.amount_cents) - cents(t.settled_cents));
+      if (rem <= 0) return false;
+      if (refDay <= curDay) return true;
+      const due = isoDate(t.due_on);
+      return due > refDay || due < curDay;
+    })
+    .reduce((sum, t) => sum + Math.max(0, cents(t.amount_cents) - cents(t.settled_cents)), 0);
+  const availableLimitCents = Math.max(0, limitCents - usedLimitCents);
+  const utilizationPct = limitCents > 0 ? Math.min(100, Math.round((usedLimitCents / limitCents) * 100)) : 0;
+  return { limitCents, usedLimitCents, availableLimitCents, utilizationPct };
+}
+
 export function computeInvoiceStatus({ totalCents, remainingCents, closingDate, dueDate, today }) {
   if (totalCents > 0 && remainingCents === 0) return "paid";
   if (remainingCents > 0 && today > dueDate) return "overdue";

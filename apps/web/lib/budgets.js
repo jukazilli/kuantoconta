@@ -560,13 +560,11 @@ export function suggestBudgetsFromIncome({ incomeCents }) {
 }
 
 /**
- * Computes "Saldo previsto" accumulated with prior/live operational cash:
+ * Computes "Saldo previsto" accumulated with live operational cash:
  * - Starts from openingOperationalCents (live checking cash, excluding Capital/Reserve wallets).
- * - Adds remaining pending receivables in the period (excluding loan_principal & reserve_transfer).
- * - Subtracts remaining controlled budget commitments max(0, max(used, limit) - settledInBudget)
- *   so already-settled expenses in live checking cash are never double-counted, and spending inside
- *   a budget does not reduce Saldo previsto twice.
- * - Subtracts pending uncapped expenses (categories without a controlled limit, e.g. Moradia).
+ * - Adds remaining pending receivables in the period (excluding reserve_transfer, transfers & loan principals).
+ * - Subtracts ONLY real pending obligations (unsettled expenses/installments/invoices),
+ *   never deducting unspent budget limits (budgets are spending control caps, not cash obligations).
  */
 export function computeProjectedBalanceWithBudgetsCents({
   openingOperationalCents = 0,
@@ -575,8 +573,8 @@ export function computeProjectedBalanceWithBudgetsCents({
   settledRows = null,
   budgetSummary = []
 }) {
-  const settlementSource = settledRows || rows;
-  // Backwards-compatible fallback when caller passes explicit receivableCents without settlement breakdown
+  void settledRows;
+  void budgetSummary;
   const hasSettlementData = rows.some((t) => t.settled_cents !== undefined);
   const pendingReceivableCents =
     receivableCents !== null && !hasSettlementData
@@ -584,48 +582,75 @@ export function computeProjectedBalanceWithBudgetsCents({
       : rows.reduce((sum, t) => {
           if (t.cancelled_at || t.direction !== "income") return sum;
           const kind = t.entry_kind || "standard";
-          if (kind === "reserve_transfer" || kind === "loan_principal" || kind === "transfer") return sum;
+          if (
+            kind === "reserve_transfer" ||
+            kind === "loan_principal" ||
+            kind === "loan_repayment" ||
+            kind === "transfer" ||
+            kind === "debt_payment" ||
+            t.liability_id
+          ) {
+            return sum;
+          }
           return sum + Math.max(0, cents(t.amount_cents) - cents(t.settled_cents));
         }, 0);
 
-  const controlledById = new Map();
-  const controlledByNorm = new Map();
-  let controlledRemainingCommitmentCents = 0;
-
-  for (const b of budgetSummary) {
-    if (b.limitCents === null || b.limitCents === undefined) continue;
-    const used = Math.max(0, cents(b.usedCents));
-    const limit = Math.max(0, cents(b.limitCents));
-    const settledInBudget = settlementSource.reduce((sum, t) => {
-      if (t.cancelled_at || t.direction !== "expense") return sum;
-      if ((t.entry_kind || "standard") === "reserve_transfer" || (t.entry_kind || "standard") === "loan_out" || (t.entry_kind || "standard") === "transfer") return sum;
-      const matchesId = b.categoryId && t.category_id && String(t.category_id) === String(b.categoryId);
-      const matchesName = b.categoryName && normalizeCategoryName(t.category || "") === normalizeCategoryName(b.categoryName);
-      if (!matchesId && !matchesName) return sum;
-      return sum + Math.max(0, cents(t.settled_cents));
-    }, 0);
-    const totalNeeded = Math.max(used, limit);
-    controlledRemainingCommitmentCents += Math.max(0, totalNeeded - settledInBudget);
-    if (b.categoryId) controlledById.set(String(b.categoryId), true);
-    if (b.categoryName) controlledByNorm.set(normalizeCategoryName(b.categoryName), true);
-  }
-
-  let uncappedPendingExpenseCents = 0;
+  let pendingExpenseCents = 0;
   for (const t of rows) {
     if (t.direction !== "expense" || t.cancelled_at) continue;
-    if ((t.entry_kind || "standard") === "reserve_transfer" || (t.entry_kind || "standard") === "loan_out" || (t.entry_kind || "standard") === "transfer") continue;
-    const inControlled =
-      (t.category_id && controlledById.has(String(t.category_id))) ||
-      controlledByNorm.has(normalizeCategoryName(t.category || ""));
-    if (!inControlled) {
-      const pending = hasSettlementData
-        ? Math.max(0, cents(t.amount_cents) - cents(t.settled_cents))
-        : Math.max(0, cents(t.amount_cents));
-      uncappedPendingExpenseCents += pending;
-    }
+    const kind = t.entry_kind || "standard";
+    if (kind === "reserve_transfer" || kind === "loan_out" || kind === "transfer") continue;
+    const pending = hasSettlementData
+      ? Math.max(0, cents(t.amount_cents) - cents(t.settled_cents))
+      : Math.max(0, cents(t.amount_cents));
+    pendingExpenseCents += pending;
   }
 
-  return cents(openingOperationalCents) + pendingReceivableCents - (controlledRemainingCommitmentCents + uncappedPendingExpenseCents);
+  return cents(openingOperationalCents) + pendingReceivableCents - pendingExpenseCents;
+}
+
+/**
+ * Computes safe monthly contribution ("Aporte seguro em Caixinhas") obeying Kuantoconta's
+ * Pay-Bills-First rule: never suggest saving when projected cash <= 0, and limit suggested
+ * contributions to real projected surplus after unspent consumption budget caps.
+ */
+export function computeSafeMonthlyContributionCents({
+  projectedBalanceCents = 0,
+  checkingBalanceCents = null,
+  budgetSummary = []
+}) {
+  const proj = cents(projectedBalanceCents);
+  const unspentConsumptionBudgetsCents = (budgetSummary || []).reduce((sum, b) => {
+    if (b.limitCents === null || b.limitCents === undefined || b.active === false) return sum;
+    const key = String(b.canonicalKey || "").toLowerCase();
+    const norm = normalizeCategoryName(b.categoryName || "");
+    if (key.includes("reserva") || norm.includes("reserva") || norm.includes("capital")) return sum;
+    return sum + Math.max(0, cents(b.limitCents) - Math.max(0, cents(b.usedCents)));
+  }, 0);
+
+  if (proj <= 0) {
+    return {
+      safeContributionCents: 0,
+      maxContributionCents: 0,
+      unspentConsumptionBudgetsCents,
+      canContribute: false,
+      status: "prioritize_bills"
+    };
+  }
+
+  const maxContributionCents =
+    checkingBalanceCents !== null && checkingBalanceCents !== undefined
+      ? Math.max(0, Math.min(proj, cents(checkingBalanceCents)))
+      : proj;
+  const safeContributionCents = Math.max(0, proj - unspentConsumptionBudgetsCents);
+
+  return {
+    safeContributionCents,
+    maxContributionCents,
+    unspentConsumptionBudgetsCents,
+    canContribute: safeContributionCents > 0,
+    status: safeContributionCents > 0 ? "ready" : "tight_budget"
+  };
 }
 
 /**

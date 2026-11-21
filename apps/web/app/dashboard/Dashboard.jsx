@@ -31,21 +31,27 @@ import {
   HandCoins,
   CreditCard,
   PiggyBank,
+  Award,
+  ExternalLink,
+  Plane,
+  ShoppingBag,
+  ListChecks,
 } from "lucide-react";
 import { authClient } from "../../lib/auth/client";
 import { money, cents, brDay, isoDate } from "../../lib/finance";
 import { computeRange, lastDayOfMonth, firstDayOfMonth, moveMonth, inRange } from "../../lib/period";
-import { computeMonthlyIncomeCeilingCents, computeProjectedBalanceWithBudgetsCents, computeTotalDebtCents } from "../../lib/budgets";
+import { computeMonthlyIncomeCeilingCents, computeProjectedBalanceWithBudgetsCents, computeSafeMonthlyContributionCents, computeTotalDebtCents } from "../../lib/budgets";
 import { buildNotifications } from "../../lib/notifications";
-import { simulateGoalPurchase } from "../../lib/goal-planner";
+import { comparePlanningQuotes, simulateGoalPurchase } from "../../lib/goal-planner";
 import { computeCapitalPace } from "../../lib/capital-pace";
 import { analyzeConsumptionHabits } from "../../lib/habit-analyzer";
 import { rolloverOverdueLoanRepayments, summarizePeopleLoans } from "../../lib/lending";
 import { consolidateCreditCardTitles, computeCardUsage, computeInvoiceCycleForPurchase } from "../../lib/credit-cards";
-import { maskToDecimal, centsToMask } from "../../lib/money-input";
+import { maskToCents, maskToDecimal, centsToMask } from "../../lib/money-input";
 import { expandRecurring } from "../../lib/recurring";
 import { buildFinancialHealthPlan } from "../../lib/financial-health";
 import EntryDrawer from "./EntryDrawer";
+import { normalizeFormQuotes } from "./PlanningWizard";
 import MovementList from "./MovementList";
 import BudgetList from "./BudgetList";
 import CancelScopeDialog from "./CancelScopeDialog";
@@ -138,10 +144,18 @@ const defaultForm = (kind = "expense") => ({
   loanReceivedOn: TODAY,
   loanCreditWallet: true,
   loanCount: "12",
+  goalId: null,
+  goalPlanType: "purchase",
+  goalBudgetCategoryId: "",
+  goalWizardStep: 1,
+  goalActiveQuoteIdx: 0,
+  goalQuotes: null,
   goalTarget: "2.500,00",
   goalDownPayment: "0,00",
   goalInstallments: "1",
   goalDesiredOn: TODAY,
+  goalPaymentMethod: "standard",
+  goalCreditCardId: "",
   name: "",
   balance: "0,00",
   label: "",
@@ -339,7 +353,7 @@ export default function Dashboard({ user }) {
       ? null
       : cents(w.opening_balance_cents) +
       (data?.settlements || [])
-        .filter((x) => !x.reversed_at && x.wallet_id === w.id && w.opening_at && new Date(x.created_at) > new Date(w.opening_at))
+        .filter((x) => !x.reversed_at && x.wallet_id === w.id && w.opening_at && new Date(x.created_at) >= new Date(w.opening_at))
         .reduce((a, x) => a + (x.direction === "income" ? 1 : -1) * cents(x.amount_cents), 0);
 
   const selectedMonth = summary.targetMonth;
@@ -395,6 +409,11 @@ export default function Dashboard({ user }) {
     (data?.goals || [])
       .filter((g) => g.category === "capital_goal" && g.status !== "cancelled" && g.parent_wallet_id === bankId && g.wallet_id)
       .reduce((s, g) => s + caixinhaBalance(g), 0);
+  const activeCaixinhaWalletIds = new Set(
+    (data?.goals || [])
+      .filter((g) => g.category === "capital_goal" && g.status !== "cancelled" && g.wallet_id)
+      .map((g) => String(g.wallet_id))
+  );
   const reservedThisMonthCents = useMemo(
     () =>
       (data?.titles || [])
@@ -403,6 +422,7 @@ export default function Dashboard({ user }) {
             !t.cancelled_at &&
             t.entry_kind === "reserve_transfer" &&
             t.direction === "income" &&
+            (!t.wallet_id || activeCaixinhaWalletIds.size === 0 || activeCaixinhaWalletIds.has(String(t.wallet_id))) &&
             isoDate(t.due_on).slice(0, 7) === selectedMonth
         )
         .reduce((s, t) => s + cents(t.settled_cents), 0),
@@ -416,15 +436,37 @@ export default function Dashboard({ user }) {
     () => titles.filter((t) => isoDate(t.due_on).slice(0, 7) === selectedMonth),
     [titles, selectedMonth]
   );
+  const priorPendingNetCents = useMemo(() => {
+    if (rangeStart <= TODAY) return 0;
+    return titles.reduce((sum, t) => {
+      if (t.cancelled_at) return sum;
+      const kind = t.entry_kind || "standard";
+      if (["transfer", "reserve_transfer", "loan_out", "loan_repayment"].includes(kind)) return sum;
+      if (t.direction === "income" && (kind === "debt_payment" || kind === "loan_principal" || t.liability_id)) return sum;
+      const due = isoDate(t.due_on);
+      if (due >= rangeStart) return sum;
+      const pending = Math.max(0, cents(t.amount_cents) - cents(t.settled_cents));
+      return sum + (t.direction === "income" ? pending : -pending);
+    }, 0);
+  }, [titles, rangeStart]);
   const projectedBalanceCents = useMemo(
     () =>
       computeProjectedBalanceWithBudgetsCents({
-        openingOperationalCents: summary.knownCash ? checkingBalanceCents : 0,
+        openingOperationalCents: summary.knownCash ? checkingBalanceCents + priorPendingNetCents : 0,
         rows: rangeRows,
         settledRows: selectedMonthRows,
         budgetSummary: budgetItems,
       }),
-    [summary.knownCash, checkingBalanceCents, rangeRows, selectedMonthRows, budgetItems]
+    [summary.knownCash, checkingBalanceCents, priorPendingNetCents, rangeRows, selectedMonthRows, budgetItems]
+  );
+  const safeContribution = useMemo(
+    () =>
+      computeSafeMonthlyContributionCents({
+        projectedBalanceCents,
+        checkingBalanceCents,
+        budgetSummary: budgetItems,
+      }),
+    [projectedBalanceCents, checkingBalanceCents, budgetItems]
   );
   const totalDebtCents = useMemo(
     () =>
@@ -535,6 +577,14 @@ export default function Dashboard({ user }) {
       initialAmount: "",
       downPaymentSource: "checking",
       sourceGoalId: capitalGoals[0]?.id || "",
+      goalId: null,
+      goalPlanType: "purchase",
+      goalBudgetCategoryId: "",
+      goalWizardStep: 1,
+      goalActiveQuoteIdx: 0,
+      goalQuotes: null,
+      goalPaymentMethod: "standard",
+      goalCreditCardId: creditCards[0]?.id || "",
       transferredOn: TODAY,
       lentOn: TODAY,
       expectedRepaymentOn: lastDayOfMonth(TODAY),
@@ -751,22 +801,67 @@ export default function Dashboard({ user }) {
           firstDueOn: form.dueOn || TODAY,
         });
       } else if (drawer === "goal_sim") {
-        const interestBps = Math.min(
-          10000,
-          Math.max(0, Math.round(Number(String(form.goalInterestPct || "0").replace(",", ".")) * 100) || 0)
-        );
-        await request("POST", {
-          action: "goal",
-          title: form.description || "Compra planejada",
-          target: maskToDecimal(form.goalTarget || "0,00"),
-          downPayment: maskToDecimal(form.goalDownPayment || "0,00"),
-          installmentCount: Number(form.goalInstallments || 1),
-          interestBps,
-          desiredOn: form.goalDesiredOn || TODAY,
-          sourceGoalId: form.downPaymentSource === "caixinha" ? (form.sourceGoalId || null) : null,
-          createLinkedCaixinha: form.downPaymentSource === "create_caixinha",
-          parentWalletId: form.downPaymentSource === "create_caixinha" ? (form.parentWalletId || checkingWallets[0]?.id || null) : null,
+        const rawQuotes = normalizeFormQuotes(form, checkingWallets, creditCards);
+        const toCentsSafe = (v) => {
+          try {
+            return maskToCents(v || "0,00");
+          } catch {
+            return 0;
+          }
+        };
+        const serializedQuotes = rawQuotes.map((q) => {
+          const itemsSum = (q.items || []).reduce((s, it) => s + cents(it.amountCents), 0);
+          const targetCents = itemsSum > 0 ? itemsSum : toCentsSafe(q.target);
+          const downPaymentCents =
+            q.paymentStructure === "hybrid" ? Math.min(targetCents, toCentsSafe(q.downPayment)) : 0;
+          const instCount =
+            q.paymentStructure === "upfront" ? 1 : Math.max(1, Math.min(120, Number(q.installmentCount || 1)));
+          const interestBps = Math.min(
+            10000,
+            Math.max(0, Math.round(Number(String(q.interestPct || "0").replace(",", ".")) * 100) || 0)
+          );
+          return {
+            ...q,
+            targetCents,
+            downPaymentCents,
+            installmentCount: instCount,
+            interestBps,
+          };
         });
+        const chosenQuote = serializedQuotes.find((q) => q.isChosen) || serializedQuotes[0];
+        const effectiveTargetCents = Math.max(100, chosenQuote?.targetCents || toCentsSafe(form.goalTarget));
+        const effectiveDownCents = Math.min(effectiveTargetCents, chosenQuote?.downPaymentCents || 0);
+        const effectiveCount = chosenQuote?.installmentCount || Number(form.goalInstallments || 1);
+        const effectiveInterestBps = chosenQuote?.interestBps || 0;
+        const payload = {
+          title: form.description || "Planejamento",
+          target: (effectiveTargetCents / 100).toFixed(2),
+          downPayment: (effectiveDownCents / 100).toFixed(2),
+          installmentCount: effectiveCount,
+          interestBps: effectiveInterestBps,
+          desiredOn: form.goalDesiredOn || TODAY,
+          planType: form.goalPlanType || "purchase",
+          paymentStructure: chosenQuote?.paymentStructure || "upfront",
+          quotes: serializedQuotes,
+          budgetCategoryId: form.goalBudgetCategoryId || null,
+          selectedWalletId: chosenQuote?.selectedWalletId || null,
+          sourceGoalId: chosenQuote?.downPaymentSource === "caixinha" ? (chosenQuote.sourceGoalId || null) : null,
+          createLinkedCaixinha: chosenQuote?.downPaymentSource === "create_caixinha",
+          parentWalletId:
+            chosenQuote?.downPaymentSource === "create_caixinha"
+              ? (chosenQuote.parentWalletId || checkingWallets[0]?.id || null)
+              : null,
+          paymentMethod: chosenQuote?.paymentMethod || form.goalPaymentMethod || "standard",
+          creditCardId:
+            (chosenQuote?.paymentMethod || form.goalPaymentMethod) === "credit_card"
+              ? (chosenQuote?.creditCardId || form.goalCreditCardId || creditCards[0]?.id || null)
+              : null,
+        };
+        if (form.goalId) {
+          await request("PATCH", { action: "update_goal", goalId: form.goalId, ...payload });
+        } else {
+          await request("POST", { action: "goal", ...payload });
+        }
       } else if (drawer === "capital_goal") {
         await request("POST", {
           action: "goal",
@@ -1034,15 +1129,18 @@ export default function Dashboard({ user }) {
             <span className="brand-name">kuantoconta</span>
           </button>
           {active !== "profile" && (
-            <div className="topbar-actions" data-tour="actions">
-              <button type="button" className="pill pill-primary" onClick={() => open("title", null, "bill")}>
-                <Plus size={17} aria-hidden="true" />
-                Lançamento
-              </button>
-              <button type="button" className="pill pill-secondary" onClick={() => setActionMenu("create")}>
-                Novo
-              </button>
-            </div>
+            <>
+              <span className="topbar-divider" aria-hidden="true" />
+              <div className="topbar-actions" data-tour="actions">
+                <button type="button" className="pill pill-primary" onClick={() => open("title", null, "bill")}>
+                  <Plus size={17} aria-hidden="true" />
+                  Lançamento
+                </button>
+                <button type="button" className="pill pill-secondary" onClick={() => setActionMenu("create")}>
+                  Novo
+                </button>
+              </div>
+            </>
           )}
         </div>
 
@@ -1084,6 +1182,19 @@ export default function Dashboard({ user }) {
         )}
 
         <div className="topbar-right">
+          {summary.knownCash && (
+            <button
+              type="button"
+              className="topbar-balance-pill"
+              title={`Uso diário: ${money(checkingBalanceCents)} · Caixinhas: ${money(capitalBalanceCents)}`}
+              aria-label="Saldo total em contas bancárias e caixinhas"
+              onClick={() => setManageWalletsOpen(true)}
+            >
+              <Wallet size={14} aria-hidden="true" />
+              <span>Saldo</span>
+              <strong>{money(checkingBalanceCents + capitalBalanceCents)}</strong>
+            </button>
+          )}
           <button
             type="button"
             className="bell-btn"
@@ -1497,18 +1608,22 @@ export default function Dashboard({ user }) {
 
         {active === "planning" && (
           <div className="workspace planning-bento">
-            <div className="card kpi-panel bento-hero bento-span-4">
+            <div className="card kpi-panel bento-hero bento-span-3">
               <span className="metric-label">Guardado em Caixinhas</span>
               <strong className="kpi-value kpi-hero-value">{summary.knownCash ? money(capitalBalanceCents) : "A calcular"}</strong>
               <span className="metric-sub">
                 Reserva: {money(reserveCaixinhasCents)} · Objetivos: {money(goalCaixinhasCents)}
               </span>
             </div>
-            <div className="card kpi-panel bento-kpi bento-span-4">
+            <div className="card kpi-panel bento-kpi bento-span-3">
               <span className="metric-label">Guardado em {monthOnly}</span>
               <strong className="kpi-value">{money(reservedThisMonthCents)}</strong>
               <span className="metric-sub">
-                Livre no uso diário: {money(checkingBalanceCents)}
+                {safeContribution.canContribute
+                  ? `Aporte seguro: ${money(safeContribution.safeContributionCents)} · Uso diário: ${money(checkingBalanceCents)}`
+                  : projectedBalanceCents <= 0
+                    ? "Priorize quitar compromissos antes de guardar"
+                    : `Livre no uso diário: ${money(checkingBalanceCents)}`}
               </span>
             </div>
             <button
@@ -1522,12 +1637,21 @@ export default function Dashboard({ user }) {
             </button>
             <button
               type="button"
-              className="card bento-action-card bento-action-accent bento-span-2"
+              className="card bento-action-card bento-span-2"
               onClick={() => open("capital_goal")}
             >
               <Plus size={20} aria-hidden="true" />
               <strong>Nova caixinha</strong>
               <span>Criar objetivo</span>
+            </button>
+            <button
+              type="button"
+              className="card bento-action-card bento-action-accent bento-span-2"
+              onClick={() => open("goal_sim")}
+            >
+              <Compass size={20} aria-hidden="true" />
+              <strong>Novo planejamento</strong>
+              <span>Compra, viagem ou lista</span>
             </button>
 
             <section className="card panel bento-caixinhas">
@@ -1593,68 +1717,68 @@ export default function Dashboard({ user }) {
 
             <section className="card panel bento-purchases">
               <div className="card-heading" style={{ marginBottom: 14 }}>
-                <h2 className="card-title">Compras planejadas</h2>
-                <button
-                  type="button"
-                  className="pill pill-outline-orange pill-compact"
-                  onClick={() => open("goal_sim")}
-                >
-                  <Plus size={15} aria-hidden="true" /> Simular compra
-                </button>
+                <h2 className="card-title">Planejamentos</h2>
+                <span className="small-flag">{purchaseGoals.length} ativo(s)</span>
               </div>
               {purchaseGoals.length ? (
                 <div className="goals-bento-grid">
                   {purchaseGoals
-                    .map((g, idx) => ({
-                      g,
-                      idx,
-                      sim: simulateGoalPurchase(
-                        data || {},
-                        {
-                          title: g.title,
-                          targetCents: cents(g.target_cents),
-                          downPaymentCents: cents(g.down_payment_cents),
-                          installmentCount: Number(g.installment_count || 1),
-                          installmentCents: cents(g.installment_cents),
-                          interestBps: Number(g.interest_bps || 0),
-                          sourceGoalId: g.source_goal_id || null,
-                          desiredOn: isoDate(g.desired_on) || TODAY,
-                        },
-                        { today: TODAY }
-                      ),
-                    }))
-                    .filter(({ sim }) => !screenFilters.planning.onlyFeasible || sim.isFeasible || Boolean(sim.firstFeasibleDate))
-                    .map(({ g, idx, sim }) => (
-                      <button
-                        type="button"
-                        key={g.id || idx}
-                        className="goal-bento-card"
-                        onClick={() => setSelectedGoal({ raw: g, sim })}
-                      >
-                        <div className="goal-bento-top">
-                          <span className="goal-bento-icon">
-                            <Compass size={18} />
-                          </span>
-                          <span className={`status ${sim.isFeasible ? "done" : sim.firstFeasibleDate ? "partial" : "late"}`}>
-                            {sim.isFeasible ? "Viável na data" : sim.firstFeasibleDate ? `A partir de ${fmtDate(sim.firstFeasibleDate)}` : "Ainda não cabe"}
-                          </span>
-                        </div>
-                        <strong>{g.title}</strong>
-                        <div className="goal-bento-meta">
-                          <span>{money(cents(g.target_cents))}</span>
-                          <small>{g.installment_count > 1 ? `${g.installment_count}x de ${money(cents(g.installment_cents))}` : "À vista"}</small>
-                        </div>
-                        {sim.twoStepVerdict?.linkedCaixinhaTitle && (
-                          <div className="hint" style={{ fontSize: 11 }}>
-                            Entrada via {sim.twoStepVerdict.linkedCaixinhaTitle}
+                    .map((g, idx) => {
+                      const comparison = comparePlanningQuotes(data || {}, g, { today: TODAY });
+                      const chosenQ = comparison.quotes.find((q) => q.isChosen) || comparison.winner;
+                      const sim = chosenQ?.sim || comparison.winner?.sim;
+                      return { g, idx, comparison, sim };
+                    })
+                    .filter(({ sim }) => !screenFilters.planning.onlyFeasible || sim?.isFeasible || Boolean(sim?.firstFeasibleDate))
+                    .map(({ g, idx, comparison, sim }) => {
+                      const pType = g.plan_type || "purchase";
+                      const TypeIcon = pType === "trip" ? Plane : pType === "shopping_list" ? ListChecks : Compass;
+                      const typeLabel = pType === "trip" ? "Viagem" : pType === "shopping_list" ? "Lista" : "Compra";
+                      return (
+                        <button
+                          type="button"
+                          key={g.id || idx}
+                          className="goal-bento-card"
+                          onClick={() => setSelectedGoal({ raw: g, sim, comparison })}
+                        >
+                          <div className="goal-bento-top">
+                            <span className="goal-bento-icon">
+                              <TypeIcon size={18} />
+                            </span>
+                            <span className={`status ${sim.isFeasible ? "done" : sim.firstFeasibleDate ? "partial" : "late"}`}>
+                              {sim.isFeasible ? "Viável na data" : sim.firstFeasibleDate ? `A partir de ${fmtDate(sim.firstFeasibleDate)}` : "Ainda não cabe"}
+                            </span>
                           </div>
-                        )}
-                      </button>
-                    ))}
+                          <strong>{g.title}</strong>
+                          <div className="goal-bento-meta">
+                            <span>{money(cents(g.target_cents))}</span>
+                            <small>
+                              {typeLabel}
+                              {comparison.hasComparison ? ` · ${comparison.quotes.length} cotações` : g.installment_count > 1 ? ` · ${g.installment_count}x de ${money(cents(g.installment_cents))}` : " · À vista"}
+                            </small>
+                          </div>
+                          {comparison.hasComparison && comparison.winner && (
+                            <div className="hint" style={{ fontSize: 11, color: "#067647", fontWeight: 600 }}>
+                              🏆 Vence: {comparison.winner.label}
+                            </div>
+                          )}
+                          {sim.twoStepVerdict?.linkedCaixinhaTitle && (
+                            <div className="hint" style={{ fontSize: 11 }}>
+                              Caixinha: {sim.twoStepVerdict.linkedCaixinhaTitle}
+                            </div>
+                          )}
+                          {sim.twoStepVerdict?.creditCardVerdict && (
+                            <div className="hint" style={{ fontSize: 11 }}>
+                              💳 Cartão {sim.twoStepVerdict.creditCardVerdict.cardName}
+                            </div>
+                          )}
+                        </button>
+                      );
+                    })}
                 </div>
               ) : (
                 <Empty>
-                  Toque em &ldquo;+ Simular compra&rdquo; para validar entrada e parcelas sem comprometer suas reservas.
+                  Toque em &ldquo;Novo planejamento&rdquo; no topo para simular compras, cotações, viagens ou listas sem comprometer sua reserva.
                 </Empty>
               )}
             </section>
@@ -2522,7 +2646,7 @@ export default function Dashboard({ user }) {
             if (e.target === e.currentTarget) setSelectedGoal(null);
           }}
         >
-          <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="goalDetailTitle">
+          <div className="dialog dialog-wide" role="dialog" aria-modal="true" aria-labelledby="goalDetailTitle">
             <div className="dialog-head">
               <h2 id="goalDetailTitle">{selectedGoal.raw.title}</h2>
               <button type="button" className="dialog-close" onClick={() => setSelectedGoal(null)} aria-label="Fechar">
@@ -2531,67 +2655,162 @@ export default function Dashboard({ user }) {
             </div>
             <div className="detail-layout" style={{ padding: 0 }}>
               <div className={`goal-verdict ${selectedGoal.sim.isFeasible ? "ok" : "warn"}`}>
-                <Compass size={18} />
+                <Award size={18} />
                 <div>
                   <strong>
-                    {selectedGoal.sim.isFeasible
-                      ? `Cabe no plano na data desejada (${fmtDate(selectedGoal.raw.desired_on)})`
-                      : selectedGoal.sim.firstFeasibleDate
-                        ? `Melhor momento: a partir de ${fmtDate(selectedGoal.sim.firstFeasibleDate)}`
-                        : "Ainda não cabe no plano"}
+                    {selectedGoal.comparison?.hasComparison && selectedGoal.comparison.winner
+                      ? `Melhor opção: ${selectedGoal.comparison.winner.label}`
+                      : selectedGoal.sim.isFeasible
+                        ? `Cabe no plano na data desejada (${fmtDate(selectedGoal.raw.desired_on)})`
+                        : selectedGoal.sim.firstFeasibleDate
+                          ? `Melhor momento: a partir de ${fmtDate(selectedGoal.sim.firstFeasibleDate)}`
+                          : "Ainda não cabe no plano"}
                   </strong>
                   <small>
-                    {selectedGoal.sim.bottleneckDate
-                      ? `Gargalo em ${fmtDate(selectedGoal.sim.bottleneckDate)} (falta de ${money(selectedGoal.sim.bottleneckShortfallCents)}).`
-                      : `Todas as ${selectedGoal.sim.installmentCountVerified || 1} parcela(s) verificadas sem comprometer o piso protegido.`}
+                    {selectedGoal.comparison?.hasComparison
+                      ? `${selectedGoal.comparison.winnerReasonText}${selectedGoal.comparison.totalSavedVsWorstCents > 0 ? ` · Economia de ${money(selectedGoal.comparison.totalSavedVsWorstCents)}` : ""}`
+                      : selectedGoal.sim.bottleneckDate
+                        ? `Gargalo em ${fmtDate(selectedGoal.sim.bottleneckDate)} (falta de ${money(selectedGoal.sim.bottleneckShortfallCents)}).`
+                        : `Todas as ${selectedGoal.sim.installmentCountVerified || 1} parcela(s) verificadas sem comprometer o piso protegido.`}
                   </small>
                 </div>
               </div>
 
-              {selectedGoal.sim.twoStepVerdict && (
-                <div className="repeat-config">
-                  <div className="repeat-preview" style={{ borderTop: 0, paddingTop: 0 }}>
-                    <span>
-                      <strong>1. Entrada ({money(selectedGoal.sim.twoStepVerdict.downPaymentCents)}):</strong>{" "}
-                      {selectedGoal.sim.twoStepVerdict.coveredByCaixinhaCents > 0
-                        ? `${money(selectedGoal.sim.twoStepVerdict.coveredByCaixinhaCents)} na caixinha "${selectedGoal.sim.twoStepVerdict.linkedCaixinhaTitle}" · ${selectedGoal.sim.twoStepVerdict.remainingDownPaymentCents > 0 ? `faltam ${money(selectedGoal.sim.twoStepVerdict.remainingDownPaymentCents)}` : "100% coberta!"}`
-                        : selectedGoal.sim.twoStepVerdict.hasDownPaymentNow
-                          ? "Disponível hoje"
-                          : selectedGoal.sim.twoStepVerdict.downPaymentReadyDate
-                            ? `Pronta em ${fmtDate(selectedGoal.sim.twoStepVerdict.downPaymentReadyDate)}`
-                            : "Insuficiente no horizonte"}
-                    </span>
-                    <span>
-                      <strong>2. Parcela ({money(selectedGoal.sim.twoStepVerdict.perInstallmentCents)}/mês):</strong>{" "}
-                      {selectedGoal.sim.twoStepVerdict.installmentFitsMonthly
-                        ? `Cabe na sobra mensal (${money(selectedGoal.sim.twoStepVerdict.monthlyFreeSurplusCents)}/mês)`
-                        : `Não cabe (${money(selectedGoal.sim.twoStepVerdict.monthlyFreeSurplusCents)}/mês · faltam ${money(selectedGoal.sim.twoStepVerdict.monthlyGapCents)}/mês)`}
-                    </span>
-                    {selectedGoal.sim.totalInterestCents > 0 && (
-                      <span>
-                        <strong>Juros totais:</strong> {money(selectedGoal.sim.totalInterestCents)} · Custo final:{" "}
-                        {money(selectedGoal.sim.totalCostCents)}
-                      </span>
-                    )}
-                  </div>
+              {selectedGoal.comparison?.hasComparison && (
+                <div className="compare-quotes-grid">
+                  {selectedGoal.comparison.quotes.map((q) => (
+                    <div key={q.id} className={`quote-compare-card${q.isWinner ? " winner" : ""}`}>
+                      <div className="quote-compare-head">
+                        <strong>{q.label}</strong>
+                        <span className={`status ${q.sim.isFeasible ? "done" : q.sim.firstFeasibleDate ? "partial" : "late"}`}>
+                          {q.isWinner ? "🏆 Vencedora" : q.sim.isFeasible ? "Viável" : "Aperta caixa"}
+                        </span>
+                      </div>
+                      <div className="quote-compare-nums">
+                        <span>Total: <strong>{money(q.sim.totalCostCents)}</strong></span>
+                        <span>{q.sim.perInstallmentCents > 0 ? `${q.sim.installmentCountVerified}x de ${money(q.sim.perInstallmentCents)}` : "À vista"}</span>
+                      </div>
+                      {q.url && (
+                        <a href={q.url} target="_blank" rel="noopener noreferrer" className="pill pill-secondary pill-compact" style={{ width: "fit-content" }}>
+                          Abrir anúncio <ExternalLink size={13} />
+                        </a>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
 
-              {selectedGoal.sim.scenarios?.length > 0 && (
-                <div className="goal-scenarios">
-                  <strong>Comparação de cenários</strong>
-                  <ul>
-                    {selectedGoal.sim.scenarios.map((s) => (
-                      <li key={s.id}>
-                        <span>{s.label}</span>
-                        <strong className={s.feasible ? "" : "red"}>
-                          {s.feasible ? `Viável (${fmtDate(s.startDate)})` : "Inviável"}
-                        </strong>
-                      </li>
-                    ))}
-                  </ul>
+              {selectedGoal.sim.projectedPositions && (
+                <div className="positions-grid">
+                  <div className="position-box">
+                    <div className="position-box-head"><Wallet size={15} /> <strong>Conta bancária</strong></div>
+                    <small>
+                      Na data: <strong>{money(selectedGoal.sim.projectedPositions.walletPosition.balanceOnDateBeforeCents)}</strong> →{" "}
+                      <strong className={selectedGoal.sim.projectedPositions.walletPosition.balanceOnDateAfterCents < 0 ? "red" : ""}>
+                        {money(selectedGoal.sim.projectedPositions.walletPosition.balanceOnDateAfterCents)}
+                      </strong>
+                    </small>
+                    <small>
+                      Menor saldo futuro: <strong>{money(selectedGoal.sim.projectedPositions.walletPosition.minFutureBalanceAfterCents)}</strong>
+                    </small>
+                  </div>
+                  {selectedGoal.sim.projectedPositions.caixinhaPosition && (
+                    <div className="position-box">
+                      <div className="position-box-head"><PiggyBank size={15} /> <strong>{selectedGoal.sim.projectedPositions.caixinhaPosition.caixinhaTitle}</strong></div>
+                      <small>Guardado: <strong>{money(selectedGoal.sim.projectedPositions.caixinhaPosition.currentBalanceCents)}</strong> / {money(selectedGoal.sim.projectedPositions.caixinhaPosition.targetForPlanCents)}</small>
+                      <small>Faltam {money(selectedGoal.sim.projectedPositions.caixinhaPosition.stillNeededCents)}</small>
+                    </div>
+                  )}
+                  {selectedGoal.sim.projectedPositions.cardPosition && (
+                    <div className="position-box">
+                      <div className="position-box-head"><CreditCard size={15} /> <strong>{selectedGoal.sim.projectedPositions.cardPosition.cardName}</strong></div>
+                      <small>
+                        Limite na data: <strong>{money(selectedGoal.sim.projectedPositions.cardPosition.availableLimitBeforeCents)}</strong> →{" "}
+                        <strong>{money(selectedGoal.sim.projectedPositions.cardPosition.availableLimitAfterCents)}</strong>
+                      </small>
+                      <small>1ª fatura: {selectedGoal.sim.projectedPositions.cardPosition.firstInvoiceMonth}</small>
+                    </div>
+                  )}
                 </div>
               )}
+
+              <div className="detail-actions">
+                <button
+                  type="button"
+                  className="dark-button"
+                  onClick={() => {
+                    const g = selectedGoal.raw;
+                    const savedQuotes = Array.isArray(g.quotes_json) && g.quotes_json.length > 0
+                      ? g.quotes_json.map((q) => ({
+                          ...q,
+                          target: centsToMask(cents(q.targetCents)),
+                          downPayment: centsToMask(cents(q.downPaymentCents)),
+                          installmentCount: String(q.installmentCount || 1),
+                          interestPct: q.interestBps ? String((Number(q.interestBps) / 100).toFixed(2)).replace(".", ",") : "",
+                        }))
+                      : null;
+                    setSelectedGoal(null);
+                    setForm({
+                      ...defaultForm("expense"),
+                      goalId: g.id,
+                      goalPlanType: g.plan_type || "purchase",
+                      goalBudgetCategoryId: g.budget_category_id || "",
+                      goalWizardStep: 2,
+                      goalActiveQuoteIdx: 0,
+                      goalQuotes: savedQuotes,
+                      description: g.title,
+                      goalTarget: centsToMask(cents(g.target_cents)),
+                      goalDownPayment: centsToMask(cents(g.down_payment_cents)),
+                      goalInstallments: String(g.installment_count || 1),
+                      goalDesiredOn: isoDate(g.desired_on) || TODAY,
+                      downPaymentSource: g.source_goal_id ? "caixinha" : "checking",
+                      sourceGoalId: g.source_goal_id || "",
+                      goalPaymentMethod: g.payment_method || "standard",
+                      goalCreditCardId: g.credit_card_id || creditCards[0]?.id || "",
+                      idempotencyKey: crypto.randomUUID(),
+                    });
+                    setSelectedTitle(null);
+                    setError("");
+                    setDrawer("goal_sim");
+                  }}
+                >
+                  Editar / comparar cotações
+                </button>
+                <button
+                  type="button"
+                  className="pill pill-outline-orange"
+                  style={{ justifyContent: "center" }}
+                  onClick={() => {
+                    const g = selectedGoal.raw;
+                    const win = selectedGoal.comparison?.winner;
+                    const amtCents = win?.targetCents || cents(g.target_cents);
+                    const inst = win?.installmentCount || Number(g.installment_count || 1);
+                    const ccId = win?.creditCardId || g.credit_card_id || "";
+                    setSelectedGoal(null);
+                    setForm({
+                      ...defaultForm("expense"),
+                      intent: "bill",
+                      direction: "expense",
+                      description: win && selectedGoal.comparison?.hasComparison ? `${g.title} — ${win.label}` : g.title,
+                      amount: centsToMask(amtCents),
+                      mode: inst > 1 ? "installments" : "single",
+                      count: String(Math.max(2, Math.min(60, inst))),
+                      valueMode: "total",
+                      creditCardId: ccId,
+                      walletId: g.selected_wallet_id || checkingWallets[0]?.id || "",
+                      occurredOn: TODAY,
+                      dueOn: isoDate(g.desired_on) >= TODAY ? isoDate(g.desired_on) : TODAY,
+                      settlementState: "pending",
+                      idempotencyKey: crypto.randomUUID(),
+                    });
+                    setSelectedTitle(null);
+                    setError("");
+                    setDrawer("title");
+                  }}
+                >
+                  Efetivar em lançamento
+                </button>
+              </div>
 
               <button
                 type="button"
@@ -2656,6 +2875,39 @@ export default function Dashboard({ user }) {
                   }}
                 >
                   <PiggyBank size={16} /> Reservar ou resgatar valor
+                </button>
+                <button
+                  type="button"
+                  className="pill pill-outline-orange"
+                  style={{ justifyContent: "center" }}
+                  onClick={() => {
+                    const targetGoal = selectedCaixinha.raw;
+                    const savedCents = Math.max(0, selectedCaixinha.saved || 0);
+                    setSelectedCaixinha(null);
+                    setForm({
+                      ...defaultForm("expense"),
+                      goalId: null,
+                      goalPlanType: "purchase",
+                      goalWizardStep: 2,
+                      goalActiveQuoteIdx: 0,
+                      goalQuotes: null,
+                      description: targetGoal.title,
+                      goalTarget: centsToMask(Math.max(cents(targetGoal.target_cents), savedCents)),
+                      goalDownPayment: centsToMask(savedCents),
+                      goalInstallments: "12",
+                      goalDesiredOn: isoDate(targetGoal.desired_on) >= TODAY ? isoDate(targetGoal.desired_on) : TODAY,
+                      downPaymentSource: "caixinha",
+                      sourceGoalId: targetGoal.id,
+                      goalPaymentMethod: creditCards.length > 0 ? "credit_card" : "standard",
+                      goalCreditCardId: creditCards[0]?.id || "",
+                      idempotencyKey: crypto.randomUUID(),
+                    });
+                    setSelectedTitle(null);
+                    setError("");
+                    setDrawer("goal_sim");
+                  }}
+                >
+                  <CreditCard size={16} /> Planejar compra com esta caixinha
                 </button>
                 <button
                   type="button"
@@ -2861,6 +3113,7 @@ export default function Dashboard({ user }) {
           people={data?.people || []}
           onAddPerson={addPerson}
           creditCards={creditCards}
+          safeContribution={safeContribution}
           cancellations={data?.cancellations || []}
         />
       )}

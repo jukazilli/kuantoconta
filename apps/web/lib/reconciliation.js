@@ -7,7 +7,7 @@ function walletBalanceCents(wallet, settlements) {
   const openAt = new Date(wallet.opening_at).getTime();
   const posted = settlements.reduce((sum, s) => {
     if (s.reversed_at || String(s.wallet_id) !== String(wallet.id)) return sum;
-    if (new Date(s.created_at).getTime() <= openAt) return sum;
+    if (new Date(s.created_at).getTime() < openAt) return sum;
     return sum + (s.direction === "income" ? 1 : -1) * cents(s.amount_cents);
   }, 0);
   return cents(wallet.opening_balance_cents) + posted;

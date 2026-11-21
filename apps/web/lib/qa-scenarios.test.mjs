@@ -136,3 +136,71 @@ test("UI/UX Redesign invariants: separated Orçamentos & Planejamento, unified 1
   const hoverLines = cssSrc.split(/\r?\n/).filter((line) => line.includes(":hover"));
   assert.ok(hoverLines.length > 0);
 });
+
+test("Money Lifecycle Integrity: transfers and reserve transfers do not inflate A pagar, A receber, or category charts", () => {
+  const data = {
+    wallets: [
+      { id: "w1", name: "Nubank", opening_balance_cents: 100000, opening_at: "2026-11-01T00:00:00Z" },
+      { id: "w2", name: "Caixinha", opening_balance_cents: 0, opening_at: "2026-11-20T12:00:00Z", parent_wallet_id: "w1", caixinha_purpose: "goal" },
+    ],
+    titles: [
+      { id: "t-sal", wallet_id: "w1", direction: "income", category: "Salário", amount_cents: 300000, settled_cents: 0, due_on: "2026-11-25", entry_kind: "standard" },
+      { id: "t-exp", wallet_id: "w1", direction: "expense", category: "Moradia", amount_cents: 100000, settled_cents: 0, due_on: "2026-11-25", entry_kind: "standard" },
+      { id: "t-res-out", wallet_id: "w1", direction: "expense", category: "Caixinhas", amount_cents: 50000, settled_cents: 50000, due_on: "2026-11-20", entry_kind: "reserve_transfer", transfer_id: "x1" },
+      { id: "t-res-in", wallet_id: "w2", direction: "income", category: "Caixinhas", amount_cents: 50000, settled_cents: 50000, due_on: "2026-11-20", entry_kind: "reserve_transfer", transfer_id: "x1" },
+      { id: "t-tr-out", wallet_id: "w1", direction: "expense", category: "Transferência", amount_cents: 20000, settled_cents: 20000, due_on: "2026-11-20", entry_kind: "transfer", transfer_id: "x2" },
+    ],
+    settlements: [
+      // Same exact timestamp as opening_at on w2 (Falha 2 regression test!)
+      { id: "s1", title_id: "t-res-out", wallet_id: "w1", direction: "expense", amount_cents: 50000, settled_on: "2026-11-20", created_at: "2026-11-20T12:00:00Z", reversed_at: null },
+      { id: "s2", title_id: "t-res-in", wallet_id: "w2", direction: "income", amount_cents: 50000, settled_on: "2026-11-20", created_at: "2026-11-20T12:00:00Z", reversed_at: null },
+    ],
+  };
+
+  const r = computeRange(data, "2026-11-01", "2026-11-30", "2026-11-20");
+  assert.equal(r.receivable.total, 300000);
+  assert.equal(r.payable.total, 100000);
+  assert.equal(r.categoryTotals["Caixinhas"], undefined);
+  assert.equal(r.categoryTotals["Transferência"], undefined);
+  assert.equal(r.categoryTotals["Moradia"], 100000);
+  assert.equal(r.liveCash, 100000); // s1 (-50k on w1) + s2 (+50k on w2 at exact opening_at!) = 100k preserved!
+});
+
+test("Migration 017 & backend guards: event/settlement/liability sync, withdraw balance check, and credit card goal columns", () => {
+  const sql017 = fs.readFileSync(path.join(repoRoot, "apps", "web", "db", "017_money_lifecycle_integrity.sql"), "utf8");
+  assert.match(sql017, /ADD COLUMN IF NOT EXISTS payment_method/i);
+  assert.match(sql017, /ADD COLUMN IF NOT EXISTS credit_card_id/i);
+  assert.match(sql017, /kc_edit_title_and_event/i);
+  assert.match(sql017, /kc_cancel_title_scope/i);
+  assert.match(sql017, /UPDATE public\.kc_liabilities/i);
+  assert.match(sql017, /REVOKE ALL ON FUNCTION public\.kc_edit_title_and_event/i);
+  assert.match(sql017, /REVOKE ALL ON FUNCTION public\.kc_cancel_title_scope/i);
+
+  const serviceSrc = fs.readFileSync(path.join(repoRoot, "apps", "web", "lib", "portfolio-service.js"), "utf8");
+  assert.match(serviceSrc, /Saldo insuficiente nesta caixinha para realizar o resgate/);
+  assert.match(serviceSrc, /now\(\) - interval '1 second'/);
+  assert.match(serviceSrc, /\["transfer", "reserve_transfer"\]\.includes/);
+});
+
+test("Section 8: Migration 018, Unified Command Bar header with total balance pill, Planejamentos grid & multi-step PlanningWizard", () => {
+  const sql018 = fs.readFileSync(path.join(repoRoot, "apps", "web", "db", "018_planning_modes_and_quotes.sql"), "utf8");
+  assert.match(sql018, /ADD COLUMN IF NOT EXISTS plan_type/i);
+  assert.match(sql018, /ADD COLUMN IF NOT EXISTS payment_structure/i);
+  assert.match(sql018, /ADD COLUMN IF NOT EXISTS quotes_json/i);
+  assert.match(sql018, /ADD COLUMN IF NOT EXISTS budget_category_id/i);
+  assert.match(sql018, /ADD COLUMN IF NOT EXISTS selected_wallet_id/i);
+
+  const dashSrc = fs.readFileSync(path.join(repoRoot, "apps", "web", "app", "dashboard", "Dashboard.jsx"), "utf8");
+  const wizardSrc = fs.readFileSync(path.join(repoRoot, "apps", "web", "app", "dashboard", "PlanningWizard.jsx"), "utf8");
+  const cssSrc = fs.readFileSync(path.join(repoRoot, "apps", "web", "app", "globals.css"), "utf8");
+
+  assert.match(dashSrc, /topbar-balance-pill/);
+  assert.match(dashSrc, /checkingBalanceCents \+ capitalBalanceCents/);
+  assert.match(dashSrc, />Planejamentos</);
+  assert.match(dashSrc, />Novo planejamento</);
+  assert.match(wizardSrc, /comparePlanningQuotes/);
+  assert.match(wizardSrc, /1\. Objetivo/);
+  assert.match(wizardSrc, /2\. Opções e pagamento/);
+  assert.match(wizardSrc, /3\. Comparação e contas/);
+  assert.match(cssSrc, /\.drawer\.drawer-wide/);
+});

@@ -15,21 +15,31 @@ export function moveMonth(iso,delta){
 }
 export const inRange=(day,start,end)=>isoDate(day)>=start&&isoDate(day)<=end;
 
+const NON_ECONOMIC_KINDS=new Set(["transfer","reserve_transfer","loan_out","loan_repayment"]);
+export function isEconomicFlowTitle(t){
+ if(!t||t.cancelled_at)return false;
+ const kind=t.entry_kind||"standard";
+ if(NON_ECONOMIC_KINDS.has(kind))return false;
+ if(t.direction==="income"&&(kind==="debt_payment"||Boolean(t.liability_id)))return false;
+ return true;
+}
+
 export function computeRange(data,start,end,today=brDay()){
  const from=start<=end?start:end,to=end>=start?end:start;
  const full=compute(data,to,today);
  const titles=data?.titles||[];
- // Due-date plan: each title counts once in its period, regardless of payment date.
+ const economicTitles=titles.filter(isEconomicFlowTitle);
+ // Due-date plan: each economic title counts once in its period, excluding internal transfers/caixinhas.
  // Settlements affect actual cash and paid/open status, not the planned month's size.
  const total=direction=>{
-   const relevant=titles.filter(t=>t.direction===direction&&inRange(t.due_on,from,to));
+   const relevant=economicTitles.filter(t=>t.direction===direction&&inRange(t.due_on,from,to));
    return {open:relevant.reduce((n,t)=>n+Math.max(0,cents(t.amount_cents)-cents(t.settled_cents)),0),
     paid:relevant.reduce((n,t)=>n+cents(t.settled_cents),0),
     total:relevant.reduce((n,t)=>n+cents(t.amount_cents),0)};
  };
  const recv=total("income"),pay=total("expense");
  const categoryTotals={};
- for(const t of titles.filter(t=>t.direction==="expense"&&inRange(t.due_on,from,to))){
+ for(const t of economicTitles.filter(t=>t.direction==="expense"&&inRange(t.due_on,from,to))){
    const category=t.category||"Outros";
    categoryTotals[category]=(categoryTotals[category]||0)+cents(t.amount_cents);
  }
@@ -119,12 +129,12 @@ export function computeRange(data,start,end,today=brDay()){
  const safeToSpendCents=!full.knownCash?null:Math.max(0,full.minCash??0);
 
  const months=full.months.filter(m=>m.month>=monthOf(from)&&m.month<=monthOf(to)).map(m=>{
-   const tx=titles.filter(t=>monthOf(t.due_on)===m.month&&inRange(t.due_on,from,to));
+   const tx=economicTitles.filter(t=>monthOf(t.due_on)===m.month&&inRange(t.due_on,from,to));
    const amount=kind=>tx.filter(t=>t.direction===kind).reduce((n,t)=>n+cents(t.amount_cents),0);
    const income=amount("income"),expense=amount("expense");
    return {...m,income,expense,result:income-expense,balanceWithPlans:lastWithPlansByMonth.get(m.month)??null,balanceWithinBudgets:lastWithinByMonth.get(m.month)??null};
  });
- const overdue=titles.filter(t=>isoDate(t.due_on)<from&&cents(t.amount_cents)>cents(t.settled_cents));
+ const overdue=economicTitles.filter(t=>isoDate(t.due_on)<from&&cents(t.amount_cents)>cents(t.settled_cents));
  const targetMonth=monthOf(to);
  const budgetSummary=budgetByMonth.get(targetMonth)||computeBudgetSummary({
    month:targetMonth,

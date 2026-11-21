@@ -1,14 +1,14 @@
 "use client";
 import {useMemo,useState} from "react";
-import {X,Plus,CalendarDays,ReceiptText,CircleDollarSign,Repeat2,CheckCircle2,Clock3,ChevronDown,ChevronRight,Check,Compass,ArrowDownCircle,ArrowUpCircle,HandCoins,Search,UserPlus,ArrowLeftRight,PiggyBank} from "lucide-react";
+import {X,Plus,CalendarDays,ReceiptText,CircleDollarSign,Repeat2,CheckCircle2,Clock3,ChevronDown,ChevronRight,Check,ArrowDownCircle,ArrowUpCircle,HandCoins,Search,UserPlus,ArrowLeftRight,PiggyBank} from "lucide-react";
 import MoneyInput from "./MoneyInput";
 import BankIcon from "./BankIcon";
+import PlanningWizard from "./PlanningWizard";
 import {BANK_BRANDS} from "../../lib/bank-brands";
 import {cents,money,isoDate,brDay} from "../../lib/finance";
 import {maskToCents,maskToDecimal} from "../../lib/money-input";
 import {isSeries} from "../../lib/cancel-scope";
 import {findMatchingSpendingPlans,computePlanRemainingCents} from "../../lib/spending-plans";
-import {simulateGoalPurchase} from "../../lib/goal-planner";
 import {computeCapitalPace} from "../../lib/capital-pace";
 import {computeInvoiceCycleForPurchase} from "../../lib/credit-cards";
 
@@ -39,6 +39,7 @@ export default function EntryDrawer({
   people=[],
   onAddPerson,
   creditCards=[],
+  safeContribution=null,
   cancellations=[]
 }){
  const [quick,setQuick]=useState(null),[budgetPicker,setBudgetPicker]=useState(false),[personPicker,setPersonPicker]=useState(false),[personQuery,setPersonQuery]=useState(""),[newPersonMode,setNewPersonMode]=useState(false),[personMore,setPersonMore]=useState(false),[pName,setPName]=useState(""),[pRel,setPRel]=useState("Amigo"),[pEmail,setPEmail]=useState(""),[pPhone,setPPhone]=useState(""),[pNotes,setPNotes]=useState(""),[pBusy,setPBusy]=useState(false),[pErr,setPErr]=useState(""),[newName,setNewName]=useState(""),[trackBudget,setTrackBudget]=useState(false),[quickLimit,setQuickLimit]=useState(""),[quickError,setQuickError]=useState(""),[quickBusy,setQuickBusy]=useState(false),[showMore,setShowMore]=useState(false);
@@ -117,7 +118,7 @@ export default function EntryDrawer({
   drawer==="wallet"?"Conta bancária":
   drawer==="credit_card"?"Cartão de crédito":
   drawer==="loan"?"Empréstimo / financiamento":
-  drawer==="goal_sim"?"Planejamento de compra":
+  drawer==="goal_sim"?(form.goalId?"Editar planejamento":"Novo planejamento"):
   drawer==="capital_goal"?"Nova caixinha":
   drawer==="reserve_caixinha"?"Reservar na caixinha":
   drawer==="settle"?"Confirmar pagamento":
@@ -134,18 +135,7 @@ export default function EntryDrawer({
   return 0;
  };
 
- const goalPreview=useMemo(()=>{
-  if(drawer!=="goal_sim"||!rawData)return null;
-  const safeCents=v=>{try{return maskToCents(v||"0,00");}catch{return 0;}};
-  const targetCents=safeCents(form.goalTarget);
-  const downPaymentCents=Math.min(targetCents,safeCents(form.goalDownPayment));
-  const count=Math.max(1,Math.min(120,Number(form.goalInstallments||1)));
-  const interestBps=Math.min(10000,Math.max(0,Math.round(Number(String(form.goalInterestPct||"0").replace(",","."))*100)||0));
-  const sourceGoalId=form.downPaymentSource==="caixinha"?(form.sourceGoalId||null):null;
-  return simulateGoalPurchase(rawData,{title:form.description||"Compra planejada",targetCents,downPaymentCents,installmentCount:count,interestBps,sourceGoalId,desiredOn:form.goalDesiredOn||brDay()},{today:brDay()});
- },[drawer,rawData,form.description,form.goalTarget,form.goalDownPayment,form.goalInstallments,form.goalInterestPct,form.downPaymentSource,form.sourceGoalId,form.goalDesiredOn]);
-
- return <div className="overlay" onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}><section className="drawer" role="dialog" aria-modal="true" aria-label={formTitle}>
+ return <div className="overlay" onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}><section className={`drawer${drawer==="goal_sim"?" drawer-wide":""}`} role="dialog" aria-modal="true" aria-label={formTitle}>
    <header className="drawer-head"><button type="button" className="plain-icon" onClick={onClose} aria-label="Fechar"><X size={23}/></button><h2>{formTitle}</h2>{canSubmit?<button className="save-pill" form="entry-form" type="submit" disabled={busy}>{busy?"Salvando...":"Salvar"}</button>:<span className="drawer-head-spacer"/>}</header>
    {error&&<div className="notice error" role="alert" style={{margin:"14px 20px"}}>{error}</div>}
    {drawer==="detail"?<div className="detail-layout">
@@ -327,7 +317,16 @@ export default function EntryDrawer({
     {titleEntry&&(!newTitle||intent==="bill")&&<>
       <div className="field-row major"><ReceiptText/><input aria-label="Descrição do lançamento" placeholder={form.direction==="income"?"Ex.: Salário, Reembolso":"Ex.: Mercado, Aluguel, Energia"} required value={form.description} maxLength={120} onChange={e=>field("description",e.target.value)}/></div>
       <div className="field-row money-input"><CircleDollarSign/><span>R$</span><MoneyInput ariaLabel="Valor em reais" value={form.amount} onChange={v=>field("amount",v)}/></div>
-      {edit?<div className="editing-scope-note">A alteração será aplicada <strong>somente a este lançamento</strong>. Outras parcelas permanecem como estão.</div>:
+      {edit?<div className="editing-scope-note">
+        A alteração será aplicada <strong>somente a este lançamento</strong>. Outras parcelas permanecem como estão.
+        {cents(selectedTitleObj?.settled_cents)>0&&(
+          <div style={{marginTop:4}}>
+            {cents(selectedTitleObj?.settled_cents)===cents(selectedTitleObj?.amount_cents)
+              ? "Este lançamento já foi pago/recebido: alterar valor ou data sincronizará automaticamente o pagamento registrado no saldo da conta."
+              : "Este lançamento já tem pagamento parcial: aumentar o valor manterá a diferença pendente."}
+          </div>
+        )}
+      </div>:
       <><div className="field-row"><Repeat2/><label><small>Repetição</small><select value={form.mode} onChange={e=>field("mode",e.target.value)}><option value="single">Conta única</option><option value="monthly">Repete todo mês</option><option value="installments">Parcelada</option></select></label></div>
       {form.mode==="installments"&&<div className="repeat-config"><div className="section-header"><h3>Configurar parcelas</h3><span>Mensais</span></div>
       <div className="form-grid"><label>Começar na parcela<input type="number" min="1" max={form.count} value={form.startIndex} onChange={e=>field("startIndex",e.target.value)}/></label><label>Total de parcelas<input type="number" min="2" max="60" value={form.count} onChange={e=>field("count",e.target.value)}/></label></div>
@@ -496,68 +495,21 @@ export default function EntryDrawer({
       })()}
     </>}
 
-    {drawer==="goal_sim"&&<>
-      <p className="hint">Simule antes de comprar. Você pode vincular uma Caixinha para a entrada — sua Reserva de Emergência continua protegida.</p>
-      <label>O que deseja comprar?<input required maxLength={120} placeholder="Ex.: Carro, Notebook, Geladeira" value={form.description} onChange={e=>field("description",e.target.value)}/></label>
-      <div className="form-grid">
-        <label>Valor total (R$)<MoneyInput value={form.goalTarget||"0,00"} onChange={v=>field("goalTarget",v)} ariaLabel="Valor total desejado"/></label>
-        <label>Entrada (R$)<MoneyInput value={form.goalDownPayment||"0,00"} onChange={v=>field("goalDownPayment",v)} ariaLabel="Valor de entrada"/></label>
-      </div>
-      <div className="form-grid">
-        <label>Parcelas<input required type="number" min="1" max="120" value={form.goalInstallments||"1"} onChange={e=>field("goalInstallments",e.target.value)}/></label>
-        <label>Juros (% a.m. · opcional)<input type="text" inputMode="decimal" placeholder="Ex.: 1,80" value={form.goalInterestPct||""} onChange={e=>field("goalInterestPct",e.target.value)}/></label>
-      </div>
-      <label>Data desejada<input required type="date" min={brDay()} value={form.goalDesiredOn||brDay()} onChange={e=>field("goalDesiredOn",e.target.value)}/></label>
-      <div className="repeat-config" style={{gap:10}}>
-        <label>De onde sai a entrada?
-          <select value={form.downPaymentSource||"checking"} onChange={e=>field("downPaymentSource",e.target.value)}>
-            <option value="checking">Do saldo livre de uso diário</option>
-            {caixinhas.length>0&&<option value="caixinha">Usar uma Caixinha existente</option>}
-            {checkingWallets.length>0&&<option value="create_caixinha">Criar uma Caixinha automática para juntar a entrada</option>}
-          </select>
-        </label>
-        {form.downPaymentSource==="caixinha"&&caixinhas.length>0&&(
-          <label>Escolha a Caixinha
-            <select required value={form.sourceGoalId||""} onChange={e=>field("sourceGoalId",e.target.value)}>
-              <option value="">Selecione a caixinha</option>
-              {caixinhas.map(c=>{
-                const bankName=checkingWallets.find(w=>w.id===c.parent_wallet_id)?.name||"Sem banco";
-                return <option key={c.id} value={c.id}>{c.title} ({bankName} · Guardado: {money(caixinhaBalanceOf(c))})</option>;
-              })}
-            </select>
-          </label>
-        )}
-        {form.downPaymentSource==="create_caixinha"&&checkingWallets.length>0&&(
-          <label>Em qual banco criar a Caixinha da entrada?
-            <select required value={form.parentWalletId||checkingWallets[0]?.id||""} onChange={e=>field("parentWalletId",e.target.value)}>
-              {checkingWallets.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}
-            </select>
-          </label>
-        )}
-      </div>
-      {goalPreview&&<>
-        <div className={`goal-verdict ${goalPreview.isFeasible?"ok":"warn"}`}>
-          <Compass size={18}/>
-          <div>
-            <strong>{goalPreview.isFeasible?`Cabe no plano na data desejada (${fdate(form.goalDesiredOn||brDay())})`:goalPreview.firstFeasibleDate?`Melhor momento: a partir de ${fdate(goalPreview.firstFeasibleDate)}`:"Ainda não cabe no horizonte"}</strong>
-            <small>
-              {goalPreview.perInstallmentCents>0&&`${goalPreview.installmentCountVerified}x de ${money(goalPreview.perInstallmentCents)}`}
-              {goalPreview.totalInterestCents>0&&` · Juros totais: ${money(goalPreview.totalInterestCents)}`}
-            </small>
-          </div>
-        </div>
-        {goalPreview.twoStepVerdict&&<div className="repeat-config">
-          <div className="repeat-preview" style={{borderTop:0,paddingTop:0}}>
-            <span>
-              <strong>1. Entrada ({money(goalPreview.twoStepVerdict.downPaymentCents)}):</strong>{" "}
-              {goalPreview.twoStepVerdict.coveredByCaixinhaCents>0
-                ? `${money(goalPreview.twoStepVerdict.coveredByCaixinhaCents)} já na caixinha "${goalPreview.twoStepVerdict.linkedCaixinhaTitle}" · ${goalPreview.twoStepVerdict.remainingDownPaymentCents>0?`faltam ${money(goalPreview.twoStepVerdict.remainingDownPaymentCents)}`:"100% coberta!"}`
-                : goalPreview.twoStepVerdict.hasDownPaymentNow?"Disponível no uso diário hoje":goalPreview.twoStepVerdict.downPaymentReadyDate?`Atinge em ${fdate(goalPreview.twoStepVerdict.downPaymentReadyDate)}`:"Não atinge no horizonte"}
-            </span>
-            <span><strong>2. Parcela ({money(goalPreview.twoStepVerdict.perInstallmentCents)}/mês):</strong> {goalPreview.twoStepVerdict.installmentFitsMonthly?`Cabe na sobra mensal (${money(goalPreview.twoStepVerdict.monthlyFreeSurplusCents)}/mês)`:`Não cabe na sobra mensal (${money(goalPreview.twoStepVerdict.monthlyFreeSurplusCents)}/mês · faltam ${money(goalPreview.twoStepVerdict.monthlyGapCents)}/mês)`}</span>
-          </div>
-        </div>}
-      </>}
+    {drawer==="goal_sim"&&(
+      <PlanningWizard
+        form={form}
+        setForm={setForm}
+        wallets={checkingWallets.length ? checkingWallets : wallets}
+        walletBalances={walletBalances}
+        caixinhas={caixinhas}
+        categories={categories}
+        budgets={budgets}
+        rawData={rawData}
+        creditCards={creditCards}
+      />
+    )}
+    {false&&drawer==="goal_sim"&&<>
+      <select value={form.downPaymentSource||"checking"} onChange={e=>field("downPaymentSource",e.target.value)}><option value="checking">checking</option></select>
     </>}
 
     {drawer==="capital_goal"&&<>
@@ -663,7 +615,18 @@ export default function EntryDrawer({
             <label>Data<input required type="date" max={brDay()} value={form.transferredOn||brDay()} onChange={e=>field("transferredOn",e.target.value)}/></label>
           </div>
           <div className="transfer-guideline-note">
-            <p><strong>Saldo separado e sem dupla contagem:</strong> Reservar move o valor do seu uso diário para o saldo isolado desta caixinha sem alterar receitas ou despesas.</p>
+            {(form.reserveDirection||"deposit")==="withdraw" ? (
+              <p><strong>Resgate seguro:</strong> Saldo máximo disponível nesta caixinha: <strong>{money(caixinhaBalanceOf(caixinhas.find(c=>c.id===form.caixinhaId)))}</strong>.</p>
+            ) : (
+              <p>
+                <strong>Saldo separado e proteção de contas:</strong>{" "}
+                {safeContribution && safeContribution.canContribute
+                  ? `Sugestão de aporte seguro neste mês sem faltar para contas: ${money(safeContribution.safeContributionCents)}.`
+                  : safeContribution && safeContribution.status === "prioritize_bills"
+                    ? "Priorize quitar as contas deste mês antes de fazer novos aportes."
+                    : "Reservar move o valor do seu uso diário para a caixinha sem alterar receitas ou despesas."}
+              </p>
+            )}
           </div>
         </>
       )}

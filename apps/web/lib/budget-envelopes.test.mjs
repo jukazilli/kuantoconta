@@ -6,6 +6,7 @@ import {
   suggestBudgetsFromIncome,
   computeBudgetSummary,
   computeProjectedBalanceWithBudgetsCents,
+  computeSafeMonthlyContributionCents,
   computeTotalDebtCents,
 } from "./budgets.js";
 import { buildNotifications } from "./notifications.js";
@@ -112,63 +113,70 @@ test("computeBudgetSummary reports negative overrun when expenses exceed budget 
   assert.equal(summary[0].overLimitCents, 1700);
 });
 
-test("computeProjectedBalanceWithBudgetsCents commits budget limits without double-counting expenses inside budget", () => {
+test("computeProjectedBalanceWithBudgetsCents treats budget limits as control caps without deducting unspent headroom from Saldo previsto", () => {
+  // User canonical rule:
+  // Saldo previsto = R$ 120,00 -> defines Mercado budget limit R$ 100,00 -> Saldo previsto remains R$ 120,00.
   const budgetSummary = [
-    { categoryId: "cat-trans", categoryName: "Transporte", limitCents: 30000, usedCents: 0 },
+    { categoryId: "cat-mkt", categoryName: "Mercado", limitCents: 10000, usedCents: 0 },
   ];
-  // 1. Before spending: 2400 income - 300 budget - 790 uncapped Moradia = 1310
   const beforeSpend = computeProjectedBalanceWithBudgetsCents({
-    receivableCents: 240000,
-    rows: [
-      { id: "1", direction: "expense", category: "Moradia", amount_cents: 79000 },
-    ],
+    openingOperationalCents: 12000,
+    rows: [],
     budgetSummary,
   });
-  assert.equal(beforeSpend, 131000);
+  assert.equal(beforeSpend, 12000);
 
-  // 2. Spend R$ 17 inside Transporte: Saldo previsto remains 1310 (no double counting)
-  const afterUber = computeProjectedBalanceWithBudgetsCents({
-    receivableCents: 240000,
+  // Launches R$ 20,00 pending expense in Mercado -> Saldo previsto drops to R$ 100,00 (never deducts remaining R$ 80,00 limit!)
+  const afterPendingSpend = computeProjectedBalanceWithBudgetsCents({
+    openingOperationalCents: 12000,
     rows: [
-      { id: "1", direction: "expense", category: "Moradia", amount_cents: 79000 },
-      { id: "2", direction: "expense", category: "Transporte", category_id: "cat-trans", amount_cents: 1700 },
+      { id: "1", direction: "expense", category: "Mercado", category_id: "cat-mkt", amount_cents: 2000, settled_cents: 0 },
     ],
     budgetSummary: [
-      { categoryId: "cat-trans", categoryName: "Transporte", limitCents: 30000, usedCents: 1700 },
+      { categoryId: "cat-mkt", categoryName: "Mercado", limitCents: 10000, usedCents: 2000 },
     ],
   });
-  assert.equal(afterUber, 131000);
+  assert.equal(afterPendingSpend, 10000);
 
-  // 3. Overrun Transporte to R$ 350: Saldo previsto reflects the R$ 50 overrun -> 1260
-  const afterOverrun = computeProjectedBalanceWithBudgetsCents({
-    receivableCents: 240000,
+  // When R$ 20,00 is already paid (opening checking cash is R$ 100,00 and settled_cents is R$ 20,00): stays R$ 100,00!
+  const afterSettledSpend = computeProjectedBalanceWithBudgetsCents({
+    openingOperationalCents: 10000,
     rows: [
-      { id: "1", direction: "expense", category: "Moradia", amount_cents: 79000 },
-      { id: "2", direction: "expense", category: "Transporte", category_id: "cat-trans", amount_cents: 35000 },
+      { id: "1", direction: "expense", category: "Mercado", category_id: "cat-mkt", amount_cents: 2000, settled_cents: 2000 },
     ],
     budgetSummary: [
-      { categoryId: "cat-trans", categoryName: "Transporte", limitCents: 30000, usedCents: 35000 },
+      { categoryId: "cat-mkt", categoryName: "Mercado", limitCents: 10000, usedCents: 2000 },
     ],
   });
-  assert.equal(afterOverrun, 126000);
+  assert.equal(afterSettledSpend, 10000);
 });
 
-test("computeProjectedBalanceWithBudgetsCents carries forward operational cash and excludes settled budget expenses", () => {
-  // Month 10 left R$ 300 in checking (after R$ 700 went to Capital).
-  // Month 11 has R$ 2400 pending salary and R$ 300 Transporte budget (R$ 17 already settled in checking).
-  // Live checking = 300 - 17 = 283. Remaining Transporte commitment = 300 - 17 = 283.
-  // Projected = 283 + 2400 - 283 = 2400.
-  const projected = computeProjectedBalanceWithBudgetsCents({
-    openingOperationalCents: 28300,
-    rows: [
-      { id: "inc", direction: "income", amount_cents: 240000, settled_cents: 0 },
-      { id: "exp", direction: "expense", category: "Transporte", category_id: "cat-trans", amount_cents: 1700, settled_cents: 1700 },
-    ],
+test("computeSafeMonthlyContributionCents prioritizes bills and suggests only leftover margin after consumption budgets", () => {
+  // Projected balance after pending bills = R$ 100,00; unspent consumption budget headroom = R$ 90,00 -> Safe contribution = R$ 10,00
+  const ready = computeSafeMonthlyContributionCents({
+    projectedBalanceCents: 10000,
+    checkingBalanceCents: 10000,
     budgetSummary: [
-      { categoryId: "cat-trans", categoryName: "Transporte", limitCents: 30000, usedCents: 1700 },
+      { categoryId: "cat-mkt", categoryName: "Alimentação", limitCents: 10000, usedCents: 1000, active: true },
+      { categoryId: "cat-cap", categoryName: "Reserva e Capital", limitCents: 50000, usedCents: 0, active: true },
     ],
   });
-  assert.equal(projected, 240000);
+  assert.equal(ready.unspentConsumptionBudgetsCents, 9000);
+  assert.equal(ready.safeContributionCents, 1000);
+  assert.equal(ready.canContribute, true);
+  assert.equal(ready.status, "ready");
+
+  // Negative projected balance -> prioritizes paying bills first (safe contribution = R$ 0,00)
+  const tight = computeSafeMonthlyContributionCents({
+    projectedBalanceCents: -25000,
+    checkingBalanceCents: 500,
+    budgetSummary: [
+      { categoryId: "cat-mkt", categoryName: "Alimentação", limitCents: 30000, usedCents: 0, active: true },
+    ],
+  });
+  assert.equal(tight.safeContributionCents, 0);
+  assert.equal(tight.canContribute, false);
+  assert.equal(tight.status, "prioritize_bills");
 });
 
 test("computeMonthlyIncomeCeilingCents excludes loan principal inflows", () => {
@@ -222,7 +230,7 @@ test("buildNotifications surfaces planned goals, due bills, budget overruns, cap
 test("computeProjectedBalanceWithBudgetsCents counts settledRows from earlier in the month without double-counting", () => {
   // User had R$ 5.000 salary, already spent R$ 800 in Alimentação before today (now R$ 4.200 in checking),
   // and allocates R$ 1.500 budget for Alimentação in the month.
-  // Remaining commitment in Alimentação is R$ 700, so Saldo previsto must be R$ 3.500 (not R$ 2.700).
+  // Setting the R$ 1.500 limit does NOT deduct R$ 700 unspent headroom from Saldo previsto, so it stays R$ 4.200.
   const projected = computeProjectedBalanceWithBudgetsCents({
     openingOperationalCents: 420000,
     rows: [], // rangeStart = today has no upcoming bills
@@ -233,5 +241,5 @@ test("computeProjectedBalanceWithBudgetsCents counts settledRows from earlier in
       { categoryId: "c-food", categoryName: "Alimentação", limitCents: 150000, usedCents: 80000 },
     ],
   });
-  assert.equal(projected, 350000);
+  assert.equal(projected, 420000);
 });

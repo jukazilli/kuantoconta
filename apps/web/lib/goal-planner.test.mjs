@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { simulateGoalPurchase } from "./goal-planner.js";
+import { comparePlanningQuotes, simulateGoalPurchase } from "./goal-planner.js";
 import { buildFinancialHealthPlan } from "./financial-health.js";
 
 test("FH-02: R$ 700 cash with R$ 600 rent tomorrow rejects R$ 500 down payment today", () => {
@@ -169,4 +169,180 @@ test("Caixinhas + Planejamento: linked goal caixinha abates down payment without
 
   // With monthly surplus of R$ 3.000/mo, in ~4 months (March 2027) remaining R$ 10k is covered and 30x R$ 1k fits!
   assert.ok(simToday.firstFeasibleDate && simToday.firstFeasibleDate <= "2027-04-05");
+});
+
+test("Credit Card purchase planning validates limit on purchase date, projects invoice due dates, and combines with Caixinha down payment", () => {
+  const rawData = {
+    wallets: [
+      { id: "w-chk", name: "Nubank", opening_balance_cents: 300000, opening_at: "2026-11-01T00:00:00Z", wallet_kind: "checking" },
+      { id: "w-cx", name: "Caixinha Notebook", opening_balance_cents: 150000, opening_at: "2026-11-01T00:00:00Z", wallet_kind: "investment", parent_wallet_id: "w-chk", caixinha_purpose: "goal" },
+    ],
+    goals: [
+      { id: "g-cx", title: "Caixinha Notebook", category: "capital_goal", wallet_id: "w-cx", parent_wallet_id: "w-chk", caixinha_purpose: "goal", target_cents: 150000, status: "simulated" },
+    ],
+    creditCards: [
+      { id: "cc1", name: "Nubank Roxinho", limit_cents: 200000, closing_day: 5, due_day: 10 },
+    ],
+    recurringRules: [
+      { id: "r1", wallet_id: "w-chk", direction: "income", description: "Salário", category: "Salário", amount_cents: 500000, starts_on: "2026-11-05" },
+    ],
+    titles: [
+      // Existing open invoice due 2026-12-10 occupies R$ 1.200 -> only R$ 800 limit left on 2026-11-20!
+      { id: "t-old", direction: "expense", category: "Outros", credit_card_id: "cc1", invoice_month: "2026-12", due_on: "2026-12-10", amount_cents: 120000, settled_cents: 0 },
+    ],
+    settlements: [],
+    assets: [],
+    liabilities: [],
+  };
+
+  // Trying R$ 3.000 purchase on 2026-11-20 with R$ 1.500 down from Caixinha + R$ 1.500 in 5x on card:
+  // Needs R$ 1.500 limit, but only R$ 800 is free on 2026-11-20!
+  // On 2026-12-10, the R$ 1.200 invoice falls due and frees full R$ 2.000 limit!
+  const sim = simulateGoalPurchase(
+    rawData,
+    {
+      title: "Notebook",
+      targetCents: 300000,
+      downPaymentCents: 150000,
+      installmentCount: 5,
+      installmentCents: 30000,
+      sourceGoalId: "g-cx",
+      paymentMethod: "credit_card",
+      creditCardId: "cc1",
+      desiredOn: "2026-11-20",
+    },
+    { today: "2026-11-20" }
+  );
+
+  assert.equal(sim.isFeasible, false);
+  assert.ok(sim.rejectionReasons.includes("INSUFFICIENT_CARD_LIMIT"));
+  assert.equal(sim.twoStepVerdict.coveredByCaixinhaCents, 150000);
+  assert.equal(sim.twoStepVerdict.creditCardVerdict.hasLimitOnDesiredDate, false);
+  assert.equal(sim.twoStepVerdict.creditCardVerdict.availableOnDesiredDateCents, 80000);
+  assert.equal(sim.twoStepVerdict.creditCardVerdict.requiredLimitCents, 150000);
+  assert.equal(sim.twoStepVerdict.creditCardVerdict.limitReadyDate, "2026-12-10");
+  assert.equal(sim.firstFeasibleDate, "2026-12-10");
+  // Purchased on 2026-11-20 after closing day 5 -> would land in Dec; on Dec 10 -> rolls to Jan invoice
+  assert.equal(sim.twoStepVerdict.creditCardVerdict.firstInvoiceMonth, "2026-12");
+});
+
+test("comparePlanningQuotes ranks Gol 2020 vs Cruze with links and projects wallet/caixinha/card Antes->Depois", () => {
+  const rawData = {
+    wallets: [
+      { id: "w-chk", name: "Nubank", opening_balance_cents: 2200000, opening_at: "2026-11-01T00:00:00Z", wallet_kind: "checking" },
+    ],
+    creditCards: [],
+    recurringRules: [
+      { id: "r1", wallet_id: "w-chk", direction: "income", description: "Salário", category: "Salário", amount_cents: 800000, starts_on: "2026-11-05" },
+      { id: "r2", wallet_id: "w-chk", direction: "expense", description: "Moradia", category: "Moradia", amount_cents: 300000, starts_on: "2026-11-10" },
+    ],
+    titles: [],
+    settlements: [],
+    assets: [],
+    liabilities: [],
+  };
+
+  const result = comparePlanningQuotes(
+    rawData,
+    {
+      title: "Trocar de carro",
+      planType: "purchase",
+      desiredOn: "2026-11-20",
+      quotes: [
+        {
+          id: "q-cruze",
+          label: "Cruze 2020",
+          url: "https://example.com/cruze",
+          targetCents: 6800000, // R$ 68.000
+          downPaymentCents: 2000000, // R$ 20.000
+          installmentCount: 48,
+          paymentStructure: "hybrid",
+          paymentMethod: "standard",
+        },
+        {
+          id: "q-gol",
+          label: "Gol 2020",
+          url: "https://example.com/gol",
+          targetCents: 6300000, // R$ 63.000
+          downPaymentCents: 1800000, // R$ 18.000
+          installmentCount: 48,
+          paymentStructure: "hybrid",
+          paymentMethod: "standard",
+        },
+      ],
+    },
+    { today: "2026-11-20" }
+  );
+
+  assert.equal(result.hasComparison, true);
+  assert.equal(result.winner.id, "q-gol");
+  assert.equal(result.winner.isWinner, true);
+  assert.equal(result.winner.url, "https://example.com/gol");
+  assert.equal(result.totalSavedVsWorstCents, 500000);
+  const wp = result.winner.sim.projectedPositions.walletPosition;
+  assert.equal(wp.balanceOnDateBeforeCents, 2200000);
+  assert.equal(wp.immediateOutflowOnDateCents, 1800000);
+  assert.equal(wp.balanceOnDateAfterCents, 400000);
+});
+
+test("Trip planning (Viagem Paraná dia 19) and Caixinha without down payment compute itemized card + checking positions", () => {
+  const rawData = {
+    wallets: [
+      { id: "w-chk", name: "Itaú", opening_balance_cents: 400000, opening_at: "2026-11-01T00:00:00Z", wallet_kind: "checking" },
+    ],
+    creditCards: [
+      { id: "cc1", name: "Itaucard", limit_cents: 300000, closing_day: 5, due_day: 10 },
+    ],
+    recurringRules: [
+      { id: "r1", wallet_id: "w-chk", direction: "income", description: "Salário", category: "Salário", amount_cents: 600000, starts_on: "2026-11-05" },
+      { id: "r2", wallet_id: "w-chk", direction: "expense", description: "Fixos", category: "Moradia", amount_cents: 250000, starts_on: "2026-11-10" },
+    ],
+    titles: [],
+    settlements: [],
+    assets: [],
+    liabilities: [],
+  };
+
+  // Viagem Paraná com itens mistos: Passagens 6x no cartão (R$ 1.200) + Hospedagem e alimentação à vista (R$ 1.500)
+  const tripSim = simulateGoalPurchase(
+    rawData,
+    {
+      title: "Viagem Paraná",
+      planType: "trip",
+      desiredOn: "2026-11-19",
+      items: [
+        { id: "1", title: "Passagens", amountCents: 120000, paymentMethod: "credit_card", creditCardId: "cc1", installmentCount: 6 },
+        { id: "2", title: "Hospedagem", amountCents: 90000, paymentMethod: "standard", installmentCount: 1 },
+        { id: "3", title: "Alimentação", amountCents: 60000, paymentMethod: "standard", installmentCount: 1 },
+      ],
+    },
+    { today: "2026-11-19" }
+  );
+
+  assert.equal(tripSim.isFeasible, true);
+  assert.equal(tripSim.totalCostCents, 270000);
+  // Only Hospedagem + Alimentação leave checking immediately on Nov 19 (R$ 1.500 -> 400k - 150k = 250k)!
+  assert.equal(tripSim.projectedPositions.walletPosition.immediateOutflowOnDateCents, 150000);
+  assert.equal(tripSim.projectedPositions.walletPosition.balanceOnDateAfterCents, 250000);
+  // Card limit reduced by R$ 1.200 (Passagens)
+  assert.equal(tripSim.projectedPositions.cardPosition.chargeAmountCents, 120000);
+  assert.equal(tripSim.projectedPositions.cardPosition.availableLimitAfterCents, 180000);
+
+  // Buying a laptop upfront with zero down payment entered, choosing "create Caixinha" to save total R$ 3.000
+  const caixinhaNoDown = simulateGoalPurchase(
+    rawData,
+    {
+      title: "Notebook",
+      targetCents: 300000,
+      downPaymentCents: 0,
+      paymentStructure: "upfront",
+      downPaymentSource: "create_caixinha",
+      createLinkedCaixinha: true,
+      desiredOn: "2026-12-20",
+    },
+    { today: "2026-11-19" }
+  );
+  assert.ok(caixinhaNoDown.projectedPositions.caixinhaPosition);
+  assert.equal(caixinhaNoDown.projectedPositions.caixinhaPosition.targetForPlanCents, 300000);
+  assert.equal(caixinhaNoDown.projectedPositions.caixinhaPosition.stillNeededCents, 300000);
 });
