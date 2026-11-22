@@ -287,7 +287,8 @@ export function simulateGoalPurchase(rawData, goal, options = {}) {
   });
 
   const sourceGoalId = goal.sourceGoalId || goal.source_goal_id || null;
-  const linkedGoal = sourceGoalId
+  const allowLinkedCaixinha = goal.downPaymentSource !== "checking" && Boolean(sourceGoalId);
+  const linkedGoal = allowLinkedCaixinha
     ? (rawData?.goals || []).find((g) => String(g.id) === String(sourceGoalId) && g.status !== "cancelled")
     : null;
   const linkedWalletEntry = linkedGoal?.wallet_id
@@ -860,6 +861,159 @@ export function comparePlanningQuotes(rawData, goalRecord = {}, options = {}) {
     quotes: withWinnerFlag,
     winner,
     hasComparison: withWinnerFlag.length > 1,
+    totalSavedVsWorstCents,
+    winnerReasonText,
+  };
+}
+
+/**
+ * Extracts individual launchable title payloads from a saved Planning record.
+ * When the plan contains itemized entries (e.g. a Trip with Passagens 12x card + Hospedagem 1x card),
+ * each priced item produces its own independent title payload instead of summing everything into one title.
+ */
+export function buildExecutionTitlesFromGoal(
+  goalRecord = {},
+  { defaultWalletId = "", defaultCategory = "Outros", today = brDay() } = {}
+) {
+  const quotes = Array.isArray(goalRecord.quotes)
+    ? goalRecord.quotes
+    : Array.isArray(goalRecord.quotes_json)
+      ? goalRecord.quotes_json
+      : [];
+  const chosenQuote = quotes.find((q) => q?.isChosen) || quotes[0] || null;
+  const rawItems = Array.isArray(chosenQuote?.items) ? chosenQuote.items : [];
+  const pricedItems = rawItems.filter((it) => cents(it?.amountCents) > 0);
+  const baseDate = isoDate(goalRecord.desired_on || goalRecord.desiredOn) || today;
+  const effectiveDueOn = baseDate >= today ? baseDate : today;
+  const fallbackWallet = goalRecord.selected_wallet_id || chosenQuote?.selectedWalletId || defaultWalletId;
+
+  if (pricedItems.length > 0) {
+    return pricedItems.map((it, idx) => {
+      const inst = Math.max(1, Math.min(60, Number(it.installmentCount || 1)));
+      const useCard = it.paymentMethod === "credit_card" && Boolean(it.creditCardId);
+      return {
+        itemId: String(it.id || `item-${idx + 1}`),
+        description: String(it.title || `Item ${idx + 1}`).slice(0, 120),
+        amountCents: cents(it.amountCents),
+        paymentMethod: useCard ? "credit_card" : "standard",
+        creditCardId: useCard ? String(it.creditCardId) : null,
+        walletId: it.walletId || fallbackWallet,
+        installmentCount: inst,
+        mode: inst > 1 ? "installments" : "single",
+        valueMode: "total",
+        category: defaultCategory,
+        occurredOn: today,
+        dueOn: effectiveDueOn,
+      };
+    });
+  }
+
+  const inst = Math.max(1, Math.min(60, Number(chosenQuote?.installmentCount || goalRecord.installment_count || 1)));
+  const useCard =
+    (chosenQuote?.paymentMethod || goalRecord.payment_method) === "credit_card" &&
+    Boolean(chosenQuote?.creditCardId || goalRecord.credit_card_id);
+  const ccId = useCard ? String(chosenQuote?.creditCardId || goalRecord.credit_card_id) : null;
+  return [
+    {
+      itemId: String(goalRecord.id || "plan-single"),
+      description: String(goalRecord.title || "Planejamento").slice(0, 120),
+      amountCents: Math.max(0, cents(chosenQuote?.targetCents || goalRecord.target_cents)),
+      paymentMethod: useCard ? "credit_card" : "standard",
+      creditCardId: ccId,
+      walletId: fallbackWallet,
+      installmentCount: inst,
+      mode: inst > 1 ? "installments" : "single",
+      valueMode: "total",
+      category: defaultCategory,
+      occurredOn: today,
+      dueOn: effectiveDueOn,
+    },
+  ];
+}
+
+/**
+ * Compares 2+ saved Planning records side by side after creation.
+ */
+export function compareSavedPlans(rawData, goalRecords = [], options = {}) {
+  const today = options.today || brDay();
+  const list = (goalRecords || []).filter(Boolean);
+  const evaluated = list.map((g) => {
+    const quotes = Array.isArray(g.quotes_json) ? g.quotes_json : Array.isArray(g.quotes) ? g.quotes : [];
+    const primary = quotes.find((q) => q?.isChosen) || quotes[0] || {};
+    const desiredOn = isoDate(g.desired_on) || today;
+    const sim = simulateGoalPurchase(
+      rawData,
+      {
+        title: g.title,
+        targetCents: cents(g.target_cents),
+        downPaymentCents: cents(g.down_payment_cents),
+        installmentCount: Number(g.installment_count || 1),
+        installmentCents: cents(g.installment_cents),
+        interestBps: Number(g.interest_bps || 0),
+        desiredOn,
+        paymentMethod: g.payment_method || primary.paymentMethod || "standard",
+        creditCardId: g.credit_card_id || primary.creditCardId || null,
+        selectedWalletId: g.selected_wallet_id || primary.selectedWalletId || null,
+        budgetCategoryId: g.budget_category_id || null,
+        downPaymentSource: g.source_goal_id ? "caixinha" : "checking",
+        sourceGoalId: g.source_goal_id || null,
+      },
+      { today }
+    );
+    return {
+      id: String(g.id),
+      title: g.title,
+      planType: g.plan_type || "purchase",
+      desiredOn,
+      targetCents: cents(g.target_cents),
+      installmentCount: Number(g.installment_count || 1),
+      interestBps: Number(g.interest_bps || 0),
+      paymentMethod: g.payment_method || "standard",
+      raw: g,
+      sim,
+    };
+  });
+
+  const ranked = [...evaluated].sort((a, b) => {
+    if (a.sim.isFeasible !== b.sim.isFeasible) return a.sim.isFeasible ? -1 : 1;
+    const aFirst = a.sim.firstFeasibleDate || "9999-12-31";
+    const bFirst = b.sim.firstFeasibleDate || "9999-12-31";
+    if (aFirst !== bFirst) return aFirst.localeCompare(bFirst);
+    const aCost = a.sim.totalCostCents || a.targetCents;
+    const bCost = b.sim.totalCostCents || b.targetCents;
+    if (aCost !== bCost) return aCost - bCost;
+    const aMin = a.sim.projectedPositions?.walletPosition?.minFutureBalanceAfterCents ?? 0;
+    const bMin = b.sim.projectedPositions?.walletPosition?.minFutureBalanceAfterCents ?? 0;
+    return bMin - aMin;
+  });
+
+  const winnerId = ranked[0]?.id ?? null;
+  const maxCost = Math.max(...ranked.map((r) => r.sim.totalCostCents || r.targetCents), 0);
+  const minCost = ranked[0] ? ranked[0].sim.totalCostCents || ranked[0].targetCents : 0;
+  const totalSavedVsWorstCents = ranked.length > 1 ? Math.max(0, maxCost - minCost) : 0;
+  const plans = ranked.map((r, i) => ({
+    ...r,
+    rank: i + 1,
+    isWinner: r.id === winnerId,
+  }));
+
+  const winner = plans[0] || null;
+  const second = plans[1] || null;
+  let winnerReasonText = "";
+  if (winner && second) {
+    if (winner.sim.isFeasible && !second.sim.isFeasible) {
+      winnerReasonText = `${winner.title} já cabe no seu orçamento e caixa na data desejada.`;
+    } else if (totalSavedVsWorstCents > 0) {
+      winnerReasonText = `${winner.title} gera o menor custo total e preserva mais fôlego no caixa.`;
+    } else {
+      winnerReasonText = `${winner.title} mantém o melhor saldo futuro após o compromisso.`;
+    }
+  }
+
+  return {
+    plans,
+    winner,
+    hasComparison: plans.length > 1,
     totalSavedVsWorstCents,
     winnerReasonText,
   };

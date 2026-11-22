@@ -53,7 +53,7 @@ function sanitizePlanningQuotes(rawQuotes, amountFn, uuidFn) {
   if (!Array.isArray(rawQuotes)) return [];
   return rawQuotes.slice(0, 12).map((q, idx) => {
     const items = Array.isArray(q?.items)
-      ? q.items.slice(0, 40).map((it, itemIdx) => ({
+      ? q.items.slice(0, 80).map((it, itemIdx) => ({
           id: textValue(String(it?.id || `item-${itemIdx + 1}`), 60) || `item-${itemIdx + 1}`,
           title: textValue(String(it?.title || "Item"), 120) || "Item",
           amountCents: Math.max(0, Number.isSafeInteger(Number(it?.amountCents)) ? Number(it.amountCents) : 0),
@@ -1257,6 +1257,47 @@ export async function executePortfolioPatch(ownerId, x) {
       WHERE id=${x.goalId}::uuid AND user_id=${owner.id}
     `;
     return ok({ saved: true, id: x.goalId, sourceGoalId, paymentMethod, creditCardId, planType, paymentStructure });
+  }
+
+  if (x.action === "update_goal_items") {
+    if (!uuid(x.goalId)) return fail("Planejamento inválido.");
+    const existingRows = await sql`
+      SELECT id, quotes_json, desired_on::text, status
+      FROM public.kc_financial_goals
+      WHERE id=${x.goalId}::uuid AND user_id=${owner.id} AND status<>'cancelled'
+      LIMIT 1
+    `;
+    if (!existingRows.length) return fail("Planejamento não encontrado.", 404);
+    const currentQuotes = Array.isArray(existingRows[0].quotes_json) ? existingRows[0].quotes_json : [];
+    const baseQuote = currentQuotes[0] || { id: "q-1", label: "Lista principal", isChosen: true };
+    const sanitized = sanitizePlanningQuotes(
+      [{ ...baseQuote, items: Array.isArray(x.items) ? x.items : baseQuote.items || [] }],
+      amount,
+      uuid
+    );
+    const nextQuotes = currentQuotes.length > 1
+      ? [sanitized[0], ...currentQuotes.slice(1)]
+      : sanitized;
+    const nextDesiredOn = x.desiredOn && day(x.desiredOn) ? x.desiredOn : existingRows[0].desired_on;
+    const nextStatus = x.resetStatus ? "simulated" : existingRows[0].status;
+    await sql`
+      UPDATE public.kc_financial_goals
+      SET quotes_json=${JSON.stringify(nextQuotes)}::jsonb,
+          desired_on=${nextDesiredOn}::date,
+          status=${nextStatus}
+      WHERE id=${x.goalId}::uuid AND user_id=${owner.id}
+    `;
+    return ok({ saved: true, id: x.goalId, quotes: nextQuotes, desiredOn: nextDesiredOn, status: nextStatus });
+  }
+
+  if (x.action === "fulfill_goal") {
+    if (!uuid(x.goalId)) return fail("Planejamento inválido.");
+    await sql`
+      UPDATE public.kc_financial_goals
+      SET status='fulfilled'
+      WHERE id=${x.goalId}::uuid AND user_id=${owner.id} AND status<>'cancelled'
+    `;
+    return ok({ saved: true, id: x.goalId, status: "fulfilled" });
   }
 
   if (x.action === "cancel_goal") {
