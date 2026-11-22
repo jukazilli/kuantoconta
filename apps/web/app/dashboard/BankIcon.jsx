@@ -18,7 +18,8 @@ export default function BankIcon({ name, size = 36, className = "" }) {
   return (
     <img
       src={bankIconPath(brand)}
-      alt={brand.name}
+      alt=""
+      aria-hidden="true"
       width={size}
       height={size}
       className={`bank-logo-img ${className}`.trim()}

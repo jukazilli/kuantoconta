@@ -12,7 +12,7 @@ function State({title,today}){
 }
 export default function MovementList({items,compact=false,today,walletName,onDetails,onAction}){
  const [opened,setOpened]=useState(null);
- if(!items?.length)return <div className="empty-movements">Nenhum lançamento neste período. Use + Lançamento no topo para registrar sua primeira conta ou receita.</div>;
+ if(!items?.length)return <div className="empty-movements">Nenhum lançamento neste período.</div>;
  let previousMonth="";
  return <div className={"movements-list"+(compact?" compact":"")}>
  {items.map(t=>{

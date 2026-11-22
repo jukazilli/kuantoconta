@@ -13,20 +13,26 @@ export default function BudgetList({
   monthLabel = "",
   insufficientCash = false,
   compact = false,
+  groupUncapped = true,
+  defaultUncappedOpen = false,
   onEditBudget,
   onFulfillPlan,
   onEditPlan,
   onCancelPlan
 }) {
   const [detailItem, setDetailItem] = useState(null);
+  const [uncappedOpen, setUncappedOpen] = useState(defaultUncappedOpen);
 
   const visible = compact ? items.slice(0, 5) : items;
+  const cappedItems = groupUncapped ? visible.filter((i) => i.limitCents !== null) : visible;
+  const uncappedItems = groupUncapped ? items.filter((i) => i.limitCents === null) : [];
+  const uncappedTotalCents = uncappedItems.reduce((sum, i) => sum + (i.realizedCents ?? i.usedCents ?? 0), 0);
   const activeDetail = detailItem ? items.find((i) => i.categoryId === detailItem.categoryId) || detailItem : null;
 
-  if (!visible.length) {
+  if (!items.length) {
     return (
       <div className="empty-movements">
-        Nenhum limite configurado para {monthLabel || "este mês"}. Defina um teto mensal ao criar ou editar uma categoria de despesa.
+        Nenhum limite configurado em {monthLabel || "este mês"}.
       </div>
     );
   }
@@ -36,10 +42,15 @@ export default function BudgetList({
       {insufficientCash && (
         <div className="alert budget-cash-alert" role="status">
           <AlertTriangle size={15} />
-          <span>Caixa projetado negativo no período; restante do limite não garante margem livre.</span>
+          <span>Saldo previsto negativo neste mês.</span>
         </div>
       )}
-      {visible.map(item => {
+      {cappedItems.length === 0 && groupUncapped && onEditBudget && uncappedItems[0] && (
+        <div className="empty-movements" style={{ padding: "10px 12px" }}>
+          Nenhuma categoria com teto definido neste mês.
+        </div>
+      )}
+      {cappedItems.map(item => {
         const hasLimit = item.limitCents !== null;
         const realized = item.realizedCents ?? item.usedCents ?? 0;
         const committed = item.committedUnrealizedCents ?? 0;
@@ -72,7 +83,7 @@ export default function BudgetList({
                     <strong>{money(hasForwardItems ? unallocated : remainingLimit)}</strong>
                   </span>
                 ) : (
-                  <span className="budget-remaining">Sem teto</span>
+                  <span className="budget-remaining">{money(realized)}</span>
                 )}
                 {onEditBudget && (
                   <button
@@ -99,11 +110,53 @@ export default function BudgetList({
 
             <button type="button" className="budget-meta budget-meta-btn" onClick={() => setDetailItem(item)}>
               <span>Gasto: <strong>{money(realized)}</strong></span>
-              <span>{hasLimit ? `Limite: ${money(item.limitCents)}` : "Toque para ver detalhes"}</span>
+              {hasLimit && <span>Limite: {money(item.limitCents)}</span>}
             </button>
           </article>
         );
       })}
+
+      {groupUncapped && uncappedItems.length > 0 && (
+        <div className="budget-uncapped-group">
+          <button
+            type="button"
+            className="budget-uncapped-toggle"
+            aria-expanded={uncappedOpen}
+            onClick={() => setUncappedOpen((v) => !v)}
+          >
+            <span>
+              <strong>{uncappedItems.length} {uncappedItems.length === 1 ? "categoria" : "categorias"} sem limite</strong>
+              <small> · Total: {money(uncappedTotalCents)}</small>
+            </span>
+            {uncappedOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+          </button>
+
+          {uncappedOpen && (
+            <div className="budget-uncapped-list">
+              {uncappedItems.map((item) => {
+                const realized = item.realizedCents ?? item.usedCents ?? 0;
+                return (
+                  <div className="budget-uncapped-row" key={item.categoryId}>
+                    <button type="button" className="budget-uncapped-name" onClick={() => setDetailItem(item)}>
+                      <strong>{item.categoryName}</strong>
+                      <span>{money(realized)}</span>
+                    </button>
+                    {onEditBudget && (
+                      <button
+                        type="button"
+                        className="budget-uncapped-action"
+                        onClick={() => onEditBudget(item)}
+                      >
+                        Definir teto
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {activeDetail && (() => {
         const hasLimit = activeDetail.limitCents !== null;

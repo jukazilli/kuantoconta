@@ -388,3 +388,79 @@ A forma de pagamento escolhida **não é meramente informativa** — ela comanda
 4. **Wizard Modal Multi-Step (`PlanningWizardModal.jsx` + `EntryDrawer.jsx`):**
    - Modal amplo (`760px`) em 3 passos (1. Tipo/Objetivo, 2. Cotações com Link / Itens da Viagem / Itens da Lista + Forma de Pagamento unificada sem redundâncias, 3. Comparativo Vencedor + Raio-X da Posição Projetada das Contas/Caixinhas/Cartões + Efetivar Planejamento).
 5. **Testes QA & Build:** Cobrir comparação de cotações (`Gol vs Cruze`), viagem dia 19 com itens parcelados no cartão + à vista, compra sem entrada com criação de Caixinha e precisão do painel `Antes → Depois`.
+
+---
+
+## 9. Auditoria do Workspace em Colunas (Threads Desktop + Consultoria Financeira + Microcopy & Densidade)
+
+Com a introdução do modelo de **colunas horizontais lado a lado no desktop**, o paradigma de navegação mudou: o usuário deixou de ver **1 aba isolada por vez** e passou a enxergar **3 a 4 colunas simultaneamente**. Essa mudança expôs redundâncias herdadas do modelo de abas, excesso de bordas aninhadas, microcopy tutorial repetitivo e duas inconsistências de leitura financeira.
+
+### 9.1. O que aproveitar ainda mais da arquitetura do Threads (UX & UI Patterns)
+1. **Superfície Única por Coluna (Fim do *"Card dentro de Card dentro de Card"*):**
+   - No Threads, **a própria coluna é o card branco**. Dentro dela, seções e itens não ganham caixas adicionais com bordas e sombras — são separados apenas por **linhas divisórias horizontais sutis (`1px solid var(--kc-line)`)** (*flat rows*).
+   - Hoje, `.workspace-column` → `.col-section-card` → `.budget-card` cria **3 camadas de borda e padding**, consumindo ~64–72px de largura útil por coluna e aumentando o ruído visual. Adotar *flat sections* com divisores `1px` devolve respiro aos valores em `R$`.
+2. **Cabeçalho de Coluna com Seletor de Visão / Filtro Rápido (`Título ⌄`):**
+   - No Threads, o próprio cabeçalho da coluna permite alternar rapidamente o recorte do feed sem ocupar um bloco extra de altura com filtros fixos.
+   - Ex.: Na coluna `Movimentos`, um filtro pill discreto no cabeçalho (`Todos | Pendentes | Entradas | Saídas`) + ícone de lupa que expande a busca sob demanda; em `Planejamento`, filtro rápido `Todos | Viáveis` no próprio cabeçalho da seção.
+3. **Scrollbars 100% Ocultas (`scrollbar-width: none`):**
+   - Alinhado ao padrão do Threads e à diretriz do Design System (`scrollbar-width: none; -ms-overflow-style: none;` e `&::-webkit-scrollbar { display: none; }`), todas as colunas e o viewport horizontal devem rolar suavemente via roda do mouse, trackpad e clique-e-arraste **sem exibir barras cinzas aparentes** ao lado de cada coluna.
+4. **Botões de Ação com Texto Puro:**
+   - Botões internos de coluna (`Reservar`, `Caixinha`, `Planejar`, `Gerenciar`, `Definir limite`, `Cortes`, `Receber`) devem usar **texto puro** sem ícones decorativos acoplados, reservando ícones apenas para ações puramente iconográficas (`•••`, `+`, `<`, `>`, lupa, sino).
+5. **Auto-Colapso de Blocos Vazios:**
+   - Em um layout multi-coluna, **estados vazios não devem ocupar caixas altas**. Se um gráfico (`Receitas e despesas`, `Despesas por categoria`) ou diagnóstico (`Onde o dinheiro escoa`, `Potencial de corte`) não possui dados no período, ele deve colapsar em 1 linha discreta ou ser omitido automaticamente.
+
+### 9.2. Auditoria de Microcopy: Eliminando o "Copy Tutorial / Autoexplicativo"
+Interfaces maduras mostram **dados e status**, não instruções repetitivas explicando como clicar ou o que cada número significa.
+
+| Local no Código | Copy Atual (Verborrágico / Tutorial) | Problema de UX | Novo Copy (Silencioso & Direto) |
+| :--- | :--- | :--- | :--- |
+| `BankIcon.jsx:21` | `<img alt={brand.name} />` ao lado de `<strong>{name}</strong>` | Faz leitores e seleção de texto lerem o banco duplicado (`Nubank \n Nubank`, `PicPay \n PicPay`). | `alt="" aria-hidden="true"` no ícone quando o nome do banco já está visível ao lado. |
+| `BudgetList.jsx:75, 102` | `Sem teto` + `Toque para ver detalhes` (repetido 8x na coluna!) | Polui verticalmente e explica um clique óbvio em cada linha. | Remover `"Toque para ver detalhes"`. Agrupar itens sem teto em 1 acordeão compacto. |
+| `BudgetList.jsx:39` | `Caixa projetado negativo no período; restante do limite não garante margem livre.` | Jargão técnico longo que repete o alerta já visível no `Saldo previsto`. | `Saldo previsto negativo neste mês.` (1 linha curta). |
+| `Dashboard.jsx:1394` | `Suas contas · Toque em uma conta para gerenciar` | Instrução tutorial desnecessária. | Remover frase; manter apenas o título `Contas bancárias` e o total. |
+| `Dashboard.jsx:1412` / `DesktopWorkspace.jsx:513` | `Uso diário` abaixo de toda conta corrente | Repetitivo em todas as contas. | Omitir quando não houver caixinha; exibir subtítulo **apenas** quando houver `+ R$ X em caixinhas`. |
+| `MovementList.jsx:15` & `Empty` states | `Nenhum lançamento neste período. Use + Lançamento no topo para registrar sua primeira conta ou receita.` | Copy de onboarding repetido toda vez que um filtro ou mês futuro está vazio. | `Nenhum lançamento neste período.` |
+| `DesktopWorkspace.jsx` (Eyebrows) | `ORÇAMENTOS DO MÊS` dentro da coluna `Orçamentos`; `PERÍODO SELECIONADO` abaixo do seletor de mês | Redundância com o título da própria coluna e com o Header global. | Remover eyebrows redundantes dentro das colunas. |
+
+### 9.3. Fim da Redundância entre Colunas & Visão de Consultoria Financeira Pessoal
+Na visão de **Consultoria de Finanças Pessoais**, cada coluna do workspace deve responder a **uma única pergunta de decisão financeira**, sem repetir listas ou KPIs da coluna vizinha:
+
+1. **Transformar `Visão geral` em `Saldos & Cartões` (chave `overview` mantida por compatibilidade):**
+   - **Por que mudar:** Com `Movimentos` aberto ao lado, repetir `Próximos compromissos` na primeira coluna duplica exatamente a mesma lista (`Devolução: Osman milk`, `Devolução: Restaurante`). Enquanto isso, a coluna `Meu Capital` ficou sobrecarregada com Contas + **7 Cartões de crédito** + Pessoas + Bens + Gráfico.
+   - **O que fica em `Saldos & Cartões`:**
+     - **Resumo de Caixa (2×2 flat):** `A pagar`, `A receber`, `Saldo previsto`, `Endividamento`.
+     - **Contas bancárias:** Lista enxuta de saldos por banco (`Nubank (CC)`, `PicPay - Salário`) + botão `Gerenciar`.
+     - **Cartões de crédito (com colapso inteligente):** Mostra o resumo consolidado (`7 cartões · Usado: R$ 12.606,00`) e lista inicialmente os **4 principais cartões** em linhas compactas (`Nubank · Vence dia 14 · R$ 1.265,92 · Livre R$ 634,08`), com botão `Ver todos os 7 cartões ⌄` para expandir sem criar um paredão infinito.
+     - **Gráficos do período (opcionais no menu `•••`):** Só aparecem se ativados e se houver dados no período.
+
+2. **Coluna `Movimentos` (Foco 100% em fluxo e execução):**
+   - **Faixa única de resultado em 1 linha:** `Entradas R$ 0,00 · Saídas R$ 0,00 · Resultado R$ 0,00` (substituindo 3 caixas grandes que repetiam `A pagar` e `A receber`).
+   - **Filtros pills + busca compacta** + lista *flat* de lançamentos.
+
+3. **Coluna `Orçamentos` (Foco em limites ativos, sem paredão de `"Sem teto"`):**
+   - **Faixa de alocação em 1 linha:** `Renda R$ X · Orçado R$ Y · Livre R$ Z` + ação `Definir limite`.
+   - **Destaques:** Exibe diretamente apenas as categorias **com teto definido (`limitCents !== null`)** e suas barras de consumo.
+   - **Acordeão `Gastos sem limite definido`:** As categorias sem teto que tiveram gasto no mês (ex.: as 8 categorias somando `R$ 13.098,82`) ficam recolhidas em **1 única linha expansível**: `8 categorias sem limite (R$ 13.098,82) ⌄`. Ao expandir, mostra linhas compactas de 1 linha com botão rápido `Definir teto`.
+
+4. **Coluna `Planejamento` (Caixinhas & Simulações Viáveis):**
+   - Resumo em 2 blocos (`Em Caixinhas` e `Aporte seguro no mês`) + ações em texto puro (`Reservar`, `Nova caixinha`, `Planejar`).
+   - Lista de `Caixinhas` e lista de `Planejamentos` com filtro rápido `Todos | Viáveis` no cabeçalho.
+
+5. **Coluna `Meu Capital` (Agora leve e focada em Patrimônio & Terceiros):**
+   - Sem o peso das contas correntes diárias e dos 7 cartões (que foram para `Saldos & Cartões`), foca em:
+     - **Balanço Patrimonial:** `Patrimônio líquido`, `Capital hoje`, `Capital projetado`.
+     - **Carteira de pessoas (Valores a receber de terceiros):** Empréstimos ativos, próxima devolução e ação `Receber` / `Emprestar`.
+     - **Bens e imóveis** + **Gráfico de evolução patrimonial** (quando houver dados).
+
+6. **Coluna `Saúde financeira` + Correção de Consistência da Dívida:**
+   - **Inconsistência corrigida:** Antes, o card `Estado financeiro` exibia `R$ 0,00 · Dívida` (lendo apenas `kc_liabilities`) ao lado de `Endividamento: R$ 14.766,00`. Agora exibe o **`totalDebtCents` consolidado (`R$ 14.766,00`)**, mantendo coerência absoluta entre todas as colunas.
+   - **Diagnóstico enxuto:** Estado + Reserva líquida + Marcos de recuperação + Vazamentos/Cortes (auto-colapsando quando não há despesas variáveis no período).
+
+### 9.4. Personalização Modular por Coluna (`••• → Personalizar coluna`)
+Cada coluna passa a oferecer controles reais de visibilidade dos seus blocos internos (persistidos em `column_settings` no banco e `localStorage`):
+- **Saldos & Cartões:** `[x] Resumo de caixa (KPIs)`, `[x] Contas bancárias`, `[x] Cartões de crédito`, `[ ] Gráficos do período`.
+- **Movimentos:** `[x] Faixa de resultado do período`, `[x] Busca e filtros`.
+- **Orçamentos:** `[ ] Expandir categorias sem limite por padrão`, `[x] Modo compacto`.
+- **Planejamento:** `[x] Caixinhas`, `[x] Planejamentos`.
+- **Meu Capital:** `[x] Carteira de pessoas`, `[x] Bens e imóveis`, `[x] Gráfico de evolução`.
+- **Saúde financeira:** `[x] Medidor de comprometimento`, `[x] Marcos de recuperação`, `[x] Hábitos e cortes`.

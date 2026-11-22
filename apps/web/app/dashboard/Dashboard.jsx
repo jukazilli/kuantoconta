@@ -1356,6 +1356,7 @@ export default function Dashboard({ user }) {
             checkingBalanceCents={checkingBalanceCents}
             capitalBalanceCents={capitalBalanceCents}
             caixinhaBalance={caixinhaBalance}
+            totalDebtCents={totalDebtCents}
             debtDisplay={debtDisplay}
             titlesTable={titlesTable}
             budgetItems={budgetItems}
@@ -1390,6 +1391,7 @@ export default function Dashboard({ user }) {
             habits={habits}
             data={data}
             screenFilters={screenFilters}
+            setScreenFilter={setScreenFilter}
             open={open}
             openBudget={openBudget}
             openReserveCaixinha={openReserveCaixinha}
@@ -1551,7 +1553,6 @@ export default function Dashboard({ user }) {
                 <div className="bank-box">
                   <div className="bank-box-header">
                     <strong>Suas contas</strong>
-                    <span>Toque em uma conta para gerenciar</span>
                     <strong className="bank-total">{display(checkingBalanceCents)}</strong>
                   </div>
                   {checkingWallets.length ? (
@@ -1569,7 +1570,7 @@ export default function Dashboard({ user }) {
                             <span className="account-name">{w.name}</span>
                             <span className="account-balance">
                               <strong>{display(walletBalance(w))}</strong>
-                              <span>{caixinhaSum > 0 ? `+ ${money(caixinhaSum)} em caixinhas` : "Uso diário"}</span>
+                              {caixinhaSum > 0 && <span>+ {money(caixinhaSum)} em caixinhas</span>}
                             </span>
                           </button>
                         );
@@ -2132,8 +2133,8 @@ export default function Dashboard({ user }) {
                     <span className="metric-label">Estado financeiro</span>
                     <span className={`status ${stateCls}`}>{stateLabel}</span>
                   </div>
-                  <strong className="kpi-value">{money(ind.outstandingDebtCents)}</strong>
-                  <span className="metric-sub">Dívida restante · Ver diagnóstico ›</span>
+                  <strong className="kpi-value">{money(totalDebtCents ?? ind.outstandingDebtCents)}</strong>
+                  <span className="metric-sub">Endividamento · Ver diagnóstico ›</span>
                 </button>
 
                 <div className="card kpi-panel">

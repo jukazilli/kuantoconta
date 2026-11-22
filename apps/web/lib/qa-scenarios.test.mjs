@@ -274,6 +274,14 @@ test("Desktop Column Workspace: column helpers, persistence migration 019, and r
   assert.match(dashSrc, /topbar-cols-pill/);
   assert.match(desktopSrc, /workspace-deck-viewport/);
   assert.match(desktopSrc, /workspace-add-rail/);
+  assert.match(desktopSrc, /col-flat-section/);
   assert.match(cssSrc, /min-width:\s*390px/);
   assert.match(cssSrc, /flex:\s*0 0 clamp\(395px,\s*29vw,\s*440px\)/);
+  assert.match(cssSrc, /scrollbar-width:\s*none/);
+
+  const budgetListSrc = fs.readFileSync(path.join(repoRoot, "apps", "web", "app", "dashboard", "BudgetList.jsx"), "utf8");
+  const bankIconSrc = fs.readFileSync(path.join(repoRoot, "apps", "web", "app", "dashboard", "BankIcon.jsx"), "utf8");
+  assert.match(budgetListSrc, /budget-uncapped-group/);
+  assert.doesNotMatch(budgetListSrc, /Toque para ver detalhes/);
+  assert.match(bankIconSrc, /alt=""/);
 });

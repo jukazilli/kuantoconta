@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Activity,
-  AlertTriangle,
   ArrowDown,
   ArrowLeft,
   ArrowRight,
@@ -16,12 +15,9 @@ import {
   LayoutGrid,
   ListChecks,
   MoreHorizontal,
-  PiggyBank,
   Plane,
   Plus,
   ReceiptText,
-  RotateCcw,
-  Scissors,
   Search,
   SlidersHorizontal,
   TrendingUp,
@@ -41,11 +37,11 @@ import { computeCapitalPace } from "../../lib/capital-pace";
 import { comparePlanningQuotes } from "../../lib/goal-planner";
 
 const COLUMN_ICONS = {
-  overview: LayoutGrid,
+  overview: Wallet,
   movements: ReceiptText,
   budgets: SlidersHorizontal,
   planning: Compass,
-  patrimony: Wallet,
+  patrimony: LayoutGrid,
   health: Activity,
 };
 
@@ -76,6 +72,7 @@ export default function DesktopWorkspace({
   checkingBalanceCents,
   capitalBalanceCents,
   caixinhaBalance,
+  totalDebtCents,
   debtDisplay,
   titlesTable,
   budgetItems,
@@ -99,7 +96,6 @@ export default function DesktopWorkspace({
   capitalGoals,
   purchaseGoals,
   reserveCaixinhasCents,
-  goalCaixinhasCents,
   reservedThisMonthCents,
   safeContribution,
   capitalBudget,
@@ -110,6 +106,7 @@ export default function DesktopWorkspace({
   habits,
   data,
   screenFilters,
+  setScreenFilter,
   open,
   openBudget,
   openReserveCaixinha,
@@ -137,6 +134,7 @@ export default function DesktopWorkspace({
   const [customizingKey, setCustomizingKey] = useState(null);
   const [dragColKey, setDragColKey] = useState(null);
   const [dragOverKey, setDragOverKey] = useState(null);
+  const [showAllCards, setShowAllCards] = useState(false);
 
   const updateScrollEdges = () => {
     const el = viewportRef.current;
@@ -152,7 +150,6 @@ export default function DesktopWorkspace({
     return () => window.removeEventListener("resize", onResize);
   }, [columns.length]);
 
-  // Smoothly scroll to requested column (e.g. newly added or focused from KPI)
   useEffect(() => {
     if (!focusColumnKey) return;
     const target = colRefs.current[focusColumnKey];
@@ -162,7 +159,6 @@ export default function DesktopWorkspace({
     onFocusHandled?.();
   }, [focusColumnKey, columns.length]);
 
-  // Close menus on outside click / Escape
   useEffect(() => {
     if (!openMenuKey) return;
     const onDown = (e) => {
@@ -188,7 +184,6 @@ export default function DesktopWorkspace({
   const handleWheel = (e) => {
     const el = viewportRef.current;
     if (!el) return;
-    // Support Shift+Scroll horizontal navigation without interfering with normal vertical scroll inside columns
     if (e.shiftKey && Math.abs(e.deltaY) > 0) {
       e.preventDefault();
       el.scrollLeft += e.deltaY;
@@ -241,87 +236,249 @@ export default function DesktopWorkspace({
     }
   };
 
+  const getColCfg = (colKey) => {
+    const raw = columnSettings[colKey] || {};
+    return {
+      showKpis: raw.showKpis !== false,
+      showWallets: raw.showWallets !== false,
+      showCards: raw.showCards !== false,
+      showCharts: colKey === "overview" ? Boolean(raw.showCharts) : raw.showCharts !== false,
+      showSummaryStrip: raw.showSummaryStrip !== false,
+      showFilters: raw.showFilters !== false,
+      expandUncapped: Boolean(raw.expandUncapped),
+      compact: Boolean(raw.compact),
+      showCaixinhas: raw.showCaixinhas !== false,
+      showPlans: raw.showPlans !== false,
+      showPeople: raw.showPeople !== false,
+      showAssets: raw.showAssets !== false,
+      showMilestones: raw.showMilestones !== false,
+      showHabits: raw.showHabits !== false,
+    };
+  };
+
   const toggleColumnSetting = (colKey, settingKey) => {
-    const cur = columnSettings[colKey] || { showCharts: true, compact: false };
+    const cur = getColCfg(colKey);
     onChangeColumnSettings({
       ...columnSettings,
       [colKey]: { ...cur, [settingKey]: !cur[settingKey] },
     });
   };
 
+  const renderCustomizeOptions = (colKey) => {
+    const cfg = getColCfg(colKey);
+    const items = [];
+    if (colKey === "overview") {
+      items.push(
+        ["showKpis", "Resumo de caixa (KPIs)"],
+        ["showWallets", "Contas bancárias"],
+        ["showCards", "Cartões de crédito"],
+        ["showCharts", "Gráficos do período"]
+      );
+    } else if (colKey === "movements") {
+      items.push(
+        ["showSummaryStrip", "Faixa de resultado do período"],
+        ["showFilters", "Filtros e busca"]
+      );
+    } else if (colKey === "budgets") {
+      items.push(
+        ["expandUncapped", "Expandir categorias sem limite"],
+        ["compact", "Modo compacto"]
+      );
+    } else if (colKey === "planning") {
+      items.push(
+        ["showCaixinhas", "Caixinhas"],
+        ["showPlans", "Planejamentos"]
+      );
+    } else if (colKey === "patrimony") {
+      items.push(
+        ["showPeople", "Carteira de pessoas"],
+        ["showAssets", "Bens e imóveis"],
+        ["showCharts", "Gráfico de evolução"]
+      );
+    } else if (colKey === "health") {
+      items.push(
+        ["showCharts", "Medidor de comprometimento"],
+        ["showMilestones", "Marcos de recuperação"],
+        ["showHabits", "Hábitos e potencial de corte"]
+      );
+    }
+
+    return items.map(([k, label]) => (
+      <label key={k} className="kc-check" style={{ fontSize: 12 }}>
+        <input type="checkbox" checked={Boolean(cfg[k])} onChange={() => toggleColumnSetting(colKey, k)} />
+        <span className="kc-check-box" aria-hidden="true" />
+        <span>{label}</span>
+      </label>
+    ));
+  };
+
   const renderColumnContent = (colKey) => {
-    const cfg = columnSettings[colKey] || { showCharts: true, compact: false };
+    const cfg = getColCfg(colKey);
 
     if (colKey === "overview") {
+      const cardRows = creditCards.map((c) => ({
+        card: c,
+        usage: computeCardUsage(c, expandedTitles || []),
+        cyc: computeInvoiceCycleForPurchase({ purchaseDate: today, closingDay: c.closing_day, dueDay: c.due_day }),
+      }));
+      const totalCardsUsedCents = cardRows.reduce((s, r) => s + r.usage.usedLimitCents, 0);
+      const visibleCards = showAllCards ? cardRows : cardRows.slice(0, 4);
+      const hasBarData = months.length > 0 && months.some((m) => m.income || m.expense);
+      const hasDonutData = showCategories && expenses.length > 0;
+
       return (
-        <div className="col-stack">
-          <div className="col-kpi-grid">
-            <button type="button" className="card col-kpi-card clickable-card" onClick={() => { setFilter("expense"); focusOrOpenColumn("movements"); }}>
-              <span className="col-kpi-head">
-                <span className="metric-icon sm"><ArrowDown size={16} aria-hidden="true" /></span>
-                <span className="metric-label">A pagar</span>
-              </span>
-              <strong className="col-kpi-val">{display(summary.payable.total)}</strong>
-            </button>
-            <button type="button" className="card col-kpi-card clickable-card" onClick={() => { setFilter("income"); focusOrOpenColumn("movements"); }}>
-              <span className="col-kpi-head">
-                <span className="metric-icon sm"><ArrowUp size={16} aria-hidden="true" /></span>
-                <span className="metric-label">A receber</span>
-              </span>
-              <strong className="col-kpi-val">{display(summary.receivable.total)}</strong>
-            </button>
-            <button type="button" className="card col-kpi-card clickable-card" onClick={() => focusOrOpenColumn("budgets")}>
-              <span className="col-kpi-head">
-                <span className="metric-icon sm"><TrendingUp size={16} aria-hidden="true" /></span>
-                <span className="metric-label">Saldo previsto</span>
-              </span>
-              <strong className={`col-kpi-val ${projectedBalanceCents < 0 ? "red" : ""}`}>{display(projectedBalanceCents)}</strong>
-              {summary.knownCash && capitalBalanceCents > 0 && (
-                <span className="metric-sub-mini">Uso: {money(checkingBalanceCents)} · Reserva: {money(capitalBalanceCents)}</span>
-              )}
-            </button>
-            <button type="button" className="card col-kpi-card clickable-card" onClick={() => focusOrOpenColumn("patrimony")}>
-              <span className="col-kpi-head">
-                <span className="metric-icon sm"><Coins size={16} aria-hidden="true" /></span>
-                <span className="metric-label">Endividamento</span>
-              </span>
-              <strong className="col-kpi-val">{debtDisplay}</strong>
-            </button>
-          </div>
-
-          <div className="col-section-card">
-            <div className="card-heading">
-              <h3 className="col-section-title">Próximos compromissos</h3>
-              <button type="button" className="pill pill-secondary pill-compact" onClick={() => focusOrOpenColumn("movements")}>
-                Ver todos <ChevronRight size={14} aria-hidden="true" />
-              </button>
-            </div>
-            <div className="commitments-body">{titlesTable(true)}</div>
-          </div>
-
-          {cfg.showCharts !== false && (
-            <>
-              <div className="col-section-card" data-no-drag>
-                <div className="eyebrow">PERÍODO SELECIONADO</div>
-                <h3 className="col-section-title" style={{ marginBottom: 8 }}>Receitas e despesas</h3>
-                {months.length && months.some((m) => m.income || m.expense) ? (
-                  <FinanceChart type="bar" data={months} height={190} />
-                ) : (
-                  <Empty>Sem movimentos no período.</Empty>
-                )}
+        <div className="col-flat-flow">
+          {cfg.showKpis && (
+            <div className="col-flat-section">
+              <div className="col-kpi-grid">
+                <button type="button" className="col-kpi-card clickable-card" onClick={() => { setFilter("expense"); focusOrOpenColumn("movements"); }}>
+                  <span className="col-kpi-head">
+                    <span className="metric-icon sm"><ArrowDown size={15} aria-hidden="true" /></span>
+                    <span className="metric-label">A pagar</span>
+                  </span>
+                  <strong className="col-kpi-val">{display(summary.payable.total)}</strong>
+                </button>
+                <button type="button" className="col-kpi-card clickable-card" onClick={() => { setFilter("income"); focusOrOpenColumn("movements"); }}>
+                  <span className="col-kpi-head">
+                    <span className="metric-icon sm"><ArrowUp size={15} aria-hidden="true" /></span>
+                    <span className="metric-label">A receber</span>
+                  </span>
+                  <strong className="col-kpi-val">{display(summary.receivable.total)}</strong>
+                </button>
+                <button type="button" className="col-kpi-card clickable-card" onClick={() => focusOrOpenColumn("budgets")}>
+                  <span className="col-kpi-head">
+                    <span className="metric-icon sm"><TrendingUp size={15} aria-hidden="true" /></span>
+                    <span className="metric-label">Saldo previsto</span>
+                  </span>
+                  <strong className={`col-kpi-val ${projectedBalanceCents < 0 ? "red" : ""}`}>{display(projectedBalanceCents)}</strong>
+                  {summary.knownCash && capitalBalanceCents > 0 && (
+                    <span className="metric-sub-mini">Livre: {money(checkingBalanceCents)} · Caixinhas: {money(capitalBalanceCents)}</span>
+                  )}
+                </button>
+                <button type="button" className="col-kpi-card clickable-card" onClick={() => focusOrOpenColumn("patrimony")}>
+                  <span className="col-kpi-head">
+                    <span className="metric-icon sm"><Coins size={15} aria-hidden="true" /></span>
+                    <span className="metric-label">Endividamento</span>
+                  </span>
+                  <strong className="col-kpi-val">{debtDisplay}</strong>
+                </button>
               </div>
-              {showCategories && (
-                <div className="col-section-card" data-no-drag>
-                  <div className="eyebrow">DISTRIBUIÇÃO</div>
-                  <h3 className="col-section-title" style={{ marginBottom: 8 }}>Despesas por categoria</h3>
-                  {expenses.length ? (
-                    <FinanceChart type="donut" data={expenses} height={195} />
-                  ) : (
-                    <Empty>Sem despesas no período.</Empty>
+            </div>
+          )}
+
+          {cfg.showWallets && (
+            <div className="col-flat-section">
+              <div className="card-heading" style={{ marginBottom: 10 }}>
+                <div>
+                  <h3 className="col-section-title">Contas bancárias</h3>
+                  <small className="hint">{display(checkingBalanceCents)} em conta</small>
+                </div>
+                <button type="button" className="pill pill-secondary pill-compact" onClick={() => setManageWalletsOpen(true)}>
+                  Gerenciar
+                </button>
+              </div>
+              {checkingWallets.length ? (
+                <div className="col-flat-list">
+                  {checkingWallets.map((w) => {
+                    const caixinhaSum = bankCaixinhasTotal(w.id);
+                    return (
+                      <button
+                        type="button"
+                        className="col-flat-row clickable-row"
+                        key={w.id}
+                        onClick={() => setSelectedWallet(w)}
+                      >
+                        <BankIcon name={w.name} size={32} />
+                        <div className="col-flat-row-main">
+                          <strong>{w.name}</strong>
+                          {caixinhaSum > 0 && <small>+ {money(caixinhaSum)} em caixinhas</small>}
+                        </div>
+                        <strong className="col-flat-row-val">{display(walletBalance(w))} ›</strong>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <Empty>Nenhuma conta cadastrada.</Empty>
+              )}
+            </div>
+          )}
+
+          {cfg.showCards && (
+            <div className="col-flat-section">
+              <div className="card-heading" style={{ marginBottom: 10 }}>
+                <div>
+                  <h3 className="col-section-title">Cartões de crédito</h3>
+                  {creditCards.length > 0 && (
+                    <small className="hint">{creditCards.length} {creditCards.length === 1 ? "cartão" : "cartões"} · Usado: {money(totalCardsUsedCents)}</small>
                   )}
                 </div>
+                <button type="button" className="pill pill-outline-orange pill-compact" onClick={() => open("credit_card")}>
+                  Novo
+                </button>
+              </div>
+              {cardRows.length ? (
+                <>
+                  <div className="col-flat-list">
+                    {visibleCards.map(({ card: c, usage, cyc }) => (
+                      <button
+                        type="button"
+                        key={c.id}
+                        className="col-card-compact clickable-row"
+                        onClick={() => setInvoiceModal({ cardId: c.id, month: cyc.invoiceMonth })}
+                      >
+                        <div className="col-card-compact-top">
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                            <BankIcon name={c.name} size={28} />
+                            <div className="col-flat-row-main">
+                              <strong>{c.name}</strong>
+                              <small>Vence dia {c.due_day}</small>
+                            </div>
+                          </div>
+                          <div style={{ textAlign: "right" }}>
+                            <strong>{money(usage.usedLimitCents)}</strong>
+                            <small style={{ display: "block", fontSize: 11, color: "var(--kc-muted)" }}>
+                              Livre {money(usage.availableLimitCents)}
+                            </small>
+                          </div>
+                        </div>
+                        <div className="budget-bar" style={{ height: 5, marginTop: 6 }} role="progressbar" aria-valuenow={usage.utilizationPct} aria-valuemin={0} aria-valuemax={100}>
+                          <div className={`budget-fill${usage.utilizationPct >= 90 ? " over" : usage.utilizationPct >= 75 ? " warn" : ""}`} style={{ width: `${usage.utilizationPct}%` }} />
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                  {cardRows.length > 4 && (
+                    <button
+                      type="button"
+                      className="col-expand-link"
+                      onClick={() => setShowAllCards((v) => !v)}
+                    >
+                      {showAllCards ? "Recolher cartões" : `Ver todos os ${cardRows.length} cartões`}
+                    </button>
+                  )}
+                </>
+              ) : (
+                <Empty>Nenhum cartão cadastrado.</Empty>
               )}
-            </>
+            </div>
+          )}
+
+          {cfg.showCharts && (hasBarData || hasDonutData) && (
+            <div className="col-flat-section" data-no-drag>
+              {hasBarData && (
+                <div style={{ marginBottom: hasDonutData ? 14 : 0 }}>
+                  <h3 className="col-section-title" style={{ marginBottom: 8 }}>Receitas e despesas</h3>
+                  <FinanceChart type="bar" data={months} height={180} />
+                </div>
+              )}
+              {hasDonutData && (
+                <div>
+                  <h3 className="col-section-title" style={{ marginBottom: 8 }}>Despesas por categoria</h3>
+                  <FinanceChart type="donut" data={expenses} height={185} />
+                </div>
+              )}
+            </div>
           )}
         </div>
       );
@@ -329,45 +486,44 @@ export default function DesktopWorkspace({
 
     if (colKey === "movements") {
       return (
-        <div className="col-stack">
-          <div className="col-mini-stats">
-            <div className="col-mini-stat">
-              <span>A receber</span>
-              <strong>{display(summary.receivable.total)}</strong>
+        <div className="col-flat-flow">
+          {cfg.showSummaryStrip && (
+            <div className="col-summary-line">
+              <span>Entradas <strong>{display(summary.receivable.total)}</strong></span>
+              <span>·</span>
+              <span>Saídas <strong>{display(summary.payable.total)}</strong></span>
+              <span>·</span>
+              <span>Resultado <strong className={summary.periodResult < 0 ? "red" : ""}>{display(summary.periodResult)}</strong></span>
             </div>
-            <div className="col-mini-stat">
-              <span>A pagar</span>
-              <strong>{display(summary.payable.total)}</strong>
-            </div>
-            <div className="col-mini-stat">
-              <span>Resultado</span>
-              <strong className={summary.periodResult < 0 ? "red" : ""}>{display(summary.periodResult)}</strong>
-            </div>
-          </div>
+          )}
 
-          <div className="col-filters-bar">
-            <div className="filter-pills">
-              {[
-                ["all", "Todos"],
-                ["expense", "A pagar"],
-                ["income", "A receber"],
-              ].map(([k, l]) => (
-                <button key={k} type="button" className={filter === k ? "active" : ""} onClick={() => setFilter(k)}>
-                  {l}
-                </button>
-              ))}
+          {cfg.showFilters && (
+            <div className="col-flat-section" style={{ paddingTop: 10, paddingBottom: 10 }}>
+              <div className="col-filters-bar">
+                <div className="filter-pills">
+                  {[
+                    ["all", "Todos"],
+                    ["expense", "A pagar"],
+                    ["income", "A receber"],
+                  ].map(([k, l]) => (
+                    <button key={k} type="button" className={filter === k ? "active" : ""} onClick={() => setFilter(k)}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+                <label className="search-input" style={{ width: "100%" }}>
+                  <Search size={15} />
+                  <input
+                    placeholder="Buscar lançamento ou categoria"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                  />
+                </label>
+              </div>
             </div>
-            <label className="search-input" style={{ width: "100%" }}>
-              <Search size={15} />
-              <input
-                placeholder="Buscar lançamento ou categoria"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-              />
-            </label>
-          </div>
+          )}
 
-          <div className="col-section-card">
+          <div className="col-flat-section">
             {titlesTable(false)}
           </div>
         </div>
@@ -376,39 +532,31 @@ export default function DesktopWorkspace({
 
     if (colKey === "budgets") {
       return (
-        <div className="col-stack">
-          <div className="col-section-card col-section-tint">
-            <div className="card-heading">
-              <div>
-                <div className="eyebrow">ORÇAMENTOS DO MÊS</div>
-                <div className="month-heading" style={{ fontSize: 18 }}>{monthLong}</div>
-              </div>
+        <div className="col-flat-flow">
+          <div className="col-flat-section">
+            <div className="card-heading" style={{ marginBottom: 8 }}>
+              <strong style={{ fontSize: 15 }}>{monthLong}</strong>
               <button type="button" className="pill pill-outline-orange pill-compact" onClick={() => setActionMenu("budget_pick")}>
                 Definir limite
               </button>
             </div>
-            <div className="col-mini-stats" style={{ marginTop: 12 }}>
-              <div className="col-mini-stat">
-                <span>Renda prevista</span>
-                <strong>{money(monthlyIncomeCents)}</strong>
-              </div>
-              <div className="col-mini-stat">
-                <span>Orçado</span>
-                <strong>{money(allocatedBudgetCents)}</strong>
-              </div>
-              <div className="col-mini-stat">
-                <span>Livre</span>
-                <strong>{money(remainingAllocableCents)}</strong>
-              </div>
+            <div className="col-summary-line" style={{ padding: 0, border: 0, background: "transparent" }}>
+              <span>Renda <strong>{money(monthlyIncomeCents)}</strong></span>
+              <span>·</span>
+              <span>Orçado <strong>{money(allocatedBudgetCents)}</strong></span>
+              <span>·</span>
+              <span>Livre <strong>{money(remainingAllocableCents)}</strong></span>
             </div>
           </div>
 
-          <div className="col-section-card">
+          <div className="col-flat-section">
             <BudgetList
               items={budgetItems}
               monthLabel={monthLong}
               insufficientCash={summary.minCash !== null && summary.minCash < 0}
               compact={Boolean(cfg.compact)}
+              groupUncapped={true}
+              defaultUncappedOpen={Boolean(cfg.expandUncapped)}
               onEditBudget={openBudget}
               onFulfillPlan={fulfillPlan}
               onEditPlan={editPlan}
@@ -416,261 +564,199 @@ export default function DesktopWorkspace({
             />
           </div>
 
-          <button type="button" className="pill pill-secondary" style={{ width: "100%", justifyContent: "center" }} onClick={onOpenEvolutionModal}>
-            Ver evolução mês a mês <ChevronRight size={15} aria-hidden="true" />
-          </button>
+          <div className="col-flat-section" style={{ borderBottom: 0 }}>
+            <button type="button" className="pill pill-secondary" style={{ width: "100%", justifyContent: "center" }} onClick={onOpenEvolutionModal}>
+              Ver evolução mês a mês
+            </button>
+          </div>
         </div>
       );
     }
 
     if (colKey === "planning") {
+      const onlyFeasible = Boolean(screenFilters?.planning?.onlyFeasible);
       return (
-        <div className="col-stack">
-          <div className="col-kpi-grid">
-            <div className="card col-kpi-card">
-              <span className="metric-label">Em Caixinhas</span>
-              <strong className="col-kpi-val">{summary.knownCash ? money(capitalBalanceCents) : "A calcular"}</strong>
-              <span className="metric-sub-mini">Reserva: {money(reserveCaixinhasCents)}</span>
-            </div>
-            <div className="card col-kpi-card">
-              <span className="metric-label">Em {monthOnly}</span>
-              <strong className="col-kpi-val">{money(reservedThisMonthCents)}</strong>
-              <span className="metric-sub-mini">
-                {safeContribution.canContribute
-                  ? `Aporte seguro: ${money(safeContribution.safeContributionCents)}`
-                  : "Priorize compromissos"}
-              </span>
-            </div>
-          </div>
-
-          <div className="col-action-row">
-            <button type="button" className="pill pill-secondary pill-compact" onClick={() => openReserveCaixinha()}>
-              <PiggyBank size={14} aria-hidden="true" /> Reservar
-            </button>
-            <button type="button" className="pill pill-secondary pill-compact" onClick={() => open("capital_goal")}>
-              <Plus size={14} aria-hidden="true" /> Caixinha
-            </button>
-            <button type="button" className="pill pill-primary pill-compact" onClick={() => open("goal_sim")}>
-              <Compass size={14} aria-hidden="true" /> Planejar
-            </button>
-          </div>
-
-          <div className="col-section-card">
-            <div className="card-heading" style={{ marginBottom: 10 }}>
-              <h3 className="col-section-title">Caixinhas</h3>
-              <span className="small-flag">{capitalGoals.length} ativa(s)</span>
-            </div>
-            {capitalGoals.length ? (
-              <div className="budget-list">
-                {capitalGoals.map((g) => {
-                  const saved = caixinhaBalance(g);
-                  const bankWallet = checkingWallets.find((w) => w.id === g.parent_wallet_id) || wallets.find((w) => w.id === g.parent_wallet_id);
-                  const pace = computeCapitalPace({
-                    targetCents: cents(g.target_cents),
-                    targetDate: isoDate(g.desired_on) || date,
-                    currentCapitalCents: saved,
-                    monthlyContributionCents: capitalBudget?.limitCents || 0,
-                    today,
-                  });
-                  return (
-                    <button
-                      type="button"
-                      className="budget-card clickable-card"
-                      style={{ width: "100%" }}
-                      key={g.id}
-                      onClick={() => setSelectedCaixinha({ raw: g, pace, saved, bankName: bankWallet?.name || "Sem banco" })}
-                    >
-                      <div className="budget-row-top">
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <BankIcon name={bankWallet?.name || g.title} size={30} />
-                          <div>
-                            <strong>{g.title}</strong>
-                            <div className="hint">{bankWallet ? bankWallet.name : "Sem banco"}</div>
-                          </div>
-                        </div>
-                        <div style={{ textAlign: "right" }}>
-                          <strong>{money(saved)}</strong>
-                          <div className="hint">Meta: {money(pace.targetCents)}</div>
-                        </div>
-                      </div>
-                      <div className="budget-bar" role="progressbar" aria-valuenow={pace.progressPct} aria-valuemin={0} aria-valuemax={100}>
-                        <div className="budget-fill" style={{ width: `${pace.progressPct}%` }} />
-                      </div>
-                    </button>
-                  );
-                })}
+        <div className="col-flat-flow">
+          <div className="col-flat-section">
+            <div className="col-kpi-grid" style={{ marginBottom: 10 }}>
+              <div className="col-kpi-card">
+                <span className="metric-label">Em Caixinhas</span>
+                <strong className="col-kpi-val">{summary.knownCash ? money(capitalBalanceCents) : "—"}</strong>
+                <span className="metric-sub-mini">Reserva: {money(reserveCaixinhasCents)}</span>
               </div>
-            ) : (
-              <Empty>Crie uma caixinha para separar dinheiro por objetivo.</Empty>
-            )}
+              <div className="col-kpi-card">
+                <span className="metric-label">Em {monthOnly}</span>
+                <strong className="col-kpi-val">{money(reservedThisMonthCents)}</strong>
+                <span className="metric-sub-mini">
+                  {safeContribution.canContribute
+                    ? `Aporte seguro: ${money(safeContribution.safeContributionCents)}`
+                    : "Priorize compromissos"}
+                </span>
+              </div>
+            </div>
+
+            <div className="col-action-row">
+              <button type="button" className="pill pill-secondary pill-compact" onClick={() => openReserveCaixinha()}>
+                Reservar
+              </button>
+              <button type="button" className="pill pill-secondary pill-compact" onClick={() => open("capital_goal")}>
+                Nova caixinha
+              </button>
+              <button type="button" className="pill pill-primary pill-compact" onClick={() => open("goal_sim")}>
+                Planejar
+              </button>
+            </div>
           </div>
 
-          <div className="col-section-card">
-            <div className="card-heading" style={{ marginBottom: 10 }}>
-              <h3 className="col-section-title">Planejamentos</h3>
-              <span className="small-flag">{purchaseGoals.length} ativo(s)</span>
-            </div>
-            {purchaseGoals.length ? (
-              <div className="budget-list">
-                {purchaseGoals
-                  .map((g, idx) => {
-                    const comparison = comparePlanningQuotes(data || {}, g, { today });
-                    const chosenQ = comparison.quotes.find((q) => q.isChosen) || comparison.winner;
-                    const sim = chosenQ?.sim || comparison.winner?.sim;
-                    return { g, idx, comparison, sim };
-                  })
-                  .filter(({ sim }) => !screenFilters.planning.onlyFeasible || sim?.isFeasible || Boolean(sim?.firstFeasibleDate))
-                  .map(({ g, idx, comparison, sim }) => {
-                    const pType = g.plan_type || "purchase";
-                    const TypeIcon = pType === "trip" ? Plane : pType === "shopping_list" ? ListChecks : Compass;
+          {cfg.showCaixinhas && (
+            <div className="col-flat-section">
+              <div className="card-heading" style={{ marginBottom: 10 }}>
+                <h3 className="col-section-title">Caixinhas</h3>
+                <span className="small-flag">{capitalGoals.length}</span>
+              </div>
+              {capitalGoals.length ? (
+                <div className="col-flat-list">
+                  {capitalGoals.map((g) => {
+                    const saved = caixinhaBalance(g);
+                    const bankWallet = checkingWallets.find((w) => w.id === g.parent_wallet_id) || wallets.find((w) => w.id === g.parent_wallet_id);
+                    const pace = computeCapitalPace({
+                      targetCents: cents(g.target_cents),
+                      targetDate: isoDate(g.desired_on) || date,
+                      currentCapitalCents: saved,
+                      monthlyContributionCents: capitalBudget?.limitCents || 0,
+                      today,
+                    });
                     return (
                       <button
                         type="button"
-                        key={g.id || idx}
-                        className="goal-bento-card"
-                        style={{ width: "100%" }}
-                        onClick={() => setSelectedGoal({ raw: g, sim, comparison })}
+                        className="col-card-compact clickable-row"
+                        key={g.id}
+                        onClick={() => setSelectedCaixinha({ raw: g, pace, saved, bankName: bankWallet?.name || "Sem banco" })}
                       >
-                        <div className="goal-bento-top">
-                          <span className="goal-bento-icon"><TypeIcon size={16} /></span>
-                          <span className={`status ${sim.isFeasible ? "done" : sim.firstFeasibleDate ? "partial" : "late"}`}>
-                            {sim.isFeasible ? "Viável" : sim.firstFeasibleDate ? `Em ${fmtDate(sim.firstFeasibleDate)}` : "Não cabe"}
-                          </span>
+                        <div className="col-card-compact-top">
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <BankIcon name={bankWallet?.name || g.title} size={28} />
+                            <div className="col-flat-row-main">
+                              <strong>{g.title}</strong>
+                              <small>{bankWallet ? bankWallet.name : "Sem banco"}</small>
+                            </div>
+                          </div>
+                          <div style={{ textAlign: "right" }}>
+                            <strong>{money(saved)}</strong>
+                            <small style={{ display: "block", fontSize: 11, color: "var(--kc-muted)" }}>Meta {money(pace.targetCents)}</small>
+                          </div>
                         </div>
-                        <strong>{g.title}</strong>
-                        <div className="goal-bento-meta">
-                          <span>{money(cents(g.target_cents))}</span>
-                          <small>{comparison.hasComparison ? `${comparison.quotes.length} cotações` : g.installment_count > 1 ? `${g.installment_count}x` : "À vista"}</small>
+                        <div className="budget-bar" style={{ height: 5, marginTop: 6 }} role="progressbar" aria-valuenow={pace.progressPct} aria-valuemin={0} aria-valuemax={100}>
+                          <div className="budget-fill" style={{ width: `${pace.progressPct}%` }} />
                         </div>
                       </button>
                     );
                   })}
+                </div>
+              ) : (
+                <Empty>Nenhuma caixinha ativa.</Empty>
+              )}
+            </div>
+          )}
+
+          {cfg.showPlans && (
+            <div className="col-flat-section" style={{ borderBottom: 0 }}>
+              <div className="card-heading" style={{ marginBottom: 10 }}>
+                <h3 className="col-section-title">Planejamentos</h3>
+                {setScreenFilter && (
+                  <button
+                    type="button"
+                    className={`small-flag clickable-flag${onlyFeasible ? " active" : ""}`}
+                    onClick={() => setScreenFilter("planning", { onlyFeasible: !onlyFeasible })}
+                  >
+                    {onlyFeasible ? "Só viáveis" : "Todos"} ({purchaseGoals.length})
+                  </button>
+                )}
               </div>
-            ) : (
-              <Empty>Use Planejar para simular compras, viagens ou listas.</Empty>
-            )}
-          </div>
+              {purchaseGoals.length ? (
+                <div className="col-flat-list">
+                  {purchaseGoals
+                    .map((g, idx) => {
+                      const comparison = comparePlanningQuotes(data || {}, g, { today });
+                      const chosenQ = comparison.quotes.find((q) => q.isChosen) || comparison.winner;
+                      const sim = chosenQ?.sim || comparison.winner?.sim;
+                      return { g, idx, comparison, sim };
+                    })
+                    .filter(({ sim }) => !onlyFeasible || sim?.isFeasible || Boolean(sim?.firstFeasibleDate))
+                    .map(({ g, idx, comparison, sim }) => {
+                      const pType = g.plan_type || "purchase";
+                      const TypeIcon = pType === "trip" ? Plane : pType === "shopping_list" ? ListChecks : Compass;
+                      return (
+                        <button
+                          type="button"
+                          key={g.id || idx}
+                          className="col-flat-row clickable-row"
+                          onClick={() => setSelectedGoal({ raw: g, sim, comparison })}
+                        >
+                          <span className="goal-bento-icon" style={{ width: 30, height: 30 }}><TypeIcon size={15} /></span>
+                          <div className="col-flat-row-main">
+                            <strong>{g.title}</strong>
+                            <small>
+                              {money(cents(g.target_cents))} · {comparison.hasComparison ? `${comparison.quotes.length} cotações` : g.installment_count > 1 ? `${g.installment_count}x` : "À vista"}
+                            </small>
+                          </div>
+                          <span className={`status ${sim.isFeasible ? "done" : sim.firstFeasibleDate ? "partial" : "late"}`}>
+                            {sim.isFeasible ? "Viável" : sim.firstFeasibleDate ? fmtDate(sim.firstFeasibleDate) : "Não cabe"}
+                          </span>
+                        </button>
+                      );
+                    })}
+                </div>
+              ) : (
+                <Empty>Nenhum planejamento ativo.</Empty>
+              )}
+            </div>
+          )}
         </div>
       );
     }
 
     if (colKey === "patrimony") {
       return (
-        <div className="col-stack">
-          <div className="col-mini-stats">
-            <div className="col-mini-stat">
-              <span>Capital hoje</span>
-              <strong>{summary.knownCash ? money(capitalBalanceCents) : "—"}</strong>
-            </div>
-            <div className="col-mini-stat">
-              <span>Projetado</span>
-              <strong>{summary.knownCash ? money(capitalProjectedAtDateCents) : "—"}</strong>
-            </div>
-            <div className="col-mini-stat">
-              <span>Patrimônio</span>
-              <strong>{display(netWorthAtDateCents)}</strong>
-            </div>
-          </div>
-
-          <div className="col-section-card">
-            <div className="card-heading" style={{ marginBottom: 10 }}>
-              <h3 className="col-section-title">Contas bancárias</h3>
-              <button type="button" className="pill pill-secondary pill-compact" onClick={() => setManageWalletsOpen(true)}>
-                Gerenciar
-              </button>
-            </div>
-            {checkingWallets.length ? (
-              <div className="wallet-list">
-                {checkingWallets.map((w) => {
-                  const caixinhaSum = bankCaixinhasTotal(w.id);
-                  return (
-                    <button
-                      type="button"
-                      className="account-panel-row clickable-row"
-                      key={w.id}
-                      onClick={() => setSelectedWallet(w)}
-                    >
-                      <BankIcon name={w.name} size={34} />
-                      <div className="account-info">
-                        <h3>{w.name}</h3>
-                        <p>{caixinhaSum > 0 ? `+ ${money(caixinhaSum)} em caixinhas` : "Uso diário"}</p>
-                      </div>
-                      <strong>{display(walletBalance(w))} ›</strong>
-                    </button>
-                  );
-                })}
+        <div className="col-flat-flow">
+          <div className="col-flat-section">
+            <div className="col-mini-stats">
+              <div className="col-mini-stat">
+                <span>Capital hoje</span>
+                <strong>{summary.knownCash ? money(capitalBalanceCents) : "—"}</strong>
               </div>
-            ) : (
-              <Empty>Nenhuma conta cadastrada.</Empty>
-            )}
-          </div>
-
-          <div className="col-section-card">
-            <div className="card-heading" style={{ marginBottom: 10 }}>
-              <h3 className="col-section-title">Cartões de crédito</h3>
-              <button type="button" className="pill pill-outline-orange pill-compact" onClick={() => open("credit_card")}>
-                <Plus size={13} aria-hidden="true" /> Novo
-              </button>
-            </div>
-            {creditCards.length ? (
-              <div className="budget-list">
-                {creditCards.map((c) => {
-                  const usage = computeCardUsage(c, expandedTitles || []);
-                  const cyc = computeInvoiceCycleForPurchase({ purchaseDate: today, closingDay: c.closing_day, dueDay: c.due_day });
-                  return (
-                    <button
-                      type="button"
-                      key={c.id}
-                      className="budget-card clickable-card"
-                      style={{ width: "100%" }}
-                      onClick={() => setInvoiceModal({ cardId: c.id, month: cyc.invoiceMonth })}
-                    >
-                      <div className="budget-row-top">
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <BankIcon name={c.name} size={30} />
-                          <div>
-                            <strong>{c.name}</strong>
-                            <div className="hint">Vence dia {c.due_day}</div>
-                          </div>
-                        </div>
-                        <div style={{ textAlign: "right" }}>
-                          <strong>{money(usage.usedLimitCents)}</strong>
-                          <div className="hint">Disp.: {money(usage.availableLimitCents)}</div>
-                        </div>
-                      </div>
-                      <div className="budget-bar" role="progressbar" aria-valuenow={usage.utilizationPct} aria-valuemin={0} aria-valuemax={100}>
-                        <div className={`budget-fill${usage.utilizationPct >= 90 ? " over" : usage.utilizationPct >= 75 ? " warn" : ""}`} style={{ width: `${usage.utilizationPct}%` }} />
-                      </div>
-                    </button>
-                  );
-                })}
+              <div className="col-mini-stat">
+                <span>Projetado</span>
+                <strong>{summary.knownCash ? money(capitalProjectedAtDateCents) : "—"}</strong>
               </div>
-            ) : (
-              <Empty>Nenhum cartão cadastrado.</Empty>
-            )}
+              <div className="col-mini-stat">
+                <span>Patrimônio</span>
+                <strong className={netWorthAtDateCents !== null && netWorthAtDateCents < 0 ? "red" : ""}>{display(netWorthAtDateCents)}</strong>
+              </div>
+            </div>
           </div>
 
-          <div className="col-section-card">
-            <div className="card-heading" style={{ marginBottom: 10 }}>
-              <h3 className="col-section-title">Carteira de pessoas</h3>
-              <button type="button" className="pill pill-outline-orange pill-compact" onClick={() => open("title", null, "lend")}>
-                <Plus size={13} aria-hidden="true" /> Emprestar
-              </button>
-            </div>
-            {peopleLoans.length ? (
-              <div className="budget-list">
-                {peopleLoans.map(({ person, totalLentCents, openBalanceCents, openRepaymentTitles }) => (
-                  <div className="budget-card" key={person.id}>
-                    <div className="budget-row-top">
-                      <div>
+          {cfg.showPeople && (
+            <div className="col-flat-section">
+              <div className="card-heading" style={{ marginBottom: 10 }}>
+                <h3 className="col-section-title">Carteira de pessoas</h3>
+                <button type="button" className="pill pill-outline-orange pill-compact" onClick={() => open("title", null, "lend")}>
+                  Emprestar
+                </button>
+              </div>
+              {peopleLoans.length ? (
+                <div className="col-flat-list">
+                  {peopleLoans.map(({ person, totalLentCents, openBalanceCents, openRepaymentTitles }) => (
+                    <div className="col-flat-row" key={person.id}>
+                      <div className="col-flat-row-main">
                         <strong>{person.name}</strong>
-                        <div className="hint">
+                        <small>
                           Emprestado: {money(totalLentCents)}
                           {openRepaymentTitles[0] && ` · Próx.: ${fmtDate(openRepaymentTitles[0].dueOn)}`}
-                        </div>
+                        </small>
                       </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <strong style={{ color: openBalanceCents > 0 ? "var(--kc-orange)" : "#067647" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <strong style={{ color: openBalanceCents > 0 ? "var(--kc-orange)" : "#067647", fontSize: 13 }}>
                           {openBalanceCents > 0 ? money(openBalanceCents) : "Quitado"}
                         </strong>
                         {openRepaymentTitles[0] && (
@@ -680,29 +766,30 @@ export default function DesktopWorkspace({
                         )}
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <Empty>Nenhum empréstimo registrado.</Empty>
-            )}
-          </div>
-
-          <div className="col-section-card">
-            <div className="card-heading" style={{ marginBottom: 8 }}>
-              <h3 className="col-section-title">Bens e imóveis</h3>
-              <button type="button" className="pill pill-secondary pill-compact" onClick={() => open("asset")}>
-                <Plus size={13} aria-hidden="true" /> Adicionar
-              </button>
+                  ))}
+                </div>
+              ) : (
+                <Empty>Nenhum empréstimo ativo.</Empty>
+              )}
             </div>
-            <strong style={{ fontSize: 18 }}>{money(summary.assets)}</strong>
-          </div>
+          )}
 
-          {cfg.showCharts !== false && summary.knownCash && charts.length > 0 && (
-            <div className="col-section-card" data-no-drag>
-              <div className="eyebrow">EVOLUÇÃO ATÉ {fmtDate(date)}</div>
-              <h3 className="col-section-title" style={{ marginBottom: 8 }}>Projeção de caixa</h3>
-              <FinanceChart type="line" data={charts} height={190} />
+          {cfg.showAssets && (
+            <div className="col-flat-section">
+              <div className="card-heading" style={{ marginBottom: 6 }}>
+                <h3 className="col-section-title">Bens e imóveis</h3>
+                <button type="button" className="pill pill-secondary pill-compact" onClick={() => open("asset")}>
+                  Adicionar
+                </button>
+              </div>
+              <strong style={{ fontSize: 17 }}>{money(summary.assets)}</strong>
+            </div>
+          )}
+
+          {cfg.showCharts && summary.knownCash && charts.length > 0 && (
+            <div className="col-flat-section" style={{ borderBottom: 0 }} data-no-drag>
+              <h3 className="col-section-title" style={{ marginBottom: 8 }}>Projeção até {fmtDate(date)}</h3>
+              <FinanceChart type="line" data={charts} height={185} />
             </div>
           )}
         </div>
@@ -725,90 +812,104 @@ export default function DesktopWorkspace({
       const reserveMonths = ind.emergencyCoverageMonths ?? 0;
       const reservePct = Math.min(100, Math.round((reserveMonths / 6) * 100));
       const commitPct = ind.incomeCommitmentRatio === null ? 0 : Math.round(ind.incomeCommitmentRatio * 100);
+      const effectiveDebtCents = totalDebtCents ?? ind.outstandingDebtCents ?? 0;
       const fmtM = (ym) =>
         ym ? new Date(`${ym}-15T12:00:00Z`).toLocaleDateString("pt-BR", { month: "short", year: "2-digit", timeZone: "UTC" }).replace(".", "") : "A definir";
+      const hasLeaks = habits.topLeaks.length > 0;
+      const hasCuts = habits.tesouraco.potentialMonthlySavingsCents > 0;
 
       return (
-        <div className="col-stack">
-          <div className="col-kpi-grid">
-            <button type="button" className="card col-kpi-card clickable-card" onClick={() => setHealthModal("diagnosis")}>
-              <div className="card-heading" style={{ width: "100%" }}>
-                <span className="metric-label">Estado</span>
-                <span className={`status ${stateCls}`}>{stateLabel}</span>
-              </div>
-              <strong className="col-kpi-val">{money(ind.outstandingDebtCents)}</strong>
-              <span className="metric-sub-mini">Dívida · Diagnóstico ›</span>
-            </button>
-            <div className="card col-kpi-card">
-              <span className="metric-label">Reserva líquida</span>
-              <strong className="col-kpi-val">{ind.emergencyCoverageMonths === null ? "—" : `${reserveMonths.toFixed(1)} m`}</strong>
-              <div className="budget-bar" role="progressbar" aria-valuenow={reservePct} aria-valuemin={0} aria-valuemax={100}>
-                <div className="budget-fill" style={{ width: `${reservePct}%` }} />
+        <div className="col-flat-flow">
+          <div className="col-flat-section">
+            <div className="col-kpi-grid">
+              <button type="button" className="col-kpi-card clickable-card" onClick={() => setHealthModal("diagnosis")}>
+                <div className="card-heading" style={{ width: "100%" }}>
+                  <span className="metric-label">Estado</span>
+                  <span className={`status ${stateCls}`}>{stateLabel}</span>
+                </div>
+                <strong className="col-kpi-val">{money(effectiveDebtCents)}</strong>
+                <span className="metric-sub-mini">Endividamento · Diagnóstico ›</span>
+              </button>
+              <div className="col-kpi-card">
+                <span className="metric-label">Reserva líquida</span>
+                <strong className="col-kpi-val">{ind.emergencyCoverageMonths === null ? "—" : `${reserveMonths.toFixed(1)} m`}</strong>
+                <div className="budget-bar" role="progressbar" aria-valuenow={reservePct} aria-valuemin={0} aria-valuemax={100}>
+                  <div className="budget-fill" style={{ width: `${reservePct}%` }} />
+                </div>
               </div>
             </div>
           </div>
 
-          {cfg.showCharts !== false && (
-            <div className="col-section-card" data-no-drag>
-              <div className="eyebrow">COMPROMETIMENTO DA RENDA</div>
-              <FinanceChart type="gauge" data={[{ value: commitPct, name: "Comprometido" }]} height={140} />
+          {cfg.showCharts && (
+            <div className="col-flat-section" data-no-drag>
+              <h3 className="col-section-title" style={{ marginBottom: 4 }}>Comprometimento da renda</h3>
+              <FinanceChart type="gauge" data={[{ value: commitPct, name: "Comprometido" }]} height={135} />
             </div>
           )}
 
-          <div className="col-section-card">
-            <div className="card-heading" style={{ marginBottom: 10 }}>
-              <h3 className="col-section-title">Marcos de recuperação</h3>
-              <button type="button" className="pill pill-secondary pill-compact" onClick={() => setHealthModal("milestones")}>
-                Detalhes <ChevronRight size={13} aria-hidden="true" />
-              </button>
+          {cfg.showMilestones && (
+            <div className="col-flat-section">
+              <div className="card-heading" style={{ marginBottom: 10 }}>
+                <h3 className="col-section-title">Marcos de recuperação</h3>
+                <button type="button" className="pill pill-secondary pill-compact" onClick={() => setHealthModal("milestones")}>
+                  Detalhes
+                </button>
+              </div>
+              <div className="col-milestones-list">
+                {[
+                  ["1. Contas cobertas", fmtM(miles.firstCoveredMonth)],
+                  ["2. Início dos aportes", fmtM(miles.firstSavingMonth)],
+                  ["3. Estabilidade", fmtM(miles.firstStableMonth)],
+                ].map(([label, dt]) => (
+                  <div key={label} className="col-milestone-row">
+                    <span>{label}</span>
+                    <strong>{dt}</strong>
+                  </div>
+                ))}
+              </div>
             </div>
-            <div className="col-milestones-list">
-              {[
-                ["1. Contas cobertas", fmtM(miles.firstCoveredMonth)],
-                ["2. Início dos aportes", fmtM(miles.firstSavingMonth)],
-                ["3. Estabilidade", fmtM(miles.firstStableMonth)],
-              ].map(([label, dt]) => (
-                <div key={label} className="col-milestone-row">
-                  <span>{label}</span>
-                  <strong>{dt}</strong>
+          )}
+
+          {cfg.showHabits && (
+            <div className="col-flat-section" style={{ borderBottom: 0 }} data-no-drag>
+              {hasLeaks || hasCuts ? (
+                <>
+                  {hasLeaks && (
+                    <div style={{ marginBottom: hasCuts ? 12 : 0 }}>
+                      <div className="card-heading" style={{ marginBottom: 8 }}>
+                        <h3 className="col-section-title">Onde o dinheiro escoa</h3>
+                        <button type="button" className="pill pill-secondary pill-compact" onClick={() => setHealthModal("dedoduro")}>
+                          Detalhes
+                        </button>
+                      </div>
+                      <FinanceChart
+                        type="hbar"
+                        data={habits.topLeaks.map((l) => ({ name: l.category, value: l.amountCents, sharePct: l.sharePct }))}
+                        height={150}
+                      />
+                    </div>
+                  )}
+                  {hasCuts && (
+                    <div>
+                      <div className="card-heading" style={{ marginBottom: 8 }}>
+                        <h3 className="col-section-title">Potencial de corte</h3>
+                        <button type="button" className="pill pill-secondary pill-compact" onClick={() => setHealthModal("tesouraco")}>
+                          Cortes
+                        </button>
+                      </div>
+                      <span className="status done">
+                        Libera +{money(habits.tesouraco.potentialMonthlySavingsCents)}/mês ({money(habits.tesouraco.potentialAnnualSavingsCents)}/ano)
+                      </span>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="col-quiet-note">
+                  <span>Sem alertas de consumo variável neste período.</span>
                 </div>
-              ))}
+              )}
             </div>
-          </div>
-
-          <div className="col-section-card" data-no-drag>
-            <div className="card-heading" style={{ marginBottom: 8 }}>
-              <h3 className="col-section-title">Onde o dinheiro escoa</h3>
-              <button type="button" className="pill pill-secondary pill-compact" onClick={() => setHealthModal("dedoduro")}>
-                Detalhes
-              </button>
-            </div>
-            {habits.topLeaks.length > 0 ? (
-              <FinanceChart
-                type="hbar"
-                data={habits.topLeaks.map((l) => ({ name: l.category, value: l.amountCents, sharePct: l.sharePct }))}
-                height={155}
-              />
-            ) : (
-              <Empty>Sem despesas no período para mapear.</Empty>
-            )}
-          </div>
-
-          <div className="col-section-card" data-no-drag>
-            <div className="card-heading" style={{ marginBottom: 8 }}>
-              <h3 className="col-section-title">Potencial de corte</h3>
-              <button type="button" className="pill pill-secondary pill-compact" onClick={() => setHealthModal("tesouraco")}>
-                <Scissors size={13} aria-hidden="true" /> Cortes
-              </button>
-            </div>
-            {habits.tesouraco.potentialMonthlySavingsCents > 0 ? (
-              <span className="status done">
-                Libera +{money(habits.tesouraco.potentialMonthlySavingsCents)}/mês ({money(habits.tesouraco.potentialAnnualSavingsCents)}/ano)
-              </span>
-            ) : (
-              <Empty>Consumo enxuto neste período.</Empty>
-            )}
-          </div>
+          )}
         </div>
       );
     }
@@ -858,7 +959,6 @@ export default function DesktopWorkspace({
           const ColIcon = COLUMN_ICONS[colKey] || LayoutGrid;
           const isMenuOpen = openMenuKey === colKey;
           const isCustomizing = customizingKey === colKey;
-          const cfg = columnSettings[colKey] || { showCharts: true, compact: false };
 
           return (
             <section
@@ -964,7 +1064,7 @@ export default function DesktopWorkspace({
                           setOpenMenuKey(null);
                         }}
                       >
-                        <SlidersHorizontal size={14} /> Personalizar conteúdo
+                        <SlidersHorizontal size={14} /> Personalizar coluna
                       </button>
                       <button
                         type="button"
@@ -985,25 +1085,12 @@ export default function DesktopWorkspace({
               {isCustomizing && (
                 <div className="workspace-col-customize" data-no-drag>
                   <div className="card-heading" style={{ marginBottom: 6 }}>
-                    <strong style={{ fontSize: 12 }}>Personalizar {meta.label}</strong>
+                    <strong style={{ fontSize: 12 }}>Blocos visíveis em {meta.label}</strong>
                     <button type="button" className="dialog-close" onClick={() => setCustomizingKey(null)} aria-label="Fechar">
                       <X size={14} />
                     </button>
                   </div>
-                  {(colKey === "overview" || colKey === "patrimony" || colKey === "health") && (
-                    <label className="kc-check" style={{ fontSize: 12 }}>
-                      <input type="checkbox" checked={cfg.showCharts !== false} onChange={() => toggleColumnSetting(colKey, "showCharts")} />
-                      <span className="kc-check-box" aria-hidden="true" />
-                      <span>Exibir gráficos nesta coluna</span>
-                    </label>
-                  )}
-                  {colKey === "budgets" && (
-                    <label className="kc-check" style={{ fontSize: 12 }}>
-                      <input type="checkbox" checked={Boolean(cfg.compact)} onChange={() => toggleColumnSetting(colKey, "compact")} />
-                      <span className="kc-check-box" aria-hidden="true" />
-                      <span>Modo compacto nos limites</span>
-                    </label>
-                  )}
+                  {renderCustomizeOptions(colKey)}
                 </div>
               )}
 
@@ -1038,7 +1125,7 @@ export default function DesktopWorkspace({
               <div>
                 <h2 id="addColTitle">Personalizar workspace</h2>
                 <p className="hint" style={{ margin: "4px 0 0" }}>
-                  Escolha quais áreas financeiras aparecem como colunas no desktop.
+                  Escolha quais áreas financeiras aparecem lado a lado.
                 </p>
               </div>
               <button type="button" className="dialog-close" onClick={() => onToggleAddPopover(false)} aria-label="Fechar">
@@ -1085,7 +1172,7 @@ export default function DesktopWorkspace({
                   onToggleAddPopover(false);
                 }}
               >
-                <RotateCcw size={14} aria-hidden="true" /> Restaurar padrão
+                Restaurar padrão
               </button>
               <button type="button" className="pill pill-primary" onClick={() => onToggleAddPopover(false)}>
                 Concluir

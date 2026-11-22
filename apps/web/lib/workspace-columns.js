@@ -12,18 +12,18 @@ export const DEFAULT_DESKTOP_COLUMNS = ["overview", "movements", "health"];
 export const WORKSPACE_COLUMN_META = {
   overview: {
     key: "overview",
-    label: "Visão geral",
-    description: "Indicadores principais, gráficos e próximos compromissos",
+    label: "Saldos & Cartões",
+    description: "Indicadores de caixa, contas bancárias e cartões de crédito",
   },
   movements: {
     key: "movements",
     label: "Movimentos",
-    description: "Lançamentos recentes, filtros rápidos e busca",
+    description: "Lançamentos do período, filtros rápidos e busca",
   },
   budgets: {
     key: "budgets",
     label: "Orçamentos",
-    description: "Limites mensais, consumo por categoria e alertas",
+    description: "Limites ativos em destaque e categorias sem teto recolhidas",
   },
   planning: {
     key: "planning",
@@ -33,7 +33,7 @@ export const WORKSPACE_COLUMN_META = {
   patrimony: {
     key: "patrimony",
     label: "Meu Capital",
-    description: "Contas, cartões de crédito, pessoas e patrimônio",
+    description: "Patrimônio líquido, carteira de pessoas, bens e evolução",
   },
   health: {
     key: "health",
@@ -102,8 +102,20 @@ export function sanitizeColumnSettings(raw) {
     const val = raw[key];
     if (val && typeof val === "object" && !Array.isArray(val)) {
       out[key] = {
-        showCharts: val.showCharts !== false,
+        showKpis: val.showKpis !== false,
+        showWallets: val.showWallets !== false,
+        showCards: val.showCards !== false,
+        showCharts: key === "overview" ? Boolean(val.showCharts) : val.showCharts !== false,
+        showSummaryStrip: val.showSummaryStrip !== false,
+        showFilters: val.showFilters !== false,
+        expandUncapped: Boolean(val.expandUncapped),
         compact: Boolean(val.compact),
+        showCaixinhas: val.showCaixinhas !== false,
+        showPlans: val.showPlans !== false,
+        showPeople: val.showPeople !== false,
+        showAssets: val.showAssets !== false,
+        showMilestones: val.showMilestones !== false,
+        showHabits: val.showHabits !== false,
       };
     }
   }
