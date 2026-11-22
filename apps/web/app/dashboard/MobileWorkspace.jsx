@@ -244,13 +244,17 @@ export default function MobileWorkspace({
   comparePlanningQuotes,
   computeCapitalPace,
   data,
+  busy = false,
+  applyCutPlan,
   Empty,
   profileContent,
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [fabOpen, setFabOpen] = useState(false);
+  const [planChoiceOpen, setPlanChoiceOpen] = useState(false);
   const [pendingTab, setPendingTab] = useState("expense"); // "expense" | "income"
-  const [mobileSection, setMobileSection] = useState(null); // "wallets" | "cards" | "cuts" | "charts" | "evolution" | null
+  const [planningTab, setPlanningTab] = useState("overview"); // "overview" | "cuts"
+  const [mobileSection, setMobileSection] = useState(null); // "wallets" | "cards" | "charts" | "evolution" | null
   const [selectedCutIds, setSelectedCutIds] = useState({});
   const [txMenuId, setTxMenuId] = useState(null);
   const [cardMenuId, setCardMenuId] = useState(null);
@@ -259,8 +263,10 @@ export default function MobileWorkspace({
 
   const effectiveView = mobileSection || active;
 
-  function navigateTo(tabKey, subView = null) {
+  function navigateTo(tabKey, subView = null, nextPlanningTab = null) {
     setMobileSection(subView);
+    if (nextPlanningTab) setPlanningTab(nextPlanningTab);
+    else if (tabKey === "planning" && !subView) setPlanningTab("overview");
     setTab(tabKey);
     setDrawerOpen(false);
     setTxMenuId(null);
@@ -314,30 +320,63 @@ export default function MobileWorkspace({
     return checkingWallets[0]?.name || wallets[0]?.name || "Nubank";
   }, [pendingTab, pendingExpenseRows, pendingIncomeRows, wallets, checkingWallets]);
 
-  // Year-end projection (31/12) with and without cuts
+  // Year-end projection (31/12) with user-selected cuts (no automatic category cut suggestions)
   const monthsRemainingInYear = useMemo(() => {
     const curMonthNum = Number((today || "2026-11-22").slice(5, 7)) || 11;
     return Math.max(1, 12 - curMonthNum + 1);
   }, [today]);
 
-  const potentialMonthlyCutCents = habits?.tesouraco?.potentialMonthlySavingsCents || 0;
-  const potentialYearEndGainFromCutsCents = potentialMonthlyCutCents * monthsRemainingInYear;
+  const recurringCutCandidates = useMemo(
+    () =>
+      (habits?.recurringItems || []).map((r) => ({
+        key: `rec:${r.id}`,
+        kind: "recurring",
+        ruleId: r.id,
+        description: r.description,
+        category: r.category || "Outros",
+        monthlyCents: cents(r.monthlyCents),
+      })),
+    [habits, cents]
+  );
 
-  const recurringCutCandidates = habits?.recurringItems || [];
-  const leakCutCandidates = habits?.topLeaks || [];
+  const pendingCutCandidates = useMemo(() => {
+    const seen = new Set();
+    const list = [];
+    for (const t of pendingExpenseRows) {
+      if (t.series_id && recurringCutCandidates.some((r) => r.ruleId === t.series_id)) continue;
+      const dedupKey = t.series_id || t.id;
+      if (seen.has(dedupKey)) continue;
+      seen.add(dedupKey);
+      const rem = Math.max(0, cents(t.amount_cents) - cents(t.settled_cents));
+      if (rem <= 0) continue;
+      list.push({
+        key: `tit:${t.id}`,
+        kind: "title",
+        titleId: t.id,
+        isSeries: Boolean(t.series_id || t.installment_total > 1),
+        description: t.description,
+        category: t.category || "Outros",
+        monthlyCents: rem,
+        dueOn: t.due_on,
+      });
+    }
+    return list;
+  }, [pendingExpenseRows, recurringCutCandidates, cents]);
 
-  const interactiveMonthlyCutCents = useMemo(() => {
-    const activeKeys = Object.keys(selectedCutIds).filter((k) => selectedCutIds[k]);
-    if (activeKeys.length === 0) return potentialMonthlyCutCents;
-    let sum = 0;
-    for (const r of recurringCutCandidates) {
-      if (selectedCutIds[`rec:${r.id}`]) sum += cents(r.monthlyCents);
-    }
-    for (const l of leakCutCandidates) {
-      if (selectedCutIds[`leak:${l.category}`]) sum += Math.round(cents(l.amountCents) * 0.25);
-    }
-    return sum;
-  }, [selectedCutIds, potentialMonthlyCutCents, recurringCutCandidates, leakCutCandidates, cents]);
+  const allCutCandidates = useMemo(
+    () => [...recurringCutCandidates, ...pendingCutCandidates],
+    [recurringCutCandidates, pendingCutCandidates]
+  );
+
+  const selectedCutItems = useMemo(
+    () => allCutCandidates.filter((item) => Boolean(selectedCutIds[item.key])),
+    [allCutCandidates, selectedCutIds]
+  );
+
+  const interactiveMonthlyCutCents = useMemo(
+    () => selectedCutItems.reduce((sum, item) => sum + cents(item.monthlyCents), 0),
+    [selectedCutItems, cents]
+  );
 
   const yearEndBaseCents = useMemo(() => {
     const decMonth = (months || []).find((m) => m.month.endsWith("-12")) || (months || [])[months.length - 1];
@@ -349,16 +388,16 @@ export default function MobileWorkspace({
 
   const yearEndWithCutsCents = yearEndBaseCents + interactiveMonthlyCutCents * monthsRemainingInYear;
 
-  // Savings / Cut Percentage for the Semicircle Gauge
+  // Savings Percentage for the Semicircle Gauge
   const totalIncomeConsideredCents = cents(summary?.receivable?.total);
   const totalExpenseConsideredCents = cents(summary?.payable?.total);
-  const netMonthSavingsCents = Math.max(0, totalIncomeConsideredCents - totalExpenseConsideredCents);
+  const currentMonthlyFlowCents = totalIncomeConsideredCents - totalExpenseConsideredCents;
+  const projectedFlowAfterCutsCents = currentMonthlyFlowCents + interactiveMonthlyCutCents;
+  const netMonthSavingsCents = Math.max(0, currentMonthlyFlowCents);
   const monthSavingsPct =
     totalIncomeConsideredCents > 0
       ? Math.max(0, Math.round((netMonthSavingsCents / totalIncomeConsideredCents) * 100))
-      : habits?.totalExpenseCents > 0 && potentialMonthlyCutCents > 0
-        ? Math.round((potentialMonthlyCutCents / habits.totalExpenseCents) * 100)
-        : 0;
+      : 0;
 
   const cashflowMaxCents = Math.max(
     10000,
@@ -493,11 +532,11 @@ export default function MobileWorkspace({
     if (effectiveView === "charts") {
       return { title: "Gráficos", subtitle: null };
     }
-    if (effectiveView === "cuts") {
-      return { title: "Cortes & Fim do Ano", subtitle: `Em 31/12: ${money(yearEndWithCutsCents)}` };
-    }
     if (effectiveView === "planning") {
-      return { title: "Objetivos & Caixinhas", subtitle: money(capitalBalanceCents) };
+      return {
+        title: "Planejamentos",
+        subtitle: planningTab === "cuts" ? "Planejar cortes no fluxo" : money(capitalBalanceCents),
+      };
     }
     if (effectiveView === "health") {
       return { title: "Endividamento & Saúde", subtitle: `Dívida: ${debtDisplay}` };
@@ -522,7 +561,7 @@ export default function MobileWorkspace({
     checkingBalanceCents,
     capitalBalanceCents,
     allocatedBudgetCents,
-    yearEndWithCutsCents,
+    planningTab,
     debtDisplay,
     display,
     netWorthAtDateCents,
@@ -605,10 +644,10 @@ export default function MobileWorkspace({
                 <button
                   type="button"
                   className="kc-mob-icon-btn"
-                  aria-label="Abrir menu lateral"
-                  onClick={() => setDrawerOpen(true)}
+                  aria-label="Voltar para o início"
+                  onClick={() => navigateTo("overview", null)}
                 >
-                  <Menu size={23} />
+                  <ChevronLeft size={24} />
                 </button>
                 <div className="kc-mob-topbar-titles">
                   <h1>{headerConfig.title}</h1>
@@ -737,12 +776,12 @@ export default function MobileWorkspace({
               <button
                 type="button"
                 className="kc-mob-hero-col"
-                onClick={() => navigateTo("health", "cuts")}
+                onClick={() => navigateTo("planning", null, "cuts")}
               >
                 <strong className={yearEndWithCutsCents > yearEndBaseCents ? "is-pos" : ""}>
                   {money(yearEndWithCutsCents)}
                 </strong>
-                <span>31/12 c/ cortes</span>
+                <span>{interactiveMonthlyCutCents > 0 ? "31/12 c/ cortes" : "Projeção 31/12"}</span>
               </button>
             </div>
           </section>
@@ -937,15 +976,15 @@ export default function MobileWorkspace({
               </div>
             </section>
 
-            {/* Card 3: Economia Mensal & Potencial até 31/12 com Cortes */}
-            <section className="kc-mob-card" aria-label="Economia mensal e potencial de cortes até o fim do ano">
+            {/* Card 3: Economia Mensal & Planejador de Cortes até 31/12 */}
+            <section className="kc-mob-card" aria-label="Economia mensal e planejamento de cortes até 31/12">
               <div className="kc-mob-card-head">
-                <h2>Economia e cortes até 31/12</h2>
+                <h2>Economia e metas até 31/12</h2>
                 <button
                   type="button"
                   className="kc-mob-dots-btn"
-                  aria-label="Simular cortes no Tesouraço"
-                  onClick={() => navigateTo("health", "cuts")}
+                  aria-label="Planejar cortes no fluxo"
+                  onClick={() => navigateTo("planning", null, "cuts")}
                 >
                   <SlidersHorizontal size={18} />
                 </button>
@@ -955,8 +994,8 @@ export default function MobileWorkspace({
                 <div className="kc-mob-economy-left">
                   <SemicircleSavingsGauge pct={monthSavingsPct} />
                   <div className="kc-mob-economy-saved">
-                    <strong>{money(potentialYearEndGainFromCutsCents > 0 ? potentialYearEndGainFromCutsCents : netMonthSavingsCents)}</strong>
-                    <span>{potentialYearEndGainFromCutsCents > 0 ? "Potencial c/ cortes (31/12)" : "Valor economizado"}</span>
+                    <strong>{money(interactiveMonthlyCutCents > 0 ? yearEndWithCutsCents : netMonthSavingsCents)}</strong>
+                    <span>{interactiveMonthlyCutCents > 0 ? "Em 31/12 c/ cortes" : "Valor economizado"}</span>
                   </div>
                 </div>
 
@@ -998,14 +1037,16 @@ export default function MobileWorkspace({
                   <button
                     type="button"
                     className="kc-mob-economy-metric"
-                    onClick={() => navigateTo("health", "cuts")}
+                    onClick={() => navigateTo("planning", null, "cuts")}
                   >
                     <span className="kc-mob-econ-circle is-amber">
                       <Scissors size={15} />
                     </span>
                     <div>
-                      <span>Se cortar excessos</span>
-                      <strong className="is-amber">+{money(potentialMonthlyCutCents)}/mês ›</strong>
+                      <span>Planejar cortes</span>
+                      <strong className="is-amber">
+                        {interactiveMonthlyCutCents > 0 ? `+${money(interactiveMonthlyCutCents)}/mês ›` : "Simular fluxo ›"}
+                      </strong>
                     </div>
                   </button>
                 </div>
@@ -1242,115 +1283,6 @@ export default function MobileWorkspace({
                 </div>
               ) : (
                 <Empty>Nenhum lançamento registrado neste período.</Empty>
-              )}
-            </section>
-          </div>
-        )}
-
-        {/* ================= VISTA 2: CORTES & FIM DO ANO (TESE CENTRAL KUANTOCONTA) ================= */}
-        {effectiveView === "cuts" && (
-          <div className="kc-mob-stack">
-            <section className="kc-mob-card kc-mob-cuts-hero">
-              <span className="eyebrow">SIMULADOR DE FIM DE ANO (31/12)</span>
-              <div className="kc-mob-cuts-compare">
-                <div className="kc-mob-cuts-box">
-                  <span>Quanto você deve</span>
-                  <strong className="is-red">{debtDisplay}</strong>
-                  <small>Compromissos + dívidas</small>
-                </div>
-                <div className="kc-mob-cuts-box is-highlight">
-                  <span>Em 31/12 com cortes</span>
-                  <strong className="is-green">{money(yearEndWithCutsCents)}</strong>
-                  <small>+{money(interactiveMonthlyCutCents * monthsRemainingInYear)} acumulados</small>
-                </div>
-              </div>
-              <p className="kc-mob-cuts-summary">
-                Mantendo os gastos atuais, sua projeção para 31/12 é de <strong>{money(yearEndBaseCents)}</strong>.
-                Se aplicar os cortes abaixo nos próximos <strong>{monthsRemainingInYear} meses</strong>, você libera{" "}
-                <strong>+{money(interactiveMonthlyCutCents)}/mês</strong>.
-              </p>
-            </section>
-
-            <section className="kc-mob-card">
-              <div className="kc-mob-card-head">
-                <div>
-                  <h2>1. Tesouraço em recorrências</h2>
-                  <p className="hint" style={{ margin: "2px 0 0" }}>
-                    Toque nos itens para simular o impacto de cortá-los até 31/12
-                  </p>
-                </div>
-              </div>
-              {recurringCutCandidates.length > 0 ? (
-                <div className="kc-mob-cuts-list">
-                  {recurringCutCandidates.map((r) => {
-                    const key = `rec:${r.id}`;
-                    const checked = Boolean(selectedCutIds[key]);
-                    return (
-                      <button
-                        type="button"
-                        key={r.id}
-                        className={`kc-mob-cut-item${checked ? " is-selected" : ""}`}
-                        onClick={() => setSelectedCutIds((old) => ({ ...old, [key]: !old[key] }))}
-                      >
-                        <span className={`kc-mob-cut-check${checked ? " checked" : ""}`}>
-                          {checked && <Check size={14} strokeWidth={3} />}
-                        </span>
-                        <div className="kc-mob-cut-info">
-                          <strong>{r.description}</strong>
-                          <span>{r.category} • Fixa mensal</span>
-                        </div>
-                        <div className="kc-mob-cut-vals">
-                          <strong>+{money(r.monthlyCents)}/mês</strong>
-                          <span>+{money(r.monthlyCents * monthsRemainingInYear)} até 31/12</span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : (
-                <Empty>Nenhuma assinatura ou despesa fixa supérflua detectada.</Empty>
-              )}
-            </section>
-
-            <section className="kc-mob-card">
-              <div className="kc-mob-card-head">
-                <div>
-                  <h2>2. Reduzir 25% onde mais escoa</h2>
-                  <p className="hint" style={{ margin: "2px 0 0" }}>
-                    Categorias que mais consomem seu orçamento neste mês
-                  </p>
-                </div>
-              </div>
-              {leakCutCandidates.length > 0 ? (
-                <div className="kc-mob-cuts-list">
-                  {leakCutCandidates.map((l) => {
-                    const key = `leak:${l.category}`;
-                    const checked = Boolean(selectedCutIds[key]);
-                    const trimMonth = Math.round(cents(l.amountCents) * 0.25);
-                    return (
-                      <button
-                        type="button"
-                        key={l.category}
-                        className={`kc-mob-cut-item${checked ? " is-selected" : ""}`}
-                        onClick={() => setSelectedCutIds((old) => ({ ...old, [key]: !old[key] }))}
-                      >
-                        <span className={`kc-mob-cut-check${checked ? " checked" : ""}`}>
-                          {checked && <Check size={14} strokeWidth={3} />}
-                        </span>
-                        <div className="kc-mob-cut-info">
-                          <strong>{l.category} ({l.sharePct}%)</strong>
-                          <span>Gasto atual: {money(l.amountCents)}/mês</span>
-                        </div>
-                        <div className="kc-mob-cut-vals">
-                          <strong>+{money(trimMonth)}/mês</strong>
-                          <span>+{money(trimMonth * monthsRemainingInYear)} até 31/12</span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : (
-                <Empty>Lance suas despesas para descobrir onde o dinheiro escoa.</Empty>
               )}
             </section>
           </div>
@@ -1942,147 +1874,334 @@ export default function MobileWorkspace({
           </div>
         )}
 
-        {/* ================= VISTA 7: OBJETIVOS & CAIXINHAS (PLANNING) ================= */}
+        {/* ================= VISTA 7: PLANEJAMENTOS (CAIXINHAS, COMPRAS & PLANEJADOR DE CORTES) ================= */}
         {effectiveView === "planning" && (
           <div className="kc-mob-stack">
-            <div className="kc-mob-ov-strip">
-              <div className="kc-mob-strip-pill">
-                <span>Em Caixinhas</span>
-                <strong>{summary.knownCash ? money(capitalBalanceCents) : "R$ 0,00"}</strong>
+            {/* Cards 2x2 no mesmo padrão visual da Visão Geral */}
+            <section className="kc-mob-section" aria-label="Resumo de planejamentos">
+              <div className="kc-mob-overview-grid">
+                <button
+                  type="button"
+                  className="kc-mob-ov-card"
+                  onClick={() => setPlanningTab("overview")}
+                >
+                  <span className="kc-mob-ov-icon is-orange">
+                    <PiggyBank size={19} />
+                  </span>
+                  <div className="kc-mob-ov-info">
+                    <strong className="kc-mob-ov-val">
+                      {summary.knownCash ? money(capitalBalanceCents) : "R$ 0,00"}
+                    </strong>
+                    <span className="kc-mob-ov-label">Em caixinhas</span>
+                    <div className="kc-mob-ov-sub">
+                      <span>Reserva + Metas</span>
+                      <strong>{capitalGoals.length} {capitalGoals.length === 1 ? "caixinha" : "caixinhas"}</strong>
+                    </div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  className="kc-mob-ov-card"
+                  onClick={() => setPlanningTab("overview")}
+                >
+                  <span className="kc-mob-ov-icon is-green">
+                    <ArrowUp size={19} />
+                  </span>
+                  <div className="kc-mob-ov-info">
+                    <strong className="kc-mob-ov-val">{money(reservedThisMonthCents)}</strong>
+                    <span className="kc-mob-ov-label">Guardados mês</span>
+                    <div className="kc-mob-ov-sub">
+                      <span>No período</span>
+                      <strong>{purchaseGoals.length} {purchaseGoals.length === 1 ? "plano" : "planos"}</strong>
+                    </div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  className="kc-mob-ov-card"
+                  onClick={() => openReserveCaixinha()}
+                >
+                  <span className="kc-mob-ov-icon is-blue">
+                    <TrendingUp size={18} />
+                  </span>
+                  <div className="kc-mob-ov-info">
+                    <strong className="kc-mob-ov-val">{money(safeContribution?.safeContributionCents || 0)}</strong>
+                    <span className="kc-mob-ov-label">Aporte</span>
+                    <div className="kc-mob-ov-sub">
+                      <span>Sugestão segura</span>
+                      <strong>Sem faltar caixa</strong>
+                    </div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  className="kc-mob-ov-card"
+                  onClick={() => setPlanningTab("cuts")}
+                >
+                  <span className="kc-mob-ov-icon is-amber">
+                    <Scissors size={18} />
+                  </span>
+                  <div className="kc-mob-ov-info">
+                    <strong className="kc-mob-ov-val">
+                      {interactiveMonthlyCutCents > 0 ? `+${money(interactiveMonthlyCutCents)}` : "Simular"}
+                    </strong>
+                    <span className="kc-mob-ov-label">Planejar cortes</span>
+                    <div className="kc-mob-ov-sub">
+                      <span>Em 31/12</span>
+                      <strong>{money(yearEndWithCutsCents)}</strong>
+                    </div>
+                  </div>
+                </button>
               </div>
-              <div className="kc-mob-strip-pill">
-                <span>Guardado mês</span>
-                <strong className="is-green">{money(reservedThisMonthCents)}</strong>
-              </div>
-              <div className="kc-mob-strip-pill">
-                <span>Aporte seguro</span>
-                <strong>{money(safeContribution?.safeContributionCents || 0)}</strong>
-              </div>
+            </section>
+
+            {/* Abas internas de Planejamentos */}
+            <div className="kc-mob-quick-filter-pills" role="tablist" aria-label="Modos de planejamento">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={planningTab === "overview"}
+                className={`kc-mob-qpill${planningTab === "overview" ? " active" : ""}`}
+                onClick={() => setPlanningTab("overview")}
+              >
+                Caixinhas & Planos
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={planningTab === "cuts"}
+                className={`kc-mob-qpill${planningTab === "cuts" ? " active" : ""}`}
+                onClick={() => setPlanningTab("cuts")}
+              >
+                Planejar cortes
+              </button>
             </div>
 
-            <div className="kc-mob-quick-actions-row">
-              <button type="button" className="kc-mob-qbtn" onClick={() => openReserveCaixinha()}>
-                <PiggyBank size={18} />
-                <span>Guardar</span>
-              </button>
-              <button type="button" className="kc-mob-qbtn" onClick={() => open("capital_goal")}>
-                <Plus size={18} />
-                <span>Nova caixinha</span>
-              </button>
-              <button type="button" className="kc-mob-qbtn is-accent" onClick={() => open("goal_sim")}>
-                <Compass size={18} />
-                <span>Planejar compra</span>
-              </button>
-            </div>
-
-            <section className="kc-mob-card">
-              <div className="kc-mob-card-head">
-                <h2>Caixinhas ({capitalGoals.length})</h2>
-              </div>
-              {capitalGoals.length > 0 ? (
-                <div className="budget-list">
-                  {capitalGoals.map((g) => {
-                    const saved = caixinhaBalance(g);
-                    const bankWallet =
-                      checkingWallets.find((w) => w.id === g.parent_wallet_id) ||
-                      wallets.find((w) => w.id === g.parent_wallet_id);
-                    const pace = computeCapitalPace({
-                      targetCents: cents(g.target_cents),
-                      targetDate: isoDate(g.desired_on) || today.slice(0, 4) + "-12-31",
-                      currentCapitalCents: saved,
-                      monthlyContributionCents: capitalBudget?.limitCents || 0,
-                      today,
-                    });
-                    return (
-                      <button
-                        type="button"
-                        key={g.id}
-                        className="budget-card clickable-card"
-                        style={{ width: "100%" }}
-                        onClick={() =>
-                          setSelectedCaixinha({
-                            raw: g,
-                            pace,
-                            saved,
-                            bankName: bankWallet?.name || "Sem banco",
-                          })
-                        }
-                      >
-                        <div className="budget-row-top">
-                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                            <BankIcon name={bankWallet?.name || g.title} size={34} />
-                            <div>
-                              <strong>{g.title}</strong>
-                              <div className="hint">{bankWallet ? bankWallet.name : "Sem banco"}</div>
+            {planningTab === "overview" ? (
+              <>
+                <section className="kc-mob-card">
+                  <div className="kc-mob-card-head">
+                    <h2>Caixinhas ({capitalGoals.length})</h2>
+                  </div>
+                  {capitalGoals.length > 0 ? (
+                    <div className="budget-list">
+                      {capitalGoals.map((g) => {
+                        const saved = caixinhaBalance(g);
+                        const bankWallet =
+                          checkingWallets.find((w) => w.id === g.parent_wallet_id) ||
+                          wallets.find((w) => w.id === g.parent_wallet_id);
+                        const pace = computeCapitalPace({
+                          targetCents: cents(g.target_cents),
+                          targetDate: isoDate(g.desired_on) || today.slice(0, 4) + "-12-31",
+                          currentCapitalCents: saved,
+                          monthlyContributionCents: capitalBudget?.limitCents || 0,
+                          today,
+                        });
+                        return (
+                          <button
+                            type="button"
+                            key={g.id}
+                            className="budget-card clickable-card"
+                            style={{ width: "100%" }}
+                            onClick={() =>
+                              setSelectedCaixinha({
+                                raw: g,
+                                pace,
+                                saved,
+                                bankName: bankWallet?.name || "Sem banco",
+                              })
+                            }
+                          >
+                            <div className="budget-row-top">
+                              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                <BankIcon name={bankWallet?.name || g.title} size={34} />
+                                <div>
+                                  <strong>{g.title}</strong>
+                                  <div className="hint">{bankWallet ? bankWallet.name : "Sem banco"}</div>
+                                </div>
+                              </div>
+                              <div style={{ textAlign: "right" }}>
+                                <strong>{money(saved)}</strong>
+                                <div className="hint">Meta: {money(pace.targetCents)}</div>
+                              </div>
                             </div>
-                          </div>
-                          <div style={{ textAlign: "right" }}>
-                            <strong>{money(saved)}</strong>
-                            <div className="hint">Meta: {money(pace.targetCents)}</div>
-                          </div>
-                        </div>
-                        <div className="budget-bar">
-                          <div className="budget-fill" style={{ width: `${pace.progressPct}%` }} />
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : (
-                <Empty>Crie uma Caixinha para separar sua reserva ou objetivo.</Empty>
-              )}
-            </section>
+                            <div className="budget-bar">
+                              <div className="budget-fill" style={{ width: `${pace.progressPct}%` }} />
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <Empty>Crie uma Caixinha no botão + para separar sua reserva ou objetivo.</Empty>
+                  )}
+                </section>
 
-            <section className="kc-mob-card">
-              <div className="kc-mob-card-head">
-                <h2>Planejamentos ({purchaseGoals.length})</h2>
-              </div>
-              {purchaseGoals.length > 0 ? (
-                <div className="kc-mob-stack" style={{ gap: 10 }}>
-                  {purchaseGoals.map((g, idx) => {
-                    const comparison = comparePlanningQuotes(data || {}, g, { today });
-                    const chosenQ = comparison.quotes.find((q) => q.isChosen) || comparison.winner;
-                    const sim = chosenQ?.sim || comparison.winner?.sim;
-                    const pType = g.plan_type || "purchase";
-                    const TypeIcon = pType === "trip" ? Plane : pType === "shopping_list" ? ListChecks : Compass;
-                    return (
+                <section className="kc-mob-card">
+                  <div className="kc-mob-card-head">
+                    <h2>Planejamentos de compra ({purchaseGoals.length})</h2>
+                  </div>
+                  {purchaseGoals.length > 0 ? (
+                    <div className="kc-mob-stack" style={{ gap: 10 }}>
+                      {purchaseGoals.map((g, idx) => {
+                        const comparison = comparePlanningQuotes(data || {}, g, { today });
+                        const chosenQ = comparison.quotes.find((q) => q.isChosen) || comparison.winner;
+                        const sim = chosenQ?.sim || comparison.winner?.sim;
+                        const pType = g.plan_type || "purchase";
+                        const TypeIcon = pType === "trip" ? Plane : pType === "shopping_list" ? ListChecks : Compass;
+                        return (
+                          <button
+                            type="button"
+                            key={g.id || idx}
+                            className="goal-bento-card"
+                            onClick={() => setSelectedGoal({ raw: g, sim, comparison })}
+                          >
+                            <div className="goal-bento-top">
+                              <span className="goal-bento-icon">
+                                <TypeIcon size={18} />
+                              </span>
+                              <span className={`status ${sim?.isFeasible ? "done" : sim?.firstFeasibleDate ? "partial" : "late"}`}>
+                                {sim?.isFeasible
+                                  ? "Viável na data"
+                                  : sim?.firstFeasibleDate
+                                    ? `A partir de ${fmtDate(sim.firstFeasibleDate)}`
+                                    : "Ainda não cabe"}
+                              </span>
+                            </div>
+                            <strong>{g.title}</strong>
+                            <div className="goal-bento-meta">
+                              <span>{money(cents(g.target_cents))}</span>
+                              <small>
+                                {comparison.hasComparison
+                                  ? `${comparison.quotes.length} cotações`
+                                  : g.installment_count > 1
+                                    ? `${g.installment_count}x`
+                                    : "À vista"}
+                              </small>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <Empty>Toque no + e escolha Planejar para simular compras, viagens ou cortes.</Empty>
+                  )}
+                </section>
+              </>
+            ) : (
+              <>
+                <section className="kc-mob-card kc-mob-cuts-hero">
+                  <span className="eyebrow">SIMULADOR DE FLUXO APÓS CORTES</span>
+                  <div className="kc-mob-cuts-compare">
+                    <div className="kc-mob-cuts-box">
+                      <span>Fluxo mensal atual</span>
+                      <strong className={currentMonthlyFlowCents < 0 ? "is-red" : ""}>
+                        {money(currentMonthlyFlowCents)}
+                      </strong>
+                      <small>31/12 atual: {money(yearEndBaseCents)}</small>
+                    </div>
+                    <div className="kc-mob-cuts-box is-highlight">
+                      <span>Fluxo após cortes</span>
+                      <strong className={projectedFlowAfterCutsCents < 0 ? "is-red" : "is-green"}>
+                        {money(projectedFlowAfterCutsCents)}
+                      </strong>
+                      <small>Em 31/12: {money(yearEndWithCutsCents)}</small>
+                    </div>
+                  </div>
+                  <p className="kc-mob-cuts-summary">
+                    Escolha abaixo exatamente quais contas ou recorrências você deseja encerrar.{" "}
+                    {selectedCutItems.length > 0 ? (
+                      <>
+                        Com <strong>{selectedCutItems.length}</strong> corte(s) selecionado(s), seu fluxo ganha{" "}
+                        <strong>+{money(interactiveMonthlyCutCents)}/mês</strong>.
+                      </>
+                    ) : (
+                      "Nenhum corte selecionado ainda — o controle é 100% seu."
+                    )}
+                  </p>
+                </section>
+
+                <section className="kc-mob-card">
+                  <div className="kc-mob-card-head">
+                    <div>
+                      <h2>Selecione o que deseja cortar</h2>
+                      <p className="hint" style={{ margin: "2px 0 0" }}>
+                        Marque as contas ou recorrências que você quer simular e encerrar
+                      </p>
+                    </div>
+                  </div>
+                  {allCutCandidates.length > 0 ? (
+                    <div className="kc-mob-cuts-list">
+                      {allCutCandidates.map((item) => {
+                        const checked = Boolean(selectedCutIds[item.key]);
+                        return (
+                          <button
+                            type="button"
+                            key={item.key}
+                            className={`kc-mob-cut-item${checked ? " is-selected" : ""}`}
+                            onClick={() =>
+                              setSelectedCutIds((old) => ({ ...old, [item.key]: !old[item.key] }))
+                            }
+                          >
+                            <span className={`kc-mob-cut-check${checked ? " checked" : ""}`}>
+                              {checked && <Check size={14} strokeWidth={3} />}
+                            </span>
+                            <div className="kc-mob-cut-info">
+                              <strong>{item.description}</strong>
+                              <span>
+                                {item.category} •{" "}
+                                {item.kind === "recurring"
+                                  ? "Recorrência mensal"
+                                  : `Venc. ${fmtDate(item.dueOn)}`}
+                              </span>
+                            </div>
+                            <div className="kc-mob-cut-vals">
+                              <strong>+{money(item.monthlyCents)}/mês</strong>
+                              <span>+{money(item.monthlyCents * monthsRemainingInYear)} até 31/12</span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <Empty>Nenhuma recorrência ou conta pendente disponível para corte.</Empty>
+                  )}
+
+                  {selectedCutItems.length > 0 && (
+                    <div style={{ marginTop: 14, display: "grid", gap: 8 }}>
                       <button
                         type="button"
-                        key={g.id || idx}
-                        className="goal-bento-card"
-                        onClick={() => setSelectedGoal({ raw: g, sim, comparison })}
+                        className="pill pill-primary"
+                        style={{ width: "100%", justifyContent: "center" }}
+                        disabled={busy}
+                        onClick={async () => {
+                          if (!applyCutPlan) return;
+                          await applyCutPlan(selectedCutItems);
+                          setSelectedCutIds({});
+                        }}
                       >
-                        <div className="goal-bento-top">
-                          <span className="goal-bento-icon">
-                            <TypeIcon size={18} />
-                          </span>
-                          <span className={`status ${sim?.isFeasible ? "done" : sim?.firstFeasibleDate ? "partial" : "late"}`}>
-                            {sim?.isFeasible
-                              ? "Viável na data"
-                              : sim?.firstFeasibleDate
-                                ? `A partir de ${fmtDate(sim.firstFeasibleDate)}`
-                                : "Ainda não cabe"}
-                          </span>
-                        </div>
-                        <strong>{g.title}</strong>
-                        <div className="goal-bento-meta">
-                          <span>{money(cents(g.target_cents))}</span>
-                          <small>
-                            {comparison.hasComparison
-                              ? `${comparison.quotes.length} cotações`
-                              : g.installment_count > 1
-                                ? `${g.installment_count}x`
-                                : "À vista"}
-                          </small>
-                        </div>
+                        <Scissors size={16} />
+                        <span>
+                          {busy
+                            ? "Efetivando cortes..."
+                            : `Efetivar planejamento (${selectedCutItems.length} ${selectedCutItems.length === 1 ? "corte" : "cortes"})`}
+                        </span>
                       </button>
-                    );
-                  })}
-                </div>
-              ) : (
-                <Empty>Simule compras, viagens ou listas antes de gastar.</Empty>
-              )}
-            </section>
+                      <button
+                        type="button"
+                        className="light-button"
+                        onClick={() => setSelectedCutIds({})}
+                      >
+                        Limpar seleção
+                      </button>
+                    </div>
+                  )}
+                </section>
+              </>
+            )}
           </div>
         )}
 
@@ -2142,19 +2261,17 @@ export default function MobileWorkspace({
 
             <section className="kc-mob-card">
               <div className="kc-mob-card-head">
-                <h2>Potencial de corte</h2>
+                <h2>Planejar cortes no fluxo</h2>
                 <button
                   type="button"
                   className="pill pill-primary pill-compact"
-                  onClick={() => navigateTo("health", "cuts")}
+                  onClick={() => navigateTo("planning", null, "cuts")}
                 >
-                  Abrir simulador 31/12
+                  Abrir planejador
                 </button>
               </div>
               <p className="hint" style={{ margin: 0 }}>
-                Você pode economizar até <strong>{money(potentialMonthlyCutCents)}/mês</strong> (
-                <strong>+{money(potentialYearEndGainFromCutsCents)}</strong> até o fim do ano) ajustando recorrências e
-                vazamentos.
+                Escolha exatamente quais contas ou recorrências deseja cortar para avaliar o impacto no seu fluxo até 31/12.
               </p>
             </section>
           </div>
@@ -2683,16 +2800,7 @@ export default function MobileWorkspace({
                 <span>Cartões de crédito</span>
               </button>
 
-              <div className="kc-mob-drawer-section-label">Planejar & Cortar</div>
-
-              <button
-                type="button"
-                className={`kc-mob-drawer-item${effectiveView === "cuts" ? " active" : ""}`}
-                onClick={() => navigateTo("health", "cuts")}
-              >
-                <Scissors size={20} />
-                <span>Cortes & Fim do Ano</span>
-              </button>
+              <div className="kc-mob-drawer-section-label">Planejar</div>
 
               <button
                 type="button"
@@ -2706,10 +2814,10 @@ export default function MobileWorkspace({
               <button
                 type="button"
                 className={`kc-mob-drawer-item${effectiveView === "planning" ? " active" : ""}`}
-                onClick={() => navigateTo("planning", null)}
+                onClick={() => navigateTo("planning", null, "overview")}
               >
                 <Target size={20} />
-                <span>Objetivos & Caixinhas</span>
+                <span>Planejamentos</span>
               </button>
 
               <div className="kc-mob-drawer-section-label">Analisar</div>
@@ -2763,129 +2871,226 @@ export default function MobileWorkspace({
           }}
         >
           <div className="kc-mob-speed-dial" role="menu" aria-label="Adicionar lançamento">
-            {effectiveView === "cards" && (
+            {effectiveView === "planning" ? (
+              <>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="kc-mob-sd-item"
+                  onClick={() => {
+                    setFabOpen(false);
+                    open("capital_goal");
+                  }}
+                >
+                  <span className="kc-mob-sd-icon is-orange">
+                    <Plus size={19} strokeWidth={2.5} />
+                  </span>
+                  <strong>Nova caixinha</strong>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="kc-mob-sd-item"
+                  onClick={() => {
+                    setFabOpen(false);
+                    openReserveCaixinha();
+                  }}
+                >
+                  <span className="kc-mob-sd-icon is-green">
+                    <PiggyBank size={18} />
+                  </span>
+                  <strong>Guardar</strong>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="kc-mob-sd-item"
+                  onClick={() => {
+                    setFabOpen(false);
+                    setPlanChoiceOpen(true);
+                  }}
+                >
+                  <span className="kc-mob-sd-icon is-amber">
+                    <Compass size={18} />
+                  </span>
+                  <strong>Planejar</strong>
+                </button>
+              </>
+            ) : (
+              <>
+                {effectiveView === "cards" && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="kc-mob-sd-item"
+                    onClick={() => {
+                      setFabOpen(false);
+                      open("credit_card");
+                    }}
+                  >
+                    <span className="kc-mob-sd-icon is-orange">
+                      <CreditCard size={18} />
+                    </span>
+                    <strong>Cartão de Crédito</strong>
+                  </button>
+                )}
+
+                {effectiveView === "budgets" && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="kc-mob-sd-item"
+                    onClick={() => {
+                      setFabOpen(false);
+                      setActionMenu("budget_pick");
+                    }}
+                  >
+                    <span className="kc-mob-sd-icon is-orange">
+                      <Percent size={18} />
+                    </span>
+                    <strong>Novo Orçamento</strong>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="kc-mob-sd-item"
+                  onClick={() => {
+                    setFabOpen(false);
+                    open("title", null, "bill");
+                  }}
+                >
+                  <span className="kc-mob-sd-icon is-red">
+                    <Minus size={19} strokeWidth={2.5} />
+                  </span>
+                  <strong>A pagar</strong>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="kc-mob-sd-item"
+                  onClick={() => {
+                    setFabOpen(false);
+                    open("income", null, "bill");
+                  }}
+                >
+                  <span className="kc-mob-sd-icon is-green">
+                    <Plus size={19} strokeWidth={2.5} />
+                  </span>
+                  <strong>A receber</strong>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="kc-mob-sd-item"
+                  onClick={() => {
+                    setFabOpen(false);
+                    open("card_expense", null, "bill");
+                  }}
+                >
+                  <span className="kc-mob-sd-icon is-orange">
+                    <CreditCard size={18} />
+                  </span>
+                  <strong>Despesa cartão</strong>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="kc-mob-sd-item"
+                  onClick={() => {
+                    setFabOpen(false);
+                    open("title", null, "lend");
+                  }}
+                >
+                  <span className="kc-mob-sd-icon is-purple">
+                    <HandCoins size={18} />
+                  </span>
+                  <strong>Emprestar</strong>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="kc-mob-sd-item"
+                  onClick={() => {
+                    setFabOpen(false);
+                    open("title", null, "transfer");
+                  }}
+                >
+                  <span className="kc-mob-sd-icon is-amber">
+                    <ArrowUpDown size={18} />
+                  </span>
+                  <strong>Transferir</strong>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="kc-mob-sd-item"
+                  onClick={() => {
+                    setFabOpen(false);
+                    openReserveCaixinha();
+                  }}
+                >
+                  <span className="kc-mob-sd-icon is-green">
+                    <PiggyBank size={18} />
+                  </span>
+                  <strong>Guardar em caixinha</strong>
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {planChoiceOpen && (
+        <div
+          className="action-overlay open"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setPlanChoiceOpen(false);
+          }}
+        >
+          <div className="dialog" role="dialog" aria-modal="true" aria-label="O que você quer planejar?">
+            <div className="dialog-head">
+              <h2>O que você quer planejar?</h2>
+              <button type="button" className="dialog-close" onClick={() => setPlanChoiceOpen(false)} aria-label="Fechar">
+                <X size={17} />
+              </button>
+            </div>
+            <div className="action-menu">
               <button
                 type="button"
-                role="menuitem"
-                className="kc-mob-sd-item"
                 onClick={() => {
-                  setFabOpen(false);
-                  open("credit_card");
+                  setPlanChoiceOpen(false);
+                  open("goal_sim");
                 }}
               >
-                <span className="kc-mob-sd-icon is-orange">
-                  <CreditCard size={18} />
+                <span>
+                  <strong>Planejar compra ou viagem</strong>
+                  <small>Simule parcelamento, entrada e veja se cabe no seu caixa</small>
                 </span>
-                <strong>Cartão de Crédito</strong>
+                <span>›</span>
               </button>
-            )}
-
-            {effectiveView === "budgets" && (
               <button
                 type="button"
-                role="menuitem"
-                className="kc-mob-sd-item"
                 onClick={() => {
-                  setFabOpen(false);
-                  setActionMenu("budget_pick");
+                  setPlanChoiceOpen(false);
+                  setPlanningTab("cuts");
                 }}
               >
-                <span className="kc-mob-sd-icon is-orange">
-                  <Percent size={18} />
+                <span>
+                  <strong>Planejar cortes no orçamento</strong>
+                  <small>Escolha contas ou recorrências para cortar e simule seu fluxo até 31/12</small>
                 </span>
-                <strong>Novo Orçamento</strong>
+                <span>›</span>
               </button>
-            )}
-
-            <button
-              type="button"
-              role="menuitem"
-              className="kc-mob-sd-item"
-              onClick={() => {
-                setFabOpen(false);
-                open("title", null, "bill");
-              }}
-            >
-              <span className="kc-mob-sd-icon is-red">
-                <Minus size={19} strokeWidth={2.5} />
-              </span>
-              <strong>A pagar</strong>
-            </button>
-
-            <button
-              type="button"
-              role="menuitem"
-              className="kc-mob-sd-item"
-              onClick={() => {
-                setFabOpen(false);
-                open("income", null, "bill");
-              }}
-            >
-              <span className="kc-mob-sd-icon is-green">
-                <Plus size={19} strokeWidth={2.5} />
-              </span>
-              <strong>A receber</strong>
-            </button>
-
-            <button
-              type="button"
-              role="menuitem"
-              className="kc-mob-sd-item"
-              onClick={() => {
-                setFabOpen(false);
-                open("card_expense", null, "bill");
-              }}
-            >
-              <span className="kc-mob-sd-icon is-orange">
-                <CreditCard size={18} />
-              </span>
-              <strong>Despesa cartão</strong>
-            </button>
-
-            <button
-              type="button"
-              role="menuitem"
-              className="kc-mob-sd-item"
-              onClick={() => {
-                setFabOpen(false);
-                open("title", null, "lend");
-              }}
-            >
-              <span className="kc-mob-sd-icon is-purple">
-                <HandCoins size={18} />
-              </span>
-              <strong>Emprestar</strong>
-            </button>
-
-            <button
-              type="button"
-              role="menuitem"
-              className="kc-mob-sd-item"
-              onClick={() => {
-                setFabOpen(false);
-                open("title", null, "transfer");
-              }}
-            >
-              <span className="kc-mob-sd-icon is-amber">
-                <ArrowUpDown size={18} />
-              </span>
-              <strong>Transferir</strong>
-            </button>
-
-            <button
-              type="button"
-              role="menuitem"
-              className="kc-mob-sd-item"
-              onClick={() => {
-                setFabOpen(false);
-                openReserveCaixinha();
-              }}
-            >
-              <span className="kc-mob-sd-icon is-green">
-                <PiggyBank size={18} />
-              </span>
-              <strong>Guardar em caixinha</strong>
-            </button>
+            </div>
           </div>
         </div>
       )}

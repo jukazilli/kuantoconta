@@ -194,6 +194,11 @@ export default function Dashboard({ user }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  useEffect(() => {
+    if (!notice) return undefined;
+    const timer = setTimeout(() => setNotice(""), 3200);
+    return () => clearTimeout(timer);
+  }, [notice]);
   const [active, setActive] = useState("overview");
   const [screenFilters, setScreenFilters] = useState(defaultScreenFilters);
   const [drawer, setDrawer] = useState(null);
@@ -1315,6 +1320,38 @@ export default function Dashboard({ user }) {
     });
   }
 
+  async function applyCutPlan(items = []) {
+    if (!items.length || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      let closedCount = 0;
+      for (const item of items) {
+        if (item.kind === "recurring" && item.ruleId) {
+          await request("PATCH", {
+            action: "stop_recurring",
+            ruleId: item.ruleId,
+            startsOn: TODAY,
+          });
+          closedCount++;
+        } else if (item.kind === "title" && item.titleId) {
+          await request("PATCH", {
+            action: "cancel_scope",
+            titleId: item.titleId,
+            scope: item.isSeries ? "future" : "only",
+          });
+          closedCount++;
+        }
+      }
+      await refresh();
+      setNotice(`Planejamento de cortes efetivado! ${closedCount} ${closedCount === 1 ? "compromisso encerrado" : "compromissos encerrados"}.`);
+    } catch (e) {
+      setError(e.message || "Não foi possível efetivar os cortes selecionados.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function handleAction(action, id) {
     if (action === "reverse") {
       reverseSettlement(id);
@@ -1564,10 +1601,11 @@ export default function Dashboard({ user }) {
         </div>
       )}
       {notice && (
-        <div className="notice success" role="status" style={isMobilePhone ? { margin: "10px 14px 0" } : undefined}>
-          {notice}
-          <button type="button" onClick={() => setNotice("")} aria-label="Fechar">
-            <X size={16} />
+        <div className="kc-toast-popup" role="status" aria-live="polite">
+          <CheckCircle2 size={18} className="kc-toast-icon" aria-hidden="true" />
+          <span>{notice}</span>
+          <button type="button" onClick={() => setNotice("")} aria-label="Fechar notificação">
+            <X size={15} />
           </button>
         </div>
       )}
@@ -1653,6 +1691,8 @@ export default function Dashboard({ user }) {
             comparePlanningQuotes={comparePlanningQuotes}
             computeCapitalPace={computeCapitalPace}
             data={data}
+            busy={busy}
+            applyCutPlan={applyCutPlan}
             Empty={Empty}
             profileContent={profileSectionContent}
           />

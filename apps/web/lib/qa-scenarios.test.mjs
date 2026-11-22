@@ -306,7 +306,16 @@ test("Mobile Exclusive UI/UX (Minhas Finanças + Kuantoconta Thesis): MobileWork
   assert.match(mobileSrc, /31\/12 c\/ cortes/);
   assert.match(mobileSrc, /Ver despesas pendentes/);
   assert.match(mobileSrc, />Endividamento</);
-  assert.match(mobileSrc, /Cortes & Fim do Ano/);
+  assert.match(mobileSrc, />Planejamentos</);
+  assert.match(mobileSrc, />Planejar cortes</);
+  assert.match(mobileSrc, />Em caixinhas</);
+  assert.match(mobileSrc, />Guardados mês</);
+  assert.match(mobileSrc, />Aporte</);
+  assert.match(mobileSrc, /Voltar para o início/);
+  assert.match(mobileSrc, /Nova caixinha/);
+  assert.match(mobileSrc, /Efetivar planejamento/);
+  assert.match(dashSrc, /kc-toast-popup/);
+  assert.match(dashSrc, /applyCutPlan/);
   assert.match(mobileSrc, />A pagar</);
   assert.match(mobileSrc, />A receber</);
   assert.match(mobileSrc, />Emprestar</);
