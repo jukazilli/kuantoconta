@@ -316,6 +316,9 @@ test("Mobile Exclusive UI/UX (Minhas Finanças + Kuantoconta Thesis): MobileWork
   assert.match(mobileSrc, /Efetivar planejamento/);
   assert.match(dashSrc, /kc-toast-popup/);
   assert.match(dashSrc, /applyCutPlan/);
+  assert.match(mobileSrc, /kc-mob-view-anim/);
+  assert.match(cssSrc, /kcSheetSlideUpIn/);
+  assert.match(cssSrc, /kcViewEnter/);
   assert.match(mobileSrc, />A pagar</);
   assert.match(mobileSrc, />A receber</);
   assert.match(mobileSrc, />Emprestar</);

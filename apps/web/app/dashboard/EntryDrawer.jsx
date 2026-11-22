@@ -58,7 +58,12 @@ export default function EntryDrawer({
   cancellations=[],
   isMobilePhone=false
 }){
- const [quick,setQuick]=useState(null),[budgetPicker,setBudgetPicker]=useState(false),[personPicker,setPersonPicker]=useState(false),[personQuery,setPersonQuery]=useState(""),[newPersonMode,setNewPersonMode]=useState(false),[personMore,setPersonMore]=useState(false),[pName,setPName]=useState(""),[pRel,setPRel]=useState("Amigo"),[pEmail,setPEmail]=useState(""),[pPhone,setPPhone]=useState(""),[pNotes,setPNotes]=useState(""),[pBusy,setPBusy]=useState(false),[pErr,setPErr]=useState(""),[newName,setNewName]=useState(""),[trackBudget,setTrackBudget]=useState(false),[quickLimit,setQuickLimit]=useState(""),[quickError,setQuickError]=useState(""),[quickBusy,setQuickBusy]=useState(false),[showMore,setShowMore]=useState(false),[mobTypeSwitcherOpen,setMobTypeSwitcherOpen]=useState(false);
+ const [quick,setQuick]=useState(null),[budgetPicker,setBudgetPicker]=useState(false),[personPicker,setPersonPicker]=useState(false),[personQuery,setPersonQuery]=useState(""),[newPersonMode,setNewPersonMode]=useState(false),[personMore,setPersonMore]=useState(false),[pName,setPName]=useState(""),[pRel,setPRel]=useState("Amigo"),[pEmail,setPEmail]=useState(""),[pPhone,setPPhone]=useState(""),[pNotes,setPNotes]=useState(""),[pBusy,setPBusy]=useState(false),[pErr,setPErr]=useState(""),[newName,setNewName]=useState(""),[trackBudget,setTrackBudget]=useState(false),[quickLimit,setQuickLimit]=useState(""),[quickError,setQuickError]=useState(""),[quickBusy,setQuickBusy]=useState(false),[showMore,setShowMore]=useState(false),[mobTypeSwitcherOpen,setMobTypeSwitcherOpen]=useState(false),[closing,setClosing]=useState(false);
+ const requestClose=()=>{
+  if(closing)return;
+  setClosing(true);
+  setTimeout(()=>{onClose();},190);
+ };
  const field=(name,value)=>setForm(old=>({...old,[name]:value}));
  const edit=drawer==="edit",newTitle=drawer==="title",editPlan=drawer==="edit_plan",titleEntry=newTitle||edit;
  const intent=newTitle?(form.intent==="transfer"?"transfer":form.intent==="lend"?"lend":"bill"):"bill";
@@ -167,10 +172,10 @@ export default function EntryDrawer({
   return w?.name||wallets[0]?.name||"Conta";
  },[form.creditCardId,form.walletId,creditCards,wallets]);
 
- return <div className={`overlay${isMobilePhone?" kc-mob-overlay":""}`} onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}><section className={`drawer${drawer==="goal_sim"?" drawer-wide":""}${isMobilePhone?" kc-mob-fullscreen-drawer":""}`} role="dialog" aria-modal="true" aria-label={isMobilePhone?mobileFormTitle:formTitle}>
+ return <div className={`overlay${isMobilePhone?" kc-mob-overlay":""}${closing?" is-closing":""}`} onMouseDown={e=>{if(e.target===e.currentTarget)requestClose();}}><section className={`drawer${drawer==="goal_sim"?" drawer-wide":""}${isMobilePhone?" kc-mob-fullscreen-drawer":""}${closing?" is-closing":""}`} role="dialog" aria-modal="true" aria-label={isMobilePhone?mobileFormTitle:formTitle}>
    <header className={`drawer-head${isMobilePhone?" kc-mob-form-head":""}`}>
      <div className="kc-mob-form-head-left">
-       <button type="button" className="plain-icon" onClick={onClose} aria-label="Fechar"><X size={23}/></button>
+       <button type="button" className="plain-icon" onClick={requestClose} aria-label="Fechar"><X size={23}/></button>
        <h2>{isMobilePhone?mobileFormTitle:formTitle}</h2>
      </div>
      <div className="kc-mob-form-head-right">

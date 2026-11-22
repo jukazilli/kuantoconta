@@ -194,10 +194,22 @@ export default function Dashboard({ user }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [toastLeaving, setToastLeaving] = useState(false);
   useEffect(() => {
-    if (!notice) return undefined;
-    const timer = setTimeout(() => setNotice(""), 3200);
-    return () => clearTimeout(timer);
+    if (!notice) {
+      setToastLeaving(false);
+      return undefined;
+    }
+    setToastLeaving(false);
+    const leaveTimer = setTimeout(() => setToastLeaving(true), 2950);
+    const clearTimer = setTimeout(() => {
+      setNotice("");
+      setToastLeaving(false);
+    }, 3200);
+    return () => {
+      clearTimeout(leaveTimer);
+      clearTimeout(clearTimer);
+    };
   }, [notice]);
   const [active, setActive] = useState("overview");
   const [screenFilters, setScreenFilters] = useState(defaultScreenFilters);
@@ -1601,7 +1613,7 @@ export default function Dashboard({ user }) {
         </div>
       )}
       {notice && (
-        <div className="kc-toast-popup" role="status" aria-live="polite">
+        <div className={`kc-toast-popup${toastLeaving ? " is-leaving" : ""}`} role="status" aria-live="polite">
           <CheckCircle2 size={18} className="kc-toast-icon" aria-hidden="true" />
           <span>{notice}</span>
           <button type="button" onClick={() => setNotice("")} aria-label="Fechar notificação">

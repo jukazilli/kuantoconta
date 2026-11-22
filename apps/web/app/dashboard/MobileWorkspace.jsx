@@ -251,7 +251,35 @@ export default function MobileWorkspace({
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [fabOpen, setFabOpen] = useState(false);
+  const [fabClosing, setFabClosing] = useState(false);
   const [planChoiceOpen, setPlanChoiceOpen] = useState(false);
+  const [planChoiceClosing, setPlanChoiceClosing] = useState(false);
+
+  function closeFab(afterClose) {
+    if (!fabOpen || fabClosing) {
+      if (afterClose) afterClose();
+      return;
+    }
+    setFabClosing(true);
+    setTimeout(() => {
+      setFabOpen(false);
+      setFabClosing(false);
+      if (afterClose) afterClose();
+    }, 155);
+  }
+
+  function closePlanChoice(afterClose) {
+    if (!planChoiceOpen || planChoiceClosing) {
+      if (afterClose) afterClose();
+      return;
+    }
+    setPlanChoiceClosing(true);
+    setTimeout(() => {
+      setPlanChoiceOpen(false);
+      setPlanChoiceClosing(false);
+      if (afterClose) afterClose();
+    }, 175);
+  }
   const [pendingTab, setPendingTab] = useState("expense"); // "expense" | "income"
   const [planningTab, setPlanningTab] = useState("overview"); // "overview" | "cuts"
   const [mobileSection, setMobileSection] = useState(null); // "wallets" | "cards" | "charts" | "evolution" | null
@@ -790,6 +818,7 @@ export default function MobileWorkspace({
 
       {/* CONTEÚDO PRINCIPAL MOBILE */}
       <main className="kc-mob-main">
+        <div key={effectiveView} className="kc-mob-view-anim">
         {/* ================= VISTA 1: RESUMO (OVERVIEW) ================= */}
         {effectiveView === "overview" && (
           <div className="kc-mob-stack">
@@ -2734,17 +2763,18 @@ export default function MobileWorkspace({
             {profileContent}
           </div>
         )}
+        </div>
       </main>
 
-      {/* ================= MENU LATERAL (NAVIGATION DRAWER) ================= */}
-      {drawerOpen && (
-        <div
-          className="kc-mob-drawer-backdrop"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setDrawerOpen(false);
-          }}
-        >
-          <aside className="kc-mob-drawer" aria-label="Menu principal">
+      {/* ================= MENU LATERAL (NAVIGATION DRAWER — SEMPRE MONTADO P/ TRANSIÇÃO SUAVE) ================= */}
+      <div
+        className={`kc-mob-drawer-backdrop${drawerOpen ? " is-open" : ""}`}
+        aria-hidden={!drawerOpen}
+        onMouseDown={(e) => {
+          if (e.target === e.currentTarget) setDrawerOpen(false);
+        }}
+      >
+        <aside className="kc-mob-drawer" aria-label="Menu principal">
             <button
               type="button"
               className="kc-mob-drawer-user"
@@ -2860,14 +2890,13 @@ export default function MobileWorkspace({
             </nav>
           </aside>
         </div>
-      )}
 
       {/* ================= FAB (+) & SPEED DIAL CONTEXTUAL KUANTOCONTA ================= */}
       {fabOpen && (
         <div
-          className="kc-mob-fab-backdrop"
+          className={`kc-mob-fab-backdrop${fabClosing ? " is-closing" : ""}`}
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setFabOpen(false);
+            if (e.target === e.currentTarget) closeFab();
           }}
         >
           <div className="kc-mob-speed-dial" role="menu" aria-label="Adicionar lançamento">
@@ -2877,10 +2906,7 @@ export default function MobileWorkspace({
                   type="button"
                   role="menuitem"
                   className="kc-mob-sd-item"
-                  onClick={() => {
-                    setFabOpen(false);
-                    open("capital_goal");
-                  }}
+                  onClick={() => closeFab(() => open("capital_goal"))}
                 >
                   <span className="kc-mob-sd-icon is-orange">
                     <Plus size={19} strokeWidth={2.5} />
@@ -2892,10 +2918,7 @@ export default function MobileWorkspace({
                   type="button"
                   role="menuitem"
                   className="kc-mob-sd-item"
-                  onClick={() => {
-                    setFabOpen(false);
-                    openReserveCaixinha();
-                  }}
+                  onClick={() => closeFab(() => openReserveCaixinha())}
                 >
                   <span className="kc-mob-sd-icon is-green">
                     <PiggyBank size={18} />
@@ -2907,10 +2930,7 @@ export default function MobileWorkspace({
                   type="button"
                   role="menuitem"
                   className="kc-mob-sd-item"
-                  onClick={() => {
-                    setFabOpen(false);
-                    setPlanChoiceOpen(true);
-                  }}
+                  onClick={() => closeFab(() => setPlanChoiceOpen(true))}
                 >
                   <span className="kc-mob-sd-icon is-amber">
                     <Compass size={18} />
@@ -2925,10 +2945,7 @@ export default function MobileWorkspace({
                     type="button"
                     role="menuitem"
                     className="kc-mob-sd-item"
-                    onClick={() => {
-                      setFabOpen(false);
-                      open("credit_card");
-                    }}
+                    onClick={() => closeFab(() => open("credit_card"))}
                   >
                     <span className="kc-mob-sd-icon is-orange">
                       <CreditCard size={18} />
@@ -2942,10 +2959,7 @@ export default function MobileWorkspace({
                     type="button"
                     role="menuitem"
                     className="kc-mob-sd-item"
-                    onClick={() => {
-                      setFabOpen(false);
-                      setActionMenu("budget_pick");
-                    }}
+                    onClick={() => closeFab(() => setActionMenu("budget_pick"))}
                   >
                     <span className="kc-mob-sd-icon is-orange">
                       <Percent size={18} />
@@ -2958,10 +2972,7 @@ export default function MobileWorkspace({
                   type="button"
                   role="menuitem"
                   className="kc-mob-sd-item"
-                  onClick={() => {
-                    setFabOpen(false);
-                    open("title", null, "bill");
-                  }}
+                  onClick={() => closeFab(() => open("title", null, "bill"))}
                 >
                   <span className="kc-mob-sd-icon is-red">
                     <Minus size={19} strokeWidth={2.5} />
@@ -2973,10 +2984,7 @@ export default function MobileWorkspace({
                   type="button"
                   role="menuitem"
                   className="kc-mob-sd-item"
-                  onClick={() => {
-                    setFabOpen(false);
-                    open("income", null, "bill");
-                  }}
+                  onClick={() => closeFab(() => open("income", null, "bill"))}
                 >
                   <span className="kc-mob-sd-icon is-green">
                     <Plus size={19} strokeWidth={2.5} />
@@ -2988,10 +2996,7 @@ export default function MobileWorkspace({
                   type="button"
                   role="menuitem"
                   className="kc-mob-sd-item"
-                  onClick={() => {
-                    setFabOpen(false);
-                    open("card_expense", null, "bill");
-                  }}
+                  onClick={() => closeFab(() => open("card_expense", null, "bill"))}
                 >
                   <span className="kc-mob-sd-icon is-orange">
                     <CreditCard size={18} />
@@ -3003,10 +3008,7 @@ export default function MobileWorkspace({
                   type="button"
                   role="menuitem"
                   className="kc-mob-sd-item"
-                  onClick={() => {
-                    setFabOpen(false);
-                    open("title", null, "lend");
-                  }}
+                  onClick={() => closeFab(() => open("title", null, "lend"))}
                 >
                   <span className="kc-mob-sd-icon is-purple">
                     <HandCoins size={18} />
@@ -3018,10 +3020,7 @@ export default function MobileWorkspace({
                   type="button"
                   role="menuitem"
                   className="kc-mob-sd-item"
-                  onClick={() => {
-                    setFabOpen(false);
-                    open("title", null, "transfer");
-                  }}
+                  onClick={() => closeFab(() => open("title", null, "transfer"))}
                 >
                   <span className="kc-mob-sd-icon is-amber">
                     <ArrowUpDown size={18} />
@@ -3033,10 +3032,7 @@ export default function MobileWorkspace({
                   type="button"
                   role="menuitem"
                   className="kc-mob-sd-item"
-                  onClick={() => {
-                    setFabOpen(false);
-                    openReserveCaixinha();
-                  }}
+                  onClick={() => closeFab(() => openReserveCaixinha())}
                 >
                   <span className="kc-mob-sd-icon is-green">
                     <PiggyBank size={18} />
@@ -3051,25 +3047,22 @@ export default function MobileWorkspace({
 
       {planChoiceOpen && (
         <div
-          className="action-overlay open"
+          className={`action-overlay open${planChoiceClosing ? " is-closing" : ""}`}
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setPlanChoiceOpen(false);
+            if (e.target === e.currentTarget) closePlanChoice();
           }}
         >
           <div className="dialog" role="dialog" aria-modal="true" aria-label="O que você quer planejar?">
             <div className="dialog-head">
               <h2>O que você quer planejar?</h2>
-              <button type="button" className="dialog-close" onClick={() => setPlanChoiceOpen(false)} aria-label="Fechar">
+              <button type="button" className="dialog-close" onClick={() => closePlanChoice()} aria-label="Fechar">
                 <X size={17} />
               </button>
             </div>
             <div className="action-menu">
               <button
                 type="button"
-                onClick={() => {
-                  setPlanChoiceOpen(false);
-                  open("goal_sim");
-                }}
+                onClick={() => closePlanChoice(() => open("goal_sim"))}
               >
                 <span>
                   <strong>Planejar compra ou viagem</strong>
@@ -3079,10 +3072,7 @@ export default function MobileWorkspace({
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setPlanChoiceOpen(false);
-                  setPlanningTab("cuts");
-                }}
+                onClick={() => closePlanChoice(() => setPlanningTab("cuts"))}
               >
                 <span>
                   <strong>Planejar cortes no orçamento</strong>
@@ -3112,10 +3102,10 @@ export default function MobileWorkspace({
 
           <button
             type="button"
-            className={`kc-mob-fab${fabOpen ? " is-open" : ""}`}
+            className={`kc-mob-fab${fabOpen && !fabClosing ? " is-open" : ""}`}
             aria-label="Adicionar lançamento"
             aria-expanded={fabOpen}
-            onClick={() => setFabOpen((v) => !v)}
+            onClick={() => (fabOpen ? closeFab() : setFabOpen(true))}
           >
             <Plus size={26} strokeWidth={2.5} />
           </button>
