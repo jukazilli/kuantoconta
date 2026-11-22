@@ -320,14 +320,18 @@ test("Mobile Exclusive UI/UX (Minhas Finanças + Kuantoconta Thesis): MobileWork
   assert.match(mobileSrc, /Despesas Conta x Cartão/);
   assert.match(mobileSrc, /kc-mob-tx-item/);
 
-  // 3. Full-screen List-Row Mobile Form (Nova Receita / Nova Despesa / Toggle Switch Efetivada / CategoryCircleIcon)
+  // 3. Full-screen List-Row Mobile Form (Nova Receita / Nova Despesa / Emprestar / Empréstimo / Toggle Switch Efetivada / CategoryCircleIcon)
   assert.match(drawerSrc, /kc-mob-fullscreen-drawer/);
+  assert.match(drawerSrc, /newTitle&&!isMobilePhone&&<div className="direction-cards four"/);
+  assert.match(drawerSrc, /Alternar tipo de lançamento/);
   assert.match(drawerSrc, /Nova Receita/);
   assert.match(drawerSrc, /Nova Despesa/);
   assert.match(drawerSrc, /Despesa Cartão/);
   assert.match(drawerSrc, /Efetivada/);
   assert.match(drawerSrc, /kc-mob-switch/);
   assert.match(drawerSrc, /CategoryCircleIcon/);
+  assert.match(drawerSrc, /Depositar valor na conta/);
+  assert.match(drawerSrc, /Devolução pela pessoa/);
 
   // 4. Zero :hover rules inside the mobile exclusive CSS section
   const mobileCssSection = cssSrc.split("KUANTOCONTA MOBILE EXCLUSIVE UI & UX")[1] || "";

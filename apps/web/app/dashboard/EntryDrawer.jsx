@@ -176,9 +176,70 @@ export default function EntryDrawer({
      <div className="kc-mob-form-head-right">
        {canSubmit?<button className={`save-pill${saveToneClass}`} form="entry-form" type="submit" disabled={busy}>{busy?"Salvando...":"Salvar"}</button>:<span className="drawer-head-spacer"/>}
        {isMobilePhone&&newTitle&&(
-         <button type="button" className="plain-icon" aria-label="Trocar tipo de lançamento" aria-expanded={mobTypeSwitcherOpen} onClick={()=>setMobTypeSwitcherOpen(v=>!v)}>
-           <MoreHorizontal size={21}/>
-         </button>
+         <div className="kc-mob-cc-menu-wrap">
+           <button type="button" className="plain-icon" aria-label="Trocar tipo de lançamento" aria-expanded={mobTypeSwitcherOpen} onClick={()=>setMobTypeSwitcherOpen(v=>!v)}>
+             <MoreHorizontal size={21}/>
+           </button>
+           {mobTypeSwitcherOpen&&(
+             <div className="kc-mob-dropdown-menu" role="menu" aria-label="Alternar tipo de lançamento">
+               <button
+                 type="button"
+                 role="menuitem"
+                 onClick={()=>{
+                   setForm(old=>({...old,intent:"bill",direction:"expense",creditCardId:"",category:old.direction==="expense"?old.category:""}));
+                   setMobTypeSwitcherOpen(false);
+                 }}
+               >
+                 <ArrowDownCircle size={16}/> A pagar (Despesa)
+               </button>
+               <button
+                 type="button"
+                 role="menuitem"
+                 onClick={()=>{
+                   setForm(old=>({...old,intent:"bill",direction:"income",creditCardId:"",category:old.direction==="income"?old.category:""}));
+                   setMobTypeSwitcherOpen(false);
+                 }}
+               >
+                 <ArrowUpCircle size={16}/> A receber (Receita)
+               </button>
+               {creditCards.length>0&&(
+                 <button
+                   type="button"
+                   role="menuitem"
+                   onClick={()=>{
+                     const firstCard=creditCards.find(c=>c.id===form.creditCardId)||creditCards[0];
+                     setForm(old=>({...old,intent:"bill",direction:"expense",creditCardId:firstCard?.id||"",walletId:firstCard?.default_wallet_id||old.walletId||wallets[0]?.id||"",settlementState:"pending",occurredOn:old.occurredOn||brDay()}));
+                     setMobTypeSwitcherOpen(false);
+                   }}
+                 >
+                   <CreditCard size={16}/> Despesa cartão
+                 </button>
+               )}
+               <button
+                 type="button"
+                 role="menuitem"
+                 onClick={()=>{
+                   setForm(old=>({...old,intent:"lend",lentOn:old.lentOn||brDay(),expectedRepaymentOn:old.expectedRepaymentOn||old.dueOn||brDay()}));
+                   setMobTypeSwitcherOpen(false);
+                 }}
+               >
+                 <HandCoins size={16}/> Emprestar
+               </button>
+               <button
+                 type="button"
+                 role="menuitem"
+                 onClick={()=>{
+                   const fW=(checkingWallets.some(w=>w.id===form.fromWalletId)?form.fromWalletId:null)||checkingWallets[0]?.id||"";
+                   const tW=(checkingWallets.some(w=>w.id===form.toWalletId&&w.id!==fW)?form.toWalletId:null)||(checkingWallets.find(w=>w.id!==fW)?.id||"");
+                   setForm(old=>({...old,intent:"transfer",fromWalletId:fW,toWalletId:tW,transferredOn:old.transferredOn||old.dueOn||brDay(),settlementState:old.settlementState||"paid"}));
+                   setMobTypeSwitcherOpen(false);
+                 }}
+               >
+                 <ArrowLeftRight size={16}/> Transferir entre contas
+               </button>
+             </div>
+           )}
+         </div>
        )}
      </div>
    </header>
@@ -208,8 +269,8 @@ export default function EntryDrawer({
     {(balanceDue>0||isSeries(selectedTitleObj))&&<button type="button" className="text-button" onClick={()=>onAction("cancel",selectedTitleObj.id)}>Excluir este lançamento ou sua série</button>}
     <div className="detail-history"><h3>Histórico de pagamentos</h3>{settlements.filter(s=>s.title_id===selectedTitleObj?.id).length?settlements.filter(s=>s.title_id===selectedTitleObj?.id).map(s=><div className={"history-row"+(s.reversed_at?" reversed":"")} key={s.id}><p><CheckCircle2 size={15}/>{fdate(s.settled_on)} — {money(cents(s.amount_cents))} {s.reversed_at&&<span>• Revertido</span>}</p>{!s.reversed_at&&<button type="button" disabled={busy} onClick={()=>onAction("reverse",s.id)}>Desfazer pagamento</button>}</div>):<p><Clock3 size={15}/> Nenhum pagamento registrado.</p>}</div>
     <p className="hint">Ao editar este lançamento, as demais parcelas da série não serão alteradas.</p>
-   </div>:<form id="entry-form" className={`entry-form${isMobilePhone?" kc-mob-any-form":""}${isMobilePhone&&((titleEntry&&(!newTitle||intent==="bill"||intent==="transfer"))||drawer==="budget"||drawer==="settle")?" kc-mob-list-form":""}`} onSubmit={onSave}>
-    {newTitle&&(!isMobilePhone||mobTypeSwitcherOpen||intent==="lend")&&<div className="direction-cards four" role="group" aria-label="Tipo de lançamento">
+   </div>:<form id="entry-form" className={`entry-form${isMobilePhone?" kc-mob-any-form":""}${isMobilePhone&&drawer!=="goal_sim"&&drawer!=="detail"?" kc-mob-list-form":""}`} onSubmit={onSave}>
+    {newTitle&&!isMobilePhone&&<div className="direction-cards four" role="group" aria-label="Tipo de lançamento">
       <button type="button" className={`direction-card expense${intent==="bill"&&form.direction!=="income"?" active":""}`} aria-pressed={intent==="bill"&&form.direction!=="income"} onClick={()=>{setForm(old=>({...old,intent:"bill",direction:"expense",category:old.direction==="expense"?old.category:""}));setMobTypeSwitcherOpen(false);}}>
         <ArrowDownCircle size={20} aria-hidden="true"/>
         <div><strong>A pagar</strong><small>Conta ou gasto</small></div>
@@ -449,7 +510,273 @@ export default function EntryDrawer({
       const cardCycle=lendCard?computeInvoiceCycleForPurchase({purchaseDate:lendDate,closingDay:lendCard.closing_day,dueDay:lendCard.due_day}):null;
       const cardUsage=lendCard?computeCardUsage(lendCard,rawData?.titles||[]):null;
       const cardOverLimit=Boolean(cardUsage&&lendCard.limit_cents>0&&totalLendCents>cardUsage.availableLimitCents);
-      return <>
+      const lendSourceName=lendCard?lendCard.name:(wallets.find(w=>w.id===form.walletId)?.name||wallets[0]?.name||"Conta");
+      const repayWalletName=wallets.find(w=>w.id===(form.lendRepaymentWalletId||form.walletId))?.name||wallets[0]?.name||"Conta";
+      return isMobilePhone?(
+        <div className="kc-mob-form-rows">
+          {/* Linha 1: Descrição */}
+          <div className="kc-mob-row">
+            <AlignLeft size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+            <input
+              className="kc-mob-row-input"
+              aria-label="Descrição do empréstimo"
+              placeholder="Descrição (ex.: Compra no cartão, Ajuda)"
+              required
+              value={form.description}
+              maxLength={140}
+              onChange={e=>field("description",e.target.value)}
+            />
+          </div>
+
+          {/* Linha 2: Valor R$ */}
+          <div className="kc-mob-row kc-mob-row-money">
+            <CircleDollarSign size={22} className="kc-mob-row-icon" aria-hidden="true"/>
+            <span className="kc-mob-currency">R$</span>
+            <MoneyInput ariaLabel="Valor emprestado em reais" value={form.amount} onChange={v=>field("amount",v)}/>
+          </div>
+
+          {/* Linha 3: Para quem (com ícone circular + botão +) */}
+          <div className="kc-mob-row kc-mob-row-entity">
+            <div className="kc-mob-entity-block">
+              <span className="kc-mob-row-caption">Para quem</span>
+              <input className="sr-only-input" tabIndex={-1} aria-hidden="true" required value={form.personId||""} onChange={()=>{}}/>
+              <div className="kc-mob-entity-controls">
+                <button
+                  type="button"
+                  className="kc-mob-entity-trigger"
+                  onClick={()=>{setNewPersonMode(false);setPersonQuery("");setPersonPicker(true);}}
+                >
+                  <span className="kc-mob-cat-circle" style={{background:"rgba(254, 104, 3, 0.14)",color:"#EA580C"}} aria-hidden="true">
+                    <HandCoins size={17}/>
+                  </span>
+                  <div className="kc-mob-entity-text">
+                    <strong>{selectedPerson?selectedPerson.name:"Selecionar pessoa"}</strong>
+                    <small>{selectedPerson?(selectedPerson.relationship||"Carteira de pessoas"):"Toque para escolher ou cadastrar"}</small>
+                  </div>
+                  <ChevronDown size={16} className="kc-mob-entity-caret" aria-hidden="true"/>
+                </button>
+                <button
+                  type="button"
+                  className="kc-mob-entity-action"
+                  aria-label="Cadastrar nova pessoa"
+                  onClick={()=>{setNewPersonMode(true);setPName("");setPErr("");setPersonPicker(true);}}
+                >
+                  <Plus size={20}/>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Linha 4: De onde sai (Conta ou Cartão) */}
+          <div className="kc-mob-row kc-mob-row-entity">
+            <div className="kc-mob-entity-block">
+              <span className="kc-mob-row-caption">{creditCards.length>0?"De onde sai (Conta ou Cartão)":"De qual conta saiu"}</span>
+              <div className="kc-mob-entity-controls">
+                <div className="kc-mob-entity-select-box">
+                  <BankIcon name={lendSourceName} size={36}/>
+                  <select
+                    required
+                    value={form.lendCreditCardId?`card:${form.lendCreditCardId}`:(form.walletId||"")}
+                    onChange={e=>{
+                      const v=e.target.value;
+                      if(v.startsWith("card:")){
+                        const cid=v.slice(5);
+                        const c=creditCards.find(x=>x.id===cid);
+                        const cyc=c?computeInvoiceCycleForPurchase({purchaseDate:form.lentOn||brDay(),closingDay:c.closing_day,dueDay:c.due_day}):null;
+                        const defWallet=c?.default_wallet_id||checkingWallets[0]?.id||wallets[0]?.id||"";
+                        setForm(old=>({...old,lendCreditCardId:cid,walletId:defWallet,lendRepaymentWalletId:old.lendRepaymentWalletId||defWallet,expectedRepaymentOn:cyc?.dueDate||old.expectedRepaymentOn}));
+                      }else{
+                        setForm(old=>({...old,lendCreditCardId:"",lendCardInstallments:1,walletId:v,lendRepaymentWalletId:v||old.lendRepaymentWalletId}));
+                      }
+                    }}
+                  >
+                    <option value="">Selecione a conta ou cartão</option>
+                    <optgroup label="Contas bancárias">
+                      {(checkingWallets.length?checkingWallets:wallets).map(w=><option key={w.id} value={w.id}>{w.name}</option>)}
+                    </optgroup>
+                    {creditCards.length>0&&(
+                      <optgroup label="Cartões de crédito">
+                        {creditCards.map(c=><option key={c.id} value={`card:${c.id}`}>💳 {c.name} (vence dia {c.due_day})</option>)}
+                      </optgroup>
+                    )}
+                  </select>
+                  <ChevronDown size={16} className="kc-mob-entity-caret" aria-hidden="true"/>
+                </div>
+                <span className="kc-mob-entity-badge" aria-hidden="true">
+                  {lendCard?<CreditCard size={19}/>:<ReceiptText size={19}/>}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Linha 5: Data da compra / saída */}
+          <div className="kc-mob-row kc-mob-row-inline">
+            <CalendarDays size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+            <span className="kc-mob-inline-label">{lendCard?"Data da Compra":"Data de Saída"}</span>
+            <input
+              className="kc-mob-date-right"
+              required
+              type="date"
+              max={brDay()}
+              value={lendDate}
+              onChange={e=>{
+                const nextDate=e.target.value;
+                if(lendCard&&nextDate){
+                  const cyc=computeInvoiceCycleForPurchase({purchaseDate:nextDate,closingDay:lendCard.closing_day,dueDay:lendCard.due_day});
+                  setForm(old=>({...old,lentOn:nextDate,expectedRepaymentOn:cyc.dueDate}));
+                }else{
+                  field("lentOn",nextDate);
+                }
+              }}
+            />
+          </div>
+
+          {lendCard&&cardCycle&&(
+            <div className="kc-mob-sub-block">
+              <div className="kc-mob-sub-note">
+                <strong>Fatura inicial: {cardCycle.invoiceMonth} (venc. {fdate(cardCycle.dueDate)})</strong>
+                <span>Limite disp.: {money(cardUsage.availableLimitCents)}{cardOverLimit?" (Excede limite!)":""}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Linha 6: Parcelamento no cartão (se cartão) */}
+          {lendCard&&(
+            <>
+              <div className="kc-mob-row">
+                <Repeat2 size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+                <label className="kc-mob-row-stack">
+                  <span className="kc-mob-row-caption">Parcelas no cartão</span>
+                  <div className="kc-mob-select-wrap">
+                    <select
+                      value={cardInst>1?"installments":"1"}
+                      onChange={e=>{
+                        const nextCount=e.target.value==="installments"?Math.max(2,cardInst):1;
+                        setForm(old=>({...old,lendCardInstallments:nextCount,lendRepaymentCount:nextCount}));
+                      }}
+                    >
+                      <option value="1">À vista (1x)</option>
+                      <option value="installments">Parcelado (2x–60x)</option>
+                    </select>
+                    <ChevronDown size={17} aria-hidden="true"/>
+                  </div>
+                </label>
+              </div>
+              {cardInst>1&&(
+                <div className="kc-mob-sub-block">
+                  <div className="kc-mob-sub-row">
+                    <span>Qtd. de parcelas no cartão</span>
+                    <input type="number" min="2" max="60" value={form.lendCardInstallments||2} onChange={e=>field("lendCardInstallments",Math.max(2,Math.min(60,Number(e.target.value||2))))}/>
+                  </div>
+                  <div className="kc-mob-sub-row">
+                    <span>Valor informado é</span>
+                    <select value={form.valueMode||"total"} onChange={e=>field("valueMode",e.target.value)}>
+                      <option value="total">Valor total</option>
+                      <option value="installment">Valor da parcela</option>
+                    </select>
+                  </div>
+                  <div className="kc-mob-sub-note">
+                    <strong>Total: {money(totalLendCents)}</strong>
+                    <span>{cardInst}x de {money(Math.round(totalLendCents/cardInst))}</span>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Linha 7: Devolução pela pessoa */}
+          <div className="kc-mob-row">
+            <Repeat2 size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+            <label className="kc-mob-row-stack">
+              <span className="kc-mob-row-caption">Devolução pela pessoa</span>
+              <div className="kc-mob-select-wrap">
+                <select
+                  value={repayInst>1?"installments":"1"}
+                  onChange={e=>{
+                    const nextCount=e.target.value==="installments"?Math.max(2,repayInst):1;
+                    field("lendRepaymentCount",nextCount);
+                  }}
+                >
+                  <option value="1">À vista (1x)</option>
+                  <option value="installments">Parcelada (2x–60x)</option>
+                </select>
+                <ChevronDown size={17} aria-hidden="true"/>
+              </div>
+            </label>
+          </div>
+          {repayInst>1&&(
+            <div className="kc-mob-sub-block">
+              <div className="kc-mob-sub-row">
+                <span>Parcelas da devolução</span>
+                <input type="number" min="2" max="60" value={form.lendRepaymentCount||2} onChange={e=>field("lendRepaymentCount",Math.max(2,Math.min(60,Number(e.target.value||2))))}/>
+              </div>
+              {!lendCard&&(
+                <div className="kc-mob-sub-row">
+                  <span>Valor informado é</span>
+                  <select value={form.valueMode||"total"} onChange={e=>field("valueMode",e.target.value)}>
+                    <option value="total">Valor total</option>
+                    <option value="installment">Valor da parcela</option>
+                  </select>
+                </div>
+              )}
+              <div className="kc-mob-sub-note">
+                <strong>Total a receber: {money(totalLendCents)}</strong>
+                <span>{repayInst}x de {money(Math.round(totalLendCents/repayInst))}</span>
+              </div>
+            </div>
+          )}
+
+          {lendCard&&cardInst>1&&repayInst!==cardInst&&(
+            <div className="kc-mob-row">
+              <button type="button" className="mini-pill" onClick={()=>setForm(old=>({...old,lendRepaymentCount:cardInst,expectedRepaymentOn:cardCycle?.dueDate||old.expectedRepaymentOn}))}>
+                Acompanhar parcelas do cartão ({cardInst}x)
+              </button>
+            </div>
+          )}
+
+          {/* Linha 8: Previsão de devolução */}
+          <div className="kc-mob-row kc-mob-row-inline">
+            <CalendarDays size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+            <span className="kc-mob-inline-label">{repayInst>1?"1ª Devolução Prevista":"Previsão de Pagamento"}</span>
+            <input
+              className="kc-mob-date-right"
+              required
+              type="date"
+              min={lendDate}
+              value={form.expectedRepaymentOn||lendDate}
+              onChange={e=>field("expectedRepaymentOn",e.target.value)}
+            />
+          </div>
+
+          {/* Linha 9: Conta para receber */}
+          <div className="kc-mob-row kc-mob-row-entity">
+            <div className="kc-mob-entity-block">
+              <span className="kc-mob-row-caption">Conta para receber a devolução</span>
+              <div className="kc-mob-entity-controls">
+                <div className="kc-mob-entity-select-box">
+                  <BankIcon name={repayWalletName} size={36}/>
+                  <select
+                    required
+                    value={form.lendRepaymentWalletId||form.walletId||""}
+                    onChange={e=>field("lendRepaymentWalletId",e.target.value)}
+                  >
+                    <option value="">Selecione a conta</option>
+                    {(checkingWallets.length?checkingWallets:wallets).map(w=><option key={w.id} value={w.id}>{w.name}</option>)}
+                  </select>
+                  <ChevronDown size={16} className="kc-mob-entity-caret" aria-hidden="true"/>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Linha 10: Data de Lançamento */}
+          <div className="kc-mob-row kc-mob-row-inline kc-mob-row-footer">
+            <Clock3 size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+            <span className="kc-mob-inline-label">Data de<br/>Lançamento</span>
+            <span className="kc-mob-launch-meta">{fdate(brDay())}</span>
+          </div>
+        </div>
+      ):<>
         <div className="field-row major"><ReceiptText/><input aria-label="Descrição do empréstimo" placeholder="Ex.: Compras no cartão, Ajuda conserto" required value={form.description} maxLength={140} onChange={e=>field("description",e.target.value)}/></div>
         <div className="field-row money-input"><CircleDollarSign/><span>R$</span><MoneyInput ariaLabel="Valor emprestado em reais" value={form.amount} onChange={v=>field("amount",v)}/></div>
 
@@ -927,7 +1254,29 @@ export default function EntryDrawer({
       {newTitle&&<label className="kc-check"><input type="checkbox" checked={form.keepOpen} onChange={e=>field("keepOpen",e.target.checked)}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Salvar e continuar</span></label>}
     </>)}
 
-    {editPlan&&<>
+    {editPlan&&(isMobilePhone?(
+      <div className="kc-mob-form-rows">
+        <div className="kc-mob-row">
+          <AlignLeft size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+          <input className="kc-mob-row-input" aria-label="Descrição da previsão" placeholder="Descrição da previsão" required value={form.description} maxLength={120} onChange={e=>field("description",e.target.value)}/>
+        </div>
+        <div className="kc-mob-row kc-mob-row-money">
+          <CircleDollarSign size={22} className="kc-mob-row-icon" aria-hidden="true"/>
+          <span className="kc-mob-currency">R$</span>
+          <MoneyInput ariaLabel="Valor estimado em reais" value={form.amount} onChange={v=>field("amount",v)}/>
+        </div>
+        <div className="kc-mob-row kc-mob-row-inline">
+          <CalendarDays size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+          <span className="kc-mob-inline-label">Mês previsto</span>
+          <input className="kc-mob-date-right" required type="month" value={form.plannedMonth||brDay().slice(0,7)} onChange={e=>setForm(old=>({...old,plannedMonth:e.target.value,plannedFor:""}))}/>
+        </div>
+        <div className="kc-mob-row kc-mob-row-inline">
+          <CalendarDays size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+          <span className="kc-mob-inline-label">Dia previsto (opcional)</span>
+          <input className="kc-mob-date-right" type="date" value={form.plannedFor||""} onChange={e=>setForm(old=>({...old,plannedFor:e.target.value,plannedMonth:e.target.value?e.target.value.slice(0,7):old.plannedMonth}))}/>
+        </div>
+      </div>
+    ):<>
       <p className="hint">Ajustar esta previsão não altera compras já realizadas.</p>
       <div className="field-row major"><ReceiptText/><input aria-label="Descrição da previsão" required value={form.description} maxLength={120} onChange={e=>field("description",e.target.value)}/></div>
       <div className="field-row money-input"><CircleDollarSign/><span>R$</span><MoneyInput ariaLabel="Valor estimado em reais" value={form.amount} onChange={v=>field("amount",v)}/></div>
@@ -935,9 +1284,55 @@ export default function EntryDrawer({
         <label>Mês previsto<input required type="month" value={form.plannedMonth||brDay().slice(0,7)} onChange={e=>setForm(old=>({...old,plannedMonth:e.target.value,plannedFor:""}))}/></label>
         <label>Dia previsto (opcional)<input type="date" value={form.plannedFor||""} onChange={e=>setForm(old=>({...old,plannedFor:e.target.value,plannedMonth:e.target.value?e.target.value.slice(0,7):old.plannedMonth}))}/></label>
       </div>
-    </>}
+    </>)}
 
-    {drawer==="wallet"&&<>
+    {drawer==="wallet"&&(isMobilePhone?(
+      <div className="kc-mob-form-rows">
+        <div className="kc-mob-row kc-mob-row-entity">
+          <div className="kc-mob-entity-block">
+            <span className="kc-mob-row-caption">Nome do banco ou conta</span>
+            <div className="kc-mob-entity-controls">
+              <BankIcon name={form.name||"Conta"} size={38}/>
+              <input
+                className="kc-mob-row-input"
+                required
+                maxLength={90}
+                value={form.name}
+                onChange={e=>field("name",e.target.value)}
+                placeholder="Ex.: Nubank, Itaú, Sicredi"
+              />
+            </div>
+          </div>
+        </div>
+        <div className="kc-mob-row">
+          <div className="bank-picker-row" aria-label="Atalhos de bancos" style={{margin:0}}>
+            {["nubank","itau","bradesco","bb","caixa","santander","inter","c6","picpay","mercado_pago","pagbank","neon","maree","sicredi","sicoob"].map(bid=>{
+              const b=BANK_BRANDS.find(x=>x.id===bid);
+              if(!b)return null;
+              return <button key={b.id} type="button" className="bank-pick-chip" onClick={()=>field("name",b.name)} title={b.name}><BankIcon name={b.name} size={22}/><span>{b.name}</span></button>;
+            })}
+          </div>
+        </div>
+        <div className="kc-mob-row kc-mob-row-money">
+          <CircleDollarSign size={22} className="kc-mob-row-icon" aria-hidden="true"/>
+          <span className="kc-mob-currency">Saldo R$</span>
+          <MoneyInput value={form.balance} allowNegative onChange={v=>field("balance",v)} ariaLabel="Saldo de abertura"/>
+        </div>
+        <div className="kc-mob-row kc-mob-row-inline">
+          <ArrowDownCircle size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+          <span className="kc-mob-inline-label">Saldo negativo (devedor)</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={String(form.balance).startsWith("-")}
+            className={`kc-mob-switch${String(form.balance).startsWith("-")?" is-on":""}`}
+            onClick={()=>field("balance",String(form.balance).startsWith("-")?(form.balance||"0,00").replace("-",""):"-"+(form.balance||"0,00").replace("-",""))}
+          >
+            <span className="kc-mob-switch-knob"/>
+          </button>
+        </div>
+      </div>
+    ):<>
       <p className="hint">Cadastre sua conta bancária ou carteira de uso diário. Para separar dinheiro em objetivos ou reserva, crie Caixinhas vinculadas à conta.</p>
       <div className="bank-picker-preview">
         <BankIcon name={form.name} size={40}/>
@@ -952,9 +1347,67 @@ export default function EntryDrawer({
       </div>
       <label>Saldo de abertura (R$)<MoneyInput value={form.balance} allowNegative onChange={v=>field("balance",v)} ariaLabel="Saldo de abertura"/></label>
       <label className="kc-check"><input type="checkbox" checked={String(form.balance).startsWith("-")} onChange={e=>field("balance",e.target.checked?"-"+(form.balance||"0,00").replace("-",""):(form.balance||"0,00").replace("-",""))}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Saldo negativo (devedor)</span></label>
-    </>}
+    </>)}
 
-    {drawer==="credit_card"&&<>
+    {drawer==="credit_card"&&(isMobilePhone?(
+      <div className="kc-mob-form-rows">
+        <div className="kc-mob-row kc-mob-row-entity">
+          <div className="kc-mob-entity-block">
+            <span className="kc-mob-row-caption">Nome do cartão</span>
+            <div className="kc-mob-entity-controls">
+              <BankIcon name={form.name||"Cartão"} size={38}/>
+              <input
+                className="kc-mob-row-input"
+                required
+                maxLength={90}
+                value={form.name}
+                onChange={e=>field("name",e.target.value)}
+                placeholder="Ex.: Nubank, Itaú Black, Inter"
+              />
+            </div>
+          </div>
+        </div>
+        <div className="kc-mob-row">
+          <div className="bank-picker-row" aria-label="Atalhos de bancos" style={{margin:0}}>
+            {["nubank","itau","bradesco","bb","caixa","santander","inter","c6","picpay","mercado_pago","pagbank","neon","maree","sicredi","sicoob"].map(bid=>{
+              const b=BANK_BRANDS.find(x=>x.id===bid);
+              if(!b)return null;
+              return <button key={b.id} type="button" className="bank-pick-chip" onClick={()=>field("name",b.name)} title={b.name}><BankIcon name={b.name} size={22}/><span>{b.name}</span></button>;
+            })}
+          </div>
+        </div>
+        <div className="kc-mob-row kc-mob-row-money">
+          <CreditCard size={22} className="kc-mob-row-icon" aria-hidden="true"/>
+          <span className="kc-mob-currency">Limite R$</span>
+          <MoneyInput value={form.cardLimit||"0,00"} onChange={v=>field("cardLimit",v)} ariaLabel="Limite do cartão em reais"/>
+        </div>
+        <div className="kc-mob-row kc-mob-row-inline">
+          <CalendarDays size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+          <span className="kc-mob-inline-label">Dia de fechamento</span>
+          <input className="kc-mob-date-right" style={{width:72,textAlign:"center"}} required type="number" min="1" max="31" value={form.closingDay||"5"} onChange={e=>field("closingDay",e.target.value)}/>
+        </div>
+        <div className="kc-mob-row kc-mob-row-inline">
+          <CalendarDays size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+          <span className="kc-mob-inline-label">Dia de vencimento</span>
+          <input className="kc-mob-date-right" style={{width:72,textAlign:"center"}} required type="number" min="1" max="31" value={form.dueDay||"10"} onChange={e=>field("dueDay",e.target.value)}/>
+        </div>
+        <div className="kc-mob-row kc-mob-row-entity">
+          <div className="kc-mob-entity-block">
+            <span className="kc-mob-row-caption">Conta padrão para pagar a fatura</span>
+            <div className="kc-mob-entity-controls">
+              <div className="kc-mob-entity-select-box">
+                <BankIcon name={wallets.find(w=>w.id===form.walletId)?.name||form.name||"Conta"} size={36}/>
+                <select value={form.walletId||""} onChange={e=>field("walletId",e.target.value)}>
+                  <option value="">Escolher na hora de pagar</option>
+                  {wallets.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}
+                </select>
+                <ChevronDown size={16} className="kc-mob-entity-caret" aria-hidden="true"/>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    ):<>
       <p className="hint">Cadastre seu cartão para acompanhar limite disponível, fechamento da fatura e impacto no saldo previsto sem dupla contagem.</p>
       <div className="bank-picker-preview">
         <BankIcon name={form.name} size={40}/>
@@ -978,7 +1431,7 @@ export default function EntryDrawer({
           {wallets.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}
         </select>
       </label>
-    </>}
+    </>)}
 
     {drawer==="settle"&&(isMobilePhone?(
       <div className="kc-mob-form-rows">
@@ -1070,9 +1523,101 @@ export default function EntryDrawer({
       {form.budgetActive!==false&&<label>Limite mensal (R$)<MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Limite mensal em reais"/></label>}
       {form.budgetActive===false&&<p className="hint">Esta categoria apenas acompanha os gastos, sem trava de limite mensal.</p>}
     </>)}
-    {drawer==="asset"&&<><label>Descrição do bem ou investimento<input required maxLength={120} placeholder="Ex.: Imóvel, Veículo, Previdência" value={form.label} onChange={e=>field("label",e.target.value)}/></label><label>Valor estimado (R$)<MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Valor atual"/></label><p className="hint">Não inclua novamente o dinheiro já registrado nas suas contas ou carteiras.</p></>}
+    {drawer==="asset"&&(isMobilePhone?(
+      <div className="kc-mob-form-rows">
+        <div className="kc-mob-row">
+          <AlignLeft size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+          <input className="kc-mob-row-input" required maxLength={120} placeholder="Descrição do bem ou investimento (Ex.: Imóvel, Veículo)" value={form.label} onChange={e=>field("label",e.target.value)}/>
+        </div>
+        <div className="kc-mob-row kc-mob-row-money">
+          <CircleDollarSign size={22} className="kc-mob-row-icon" aria-hidden="true"/>
+          <span className="kc-mob-currency">R$</span>
+          <MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Valor atual"/>
+        </div>
+      </div>
+    ):<><label>Descrição do bem ou investimento<input required maxLength={120} placeholder="Ex.: Imóvel, Veículo, Previdência" value={form.label} onChange={e=>field("label",e.target.value)}/></label><label>Valor estimado (R$)<MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Valor atual"/></label><p className="hint">Não inclua novamente o dinheiro já registrado nas suas contas ou carteiras.</p></>)}
 
-    {drawer==="loan"&&<>
+    {drawer==="loan"&&(isMobilePhone?(
+      <div className="kc-mob-form-rows">
+        <div className="kc-mob-row">
+          <AlignLeft size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+          <input
+            className="kc-mob-row-input"
+            required
+            maxLength={120}
+            placeholder="Identificação (Ex.: Empréstimo pessoal, Financiamento)"
+            value={form.description}
+            onChange={e=>field("description",e.target.value)}
+          />
+        </div>
+        <div className="kc-mob-row kc-mob-row-money">
+          <CircleDollarSign size={22} className="kc-mob-row-icon" aria-hidden="true"/>
+          <span className="kc-mob-currency">Recebido R$</span>
+          <MoneyInput value={form.loanPrincipal||"0,00"} onChange={v=>field("loanPrincipal",v)} ariaLabel="Valor recebido"/>
+        </div>
+        <div className="kc-mob-row kc-mob-row-inline">
+          <CalendarDays size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+          <span className="kc-mob-inline-label">Data do recebimento</span>
+          <input className="kc-mob-date-right" required type="date" max={brDay()} value={form.loanReceivedOn||brDay()} onChange={e=>field("loanReceivedOn",e.target.value)}/>
+        </div>
+        <div className="kc-mob-row kc-mob-row-inline">
+          <CheckCircle2 size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+          <span className="kc-mob-inline-label">Depositar valor na conta</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={form.loanCreditWallet!==false}
+            className={`kc-mob-switch${form.loanCreditWallet!==false?" is-on":""}`}
+            onClick={()=>field("loanCreditWallet",form.loanCreditWallet===false)}
+          >
+            <span className="kc-mob-switch-knob"/>
+          </button>
+        </div>
+        <div className="kc-mob-row kc-mob-row-entity">
+          <div className="kc-mob-entity-block">
+            <span className="kc-mob-row-caption">Conta para depósito e parcelas</span>
+            <div className="kc-mob-entity-controls">
+              <div className="kc-mob-entity-select-box">
+                <BankIcon name={(checkingWallets.length?checkingWallets:wallets).find(w=>w.id===form.walletId)?.name||"Conta"} size={36}/>
+                <select required value={form.walletId} onChange={e=>field("walletId",e.target.value)}>
+                  <option value="">Selecione uma conta</option>
+                  {(checkingWallets.length?checkingWallets:wallets).map(w=><option key={w.id} value={w.id}>{w.name}</option>)}
+                </select>
+                <ChevronDown size={16} className="kc-mob-entity-caret" aria-hidden="true"/>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="kc-mob-row kc-mob-row-inline">
+          <Repeat2 size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+          <span className="kc-mob-inline-label">Número de parcelas</span>
+          <input className="kc-mob-date-right" style={{width:78,textAlign:"center"}} required type="number" min="2" max="120" value={form.loanCount||"12"} onChange={e=>field("loanCount",e.target.value)}/>
+        </div>
+        <div className="kc-mob-row kc-mob-row-money">
+          <CircleDollarSign size={22} className="kc-mob-row-icon" aria-hidden="true"/>
+          <span className="kc-mob-currency">Parcela R$</span>
+          <MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Valor da parcela"/>
+        </div>
+        <div className="kc-mob-row kc-mob-row-inline">
+          <CalendarDays size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+          <span className="kc-mob-inline-label">Vencimento da 1ª parcela</span>
+          <input className="kc-mob-date-right" required type="date" value={form.dueOn} onChange={e=>field("dueOn",e.target.value)}/>
+        </div>
+        {(()=>{
+          const safeC=v=>{try{return maskToCents(v||"0,00");}catch{return 0;}};
+          const p=safeC(form.loanPrincipal);const inst=safeC(form.amount);const cnt=Math.max(2,Number(form.loanCount||12));
+          const total=inst*cnt;const interest=Math.max(0,total-p);
+          return inst>0?(
+            <div className="kc-mob-sub-block">
+              <div className="kc-mob-sub-note">
+                <strong>Total a pagar: {money(total)} ({cnt}x de {money(inst)})</strong>
+                <span>Juros no período: {money(interest)}</span>
+              </div>
+            </div>
+          ):null;
+        })()}
+      </div>
+    ):<>
       <p className="hint">O valor recebido entra na conta sem inflar sua renda mensal, e as parcelas são agendadas automaticamente.</p>
       <label>Identificação<input required maxLength={120} placeholder="Ex.: Empréstimo pessoal, Financiamento" value={form.description} onChange={e=>field("description",e.target.value)}/></label>
       <div className="form-grid">
@@ -1092,7 +1637,7 @@ export default function EntryDrawer({
         const total=inst*cnt;const interest=Math.max(0,total-p);
         return inst>0?<div className="repeat-config"><div className="repeat-preview" style={{borderTop:0,paddingTop:0}}><strong>Total a pagar: {money(total)} ({cnt}x de {money(inst)})</strong><span>Juros embutidos no período: {money(interest)}</span></div></div>:null;
       })()}
-    </>}
+    </>)}
 
     {drawer==="goal_sim"&&(
       <PlanningWizard
@@ -1112,7 +1657,97 @@ export default function EntryDrawer({
       <select value={form.downPaymentSource||"checking"} onChange={e=>field("downPaymentSource",e.target.value)}><option value="checking">checking</option></select>
     </>}
 
-    {drawer==="capital_goal"&&<>
+    {drawer==="capital_goal"&&(isMobilePhone?(
+      <div className="kc-mob-form-rows">
+        <div className="kc-mob-row">
+          <div className="kc-mob-period-pills">
+            {[
+              ["reserve","Reserva"],
+              ["goal","Objetivo"],
+              ["capital","Capital"]
+            ].map(([k,lbl])=>(
+              <button
+                key={k}
+                type="button"
+                className={`kc-mob-period-pill${(form.caixinhaPurpose||"goal")===k?" active":""}`}
+                onClick={()=>field("caixinhaPurpose",k)}
+              >
+                <PiggyBank size={14}/> {lbl}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="kc-mob-row">
+          <div className="bank-picker-row" aria-label="Sugestões de caixinhas" style={{margin:0}}>
+            {((form.caixinhaPurpose||"goal")==="reserve"
+              ? ["Reserva de emergência","Colchão de segurança"]
+              : (form.caixinhaPurpose||"goal")==="capital"
+                ? ["Aporte de Capital","Fundo de liberdade","Aposentadoria"]
+                : ["Entrada do carro","Viagem","Reformar a casa","Trocar de celular"]
+            ).map(preset=>(
+              <button key={preset} type="button" className="bank-pick-chip" onClick={()=>field("description",preset)}>
+                <span>{preset}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="kc-mob-row">
+          <AlignLeft size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+          <input
+            className="kc-mob-row-input"
+            required
+            maxLength={120}
+            placeholder="Nome da caixinha (Ex.: Reserva de emergência)"
+            value={form.description}
+            onChange={e=>field("description",e.target.value)}
+          />
+        </div>
+        <div className="kc-mob-row kc-mob-row-money">
+          <CircleDollarSign size={22} className="kc-mob-row-icon" aria-hidden="true"/>
+          <span className="kc-mob-currency">Meta R$</span>
+          <MoneyInput value={form.goalTarget||"0,00"} onChange={v=>field("goalTarget",v)} ariaLabel="Valor da meta em reais"/>
+        </div>
+        <div className="kc-mob-row kc-mob-row-entity">
+          <div className="kc-mob-entity-block">
+            <span className="kc-mob-row-caption">Banco / Conta onde fica o dinheiro</span>
+            <div className="kc-mob-entity-controls">
+              <div className="kc-mob-entity-select-box">
+                <BankIcon name={checkingWallets.find(w=>w.id===(form.parentWalletId||checkingWallets[0]?.id))?.name||"Conta"} size={36}/>
+                <select required value={form.parentWalletId||checkingWallets[0]?.id||""} onChange={e=>field("parentWalletId",e.target.value)}>
+                  <option value="">Selecione a conta</option>
+                  {checkingWallets.map(w=>(
+                    <option key={w.id} value={w.id}>{w.name}{walletBalances[w.id]!=null?` (Livre: ${money(walletBalances[w.id])})`:""}</option>
+                  ))}
+                </select>
+                <ChevronDown size={16} className="kc-mob-entity-caret" aria-hidden="true"/>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="kc-mob-row kc-mob-row-inline">
+          <CalendarDays size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+          <span className="kc-mob-inline-label">Prazo da meta</span>
+          <input className="kc-mob-date-right" required type="date" min={brDay()} value={form.goalDesiredOn||brDay()} onChange={e=>field("goalDesiredOn",e.target.value)}/>
+        </div>
+        <div className="kc-mob-row kc-mob-row-money">
+          <PiggyBank size={22} className="kc-mob-row-icon" aria-hidden="true"/>
+          <span className="kc-mob-currency">Inicial R$</span>
+          <MoneyInput value={form.initialAmount||"0,00"} required={false} onChange={v=>field("initialAmount",v)} ariaLabel="Valor inicial a reservar agora"/>
+        </div>
+        {(()=>{
+          const safeC=v=>{try{return maskToCents(v||"0,00");}catch{return 0;}};
+          const pace=computeCapitalPace({targetCents:safeC(form.goalTarget),targetDate:form.goalDesiredOn||brDay(),currentCapitalCents:safeC(form.initialAmount),monthlyContributionCents:Number(form.monthlyCapitalContributionCents||0),today:brDay()});
+          return pace.targetCents>0?(
+            <div className="kc-mob-sub-block">
+              <div className="kc-mob-sub-note">
+                <strong>Ritmo: {money(pace.requiredMonthlyCents)}/mês</strong>
+                <span>{pace.monthsLeft} mês(es) · Faltam {money(pace.remainingCents)}</span>
+              </div>
+            </div>
+          ):null;
+        })()}
+      </div>
+    ):<>
       <p className="hint">Cada Caixinha tem saldo próprio dentro do banco que você escolher, separado do uso diário.</p>
       <div className="direction-cards three" role="group" aria-label="Finalidade da caixinha">
         {[
@@ -1164,12 +1799,95 @@ export default function EntryDrawer({
           </div>
         </div>:null;
       })()}
-    </>}
+    </>)}
 
     {drawer==="reserve_caixinha"&&<>
       {caixinhas.length===0||checkingWallets.length===0?(
-        <div className="notice warning">
+        <div className="notice warning" style={{margin:isMobilePhone?"16px":"0"}}>
           <strong>{checkingWallets.length===0?"Cadastre uma conta bancária primeiro.":"Crie uma caixinha antes de reservar dinheiro."}</strong>
+        </div>
+      ):isMobilePhone?(
+        <div className="kc-mob-form-rows">
+          <div className="kc-mob-row">
+            <div className="kc-mob-period-pills">
+              <button
+                type="button"
+                className={`kc-mob-period-pill${(form.reserveDirection||"deposit")==="deposit"?" active":""}`}
+                onClick={()=>field("reserveDirection","deposit")}
+              >
+                <PiggyBank size={14}/> Guardar (Conta → Caixinha)
+              </button>
+              <button
+                type="button"
+                className={`kc-mob-period-pill${form.reserveDirection==="withdraw"?" active":""}`}
+                onClick={()=>field("reserveDirection","withdraw")}
+              >
+                <ArrowLeftRight size={14}/> Resgatar (Caixinha → Conta)
+              </button>
+            </div>
+          </div>
+          <div className="kc-mob-row kc-mob-row-money">
+            <CircleDollarSign size={22} className="kc-mob-row-icon" aria-hidden="true"/>
+            <span className="kc-mob-currency">R$</span>
+            <MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Valor em reais"/>
+          </div>
+          <div className="kc-mob-row kc-mob-row-entity">
+            <div className="kc-mob-entity-block">
+              <span className="kc-mob-row-caption">{form.reserveDirection==="withdraw"?"Para qual conta bancária vai o resgate?":"De qual conta bancária sai o valor?"}</span>
+              <div className="kc-mob-entity-controls">
+                <div className="kc-mob-entity-select-box">
+                  <BankIcon name={checkingWallets.find(w=>w.id===(form.fromWalletId||checkingWallets[0]?.id))?.name||"Conta"} size={36}/>
+                  <select required value={form.fromWalletId||checkingWallets[0]?.id||""} onChange={e=>field("fromWalletId",e.target.value)}>
+                    <option value="">Selecione a conta</option>
+                    {checkingWallets.map(w=>(
+                      <option key={w.id} value={w.id}>{w.name}{walletBalances[w.id]!=null?` (Livre: ${money(walletBalances[w.id])})`:""}</option>
+                    ))}
+                  </select>
+                  <ChevronDown size={16} className="kc-mob-entity-caret" aria-hidden="true"/>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="kc-mob-row kc-mob-row-entity">
+            <div className="kc-mob-entity-block">
+              <span className="kc-mob-row-caption">{form.reserveDirection==="withdraw"?"Resgatar de qual caixinha?":"Guardar em qual caixinha?"}</span>
+              <div className="kc-mob-entity-controls">
+                <div className="kc-mob-entity-select-box">
+                  <span className="kc-mob-cat-circle" style={{background:"rgba(16, 185, 129, 0.14)",color:"#10B981"}} aria-hidden="true">
+                    <PiggyBank size={17}/>
+                  </span>
+                  <select required value={form.caixinhaId||""} onChange={e=>field("caixinhaId",e.target.value)}>
+                    <option value="">Selecione a caixinha</option>
+                    {(form.reserveBankFilter?caixinhas.filter(c=>c.parent_wallet_id===form.reserveBankFilter):caixinhas).map(c=>{
+                      const bName=checkingWallets.find(w=>w.id===c.parent_wallet_id)?.name||"Sem banco";
+                      return <option key={c.id} value={c.id}>{c.title} ({bName} · Saldo: {money(caixinhaBalanceOf(c))})</option>;
+                    })}
+                  </select>
+                  <ChevronDown size={16} className="kc-mob-entity-caret" aria-hidden="true"/>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="kc-mob-row kc-mob-row-inline">
+            <CalendarDays size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+            <span className="kc-mob-inline-label">Data</span>
+            <input className="kc-mob-date-right" required type="date" max={brDay()} value={form.transferredOn||brDay()} onChange={e=>field("transferredOn",e.target.value)}/>
+          </div>
+          <div className="kc-mob-sub-block">
+            <div className="kc-mob-sub-note">
+              {(form.reserveDirection||"deposit")==="withdraw" ? (
+                <>
+                  <strong>Saldo disponível na caixinha</strong>
+                  <span>{money(caixinhaBalanceOf(caixinhas.find(c=>c.id===form.caixinhaId)))}</span>
+                </>
+              ) : (
+                <>
+                  <strong>Aporte seguro sugerido</strong>
+                  <span>{safeContribution&&safeContribution.canContribute?money(safeContribution.safeContributionCents):"Separa do uso diário"}</span>
+                </>
+              )}
+            </div>
+          </div>
         </div>
       ):(
         <>
