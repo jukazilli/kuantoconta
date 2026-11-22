@@ -53,6 +53,7 @@ import { expandRecurring } from "../../lib/recurring";
 import { buildFinancialHealthPlan } from "../../lib/financial-health";
 import EntryDrawer from "./EntryDrawer";
 import MoneyInput from "./MoneyInput";
+import PaymentSplitEditor, { serializeSplitRow } from "./PaymentSplitEditor";
 import { normalizeFormQuotes } from "./PlanningWizard";
 import MovementList from "./MovementList";
 import BudgetList from "./BudgetList";
@@ -873,27 +874,57 @@ export default function Dashboard({ user }) {
     setBusy(true);
     setError("");
     try {
-      const isCard = Boolean(checkoutListPlan.creditCardId);
       const paidDay = checkoutListPlan.paidOn || TODAY;
-      await request("POST", {
-        action: "title",
-        walletId: checkoutListPlan.walletId || checkingWallets[0]?.id || wallets[0]?.id,
-        creditCardId: isCard ? checkoutListPlan.creditCardId : null,
-        direction: "expense",
-        description: checkoutListPlan.goal.title,
-        category: checkoutListPlan.category || "Alimentação",
-        amount: (amtCents / 100).toFixed(2),
-        occurredOn: paidDay,
-        dueOn: paidDay,
-        mode: "single",
-        settlementState: isCard ? "pending" : "paid",
-        settledOn: isCard ? null : paidDay,
-        idempotencyKey: crypto.randomUUID(),
-      });
+      const cat = checkoutListPlan.category || "Alimentação";
+      if (checkoutListPlan.splitMode && Array.isArray(checkoutListPlan.splits) && checkoutListPlan.splits.length > 0) {
+        const serialized = checkoutListPlan.splits.map((r) => serializeSplitRow(r, checkingWallets[0]?.id || wallets[0]?.id || ""));
+        const splitTotal = serialized.reduce((s, sp) => s + sp.amountCents, 0);
+        if (splitTotal !== amtCents) {
+          setError("A soma das formas de pagamento deve fechar exatamente com o valor pago no caixa.");
+          setBusy(false);
+          return;
+        }
+        for (let i = 0; i < serialized.length; i++) {
+          const sp = serialized[i];
+          const isCard = sp.paymentMethod === "credit_card" && Boolean(sp.creditCardId);
+          await request("POST", {
+            action: "title",
+            walletId: sp.walletId || checkingWallets[0]?.id || wallets[0]?.id,
+            creditCardId: isCard ? sp.creditCardId : null,
+            direction: "expense",
+            description: serialized.length > 1 ? `${checkoutListPlan.goal.title} (${i + 1}/${serialized.length})` : checkoutListPlan.goal.title,
+            category: cat,
+            amount: (sp.amountCents / 100).toFixed(2),
+            occurredOn: paidDay,
+            dueOn: paidDay,
+            mode: "single",
+            settlementState: isCard ? "pending" : "paid",
+            settledOn: isCard ? null : paidDay,
+            idempotencyKey: crypto.randomUUID(),
+          });
+        }
+      } else {
+        const isCard = Boolean(checkoutListPlan.creditCardId);
+        await request("POST", {
+          action: "title",
+          walletId: checkoutListPlan.walletId || checkingWallets[0]?.id || wallets[0]?.id,
+          creditCardId: isCard ? checkoutListPlan.creditCardId : null,
+          direction: "expense",
+          description: checkoutListPlan.goal.title,
+          category: cat,
+          amount: (amtCents / 100).toFixed(2),
+          occurredOn: paidDay,
+          dueOn: paidDay,
+          mode: "single",
+          settlementState: isCard ? "pending" : "paid",
+          settledOn: isCard ? null : paidDay,
+          idempotencyKey: crypto.randomUUID(),
+        });
+      }
       await request("PATCH", { action: "fulfill_goal", goalId: checkoutListPlan.goal.id });
       await refresh();
       setCheckoutListPlan(null);
-      setNotice(`Compra "${checkoutListPlan.goal.title}" registrada em ${checkoutListPlan.category || "Alimentação"}.`);
+      setNotice(`Compra "${checkoutListPlan.goal.title}" registrada em ${cat}.`);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -3406,16 +3437,21 @@ export default function Dashboard({ user }) {
                             <small>Faltam {money(selectedGoal.sim.projectedPositions.caixinhaPosition.stillNeededCents)}</small>
                           </div>
                         )}
-                        {selectedGoal.sim.projectedPositions.cardPosition && (
-                          <div className="position-box">
-                            <div className="position-box-head"><CreditCard size={15} /> <strong>{selectedGoal.sim.projectedPositions.cardPosition.cardName}</strong></div>
+                        {(selectedGoal.sim.projectedPositions.cardPositions?.length
+                          ? selectedGoal.sim.projectedPositions.cardPositions
+                          : selectedGoal.sim.projectedPositions.cardPosition
+                            ? [selectedGoal.sim.projectedPositions.cardPosition]
+                            : []
+                        ).map((cp) => (
+                          <div className="position-box" key={cp.cardId}>
+                            <div className="position-box-head"><CreditCard size={15} /> <strong>{cp.cardName}</strong></div>
                             <small>
-                              Limite na data: <strong>{money(selectedGoal.sim.projectedPositions.cardPosition.availableLimitBeforeCents)}</strong> →{" "}
-                              <strong>{money(selectedGoal.sim.projectedPositions.cardPosition.availableLimitAfterCents)}</strong>
+                              Limite na data: <strong>{money(cp.availableLimitBeforeCents)}</strong> →{" "}
+                              <strong>{money(cp.availableLimitAfterCents)}</strong>
                             </small>
-                            <small>1ª fatura: {selectedGoal.sim.projectedPositions.cardPosition.firstInvoiceMonth}</small>
+                            <small>1ª fatura: {cp.firstInvoiceMonth}</small>
                           </div>
-                        )}
+                        ))}
                       </div>
                     )}
 
@@ -3463,12 +3499,12 @@ export default function Dashboard({ user }) {
                         className="pill pill-outline-orange"
                         style={{ justifyContent: "center" }}
                         onClick={() => {
-                          if (pricedItems.length > 0) {
-                            const execItems = buildExecutionTitlesFromGoal(g, {
-                              defaultWalletId: checkingWallets[0]?.id || wallets[0]?.id || "",
-                              defaultCategory: linkedBudget?.categoryName || "Outros",
-                              today: TODAY,
-                            }).map((it) => ({ ...it, selected: true }));
+                          const execItems = buildExecutionTitlesFromGoal(g, {
+                            defaultWalletId: checkingWallets[0]?.id || wallets[0]?.id || "",
+                            defaultCategory: linkedBudget?.categoryName || "Outros",
+                            today: TODAY,
+                          }).map((it) => ({ ...it, selected: true }));
+                          if (pricedItems.length > 0 || execItems.length > 1) {
                             setSelectedGoal(null);
                             setBatchExecutePlan({
                               goal: g,
@@ -3773,37 +3809,81 @@ export default function Dashboard({ user }) {
                   ariaLabel="Valor pago no caixa"
                 />
               </label>
-              <label>
-                Conta ou cartão utilizado
-                <select
-                  value={checkoutListPlan.creditCardId ? `card:${checkoutListPlan.creditCardId}` : checkoutListPlan.walletId}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    if (v.startsWith("card:")) {
-                      const cid = v.slice(5);
-                      const c = creditCards.find((x) => x.id === cid);
-                      setCheckoutListPlan((old) => ({
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <span className="field-caption">Forma de pagamento</span>
+                <button
+                  type="button"
+                  className={`tiny-btn${checkoutListPlan.splitMode ? " active" : ""}`}
+                  onClick={() =>
+                    setCheckoutListPlan((old) => {
+                      if (old.splitMode) return { ...old, splitMode: false };
+                      return {
                         ...old,
-                        creditCardId: cid,
-                        walletId: c?.default_wallet_id || old.walletId,
-                      }));
-                    } else {
-                      setCheckoutListPlan((old) => ({ ...old, creditCardId: "", walletId: v }));
-                    }
-                  }}
+                        splitMode: true,
+                        splits: [
+                          {
+                            id: `sp-ck-${Date.now()}`,
+                            paymentMethod: old.creditCardId ? "credit_card" : "standard",
+                            creditCardId: old.creditCardId || "",
+                            walletId: old.walletId || checkingWallets[0]?.id || "",
+                            sourceGoalId: "",
+                            amountMask: old.amountMask || "0,00",
+                            installmentCount: "1",
+                            interestPct: "",
+                          },
+                        ],
+                      };
+                    })
+                  }
                 >
-                  {checkingWallets.map((w) => (
-                    <option key={w.id} value={w.id}>
-                      🏦 {w.name}
-                    </option>
-                  ))}
-                  {creditCards.map((c) => (
-                    <option key={c.id} value={`card:${c.id}`}>
-                      💳 {c.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  {checkoutListPlan.splitMode ? "Usar 1 meio" : "+ Dividir pagamento"}
+                </button>
+              </div>
+
+              {checkoutListPlan.splitMode ? (
+                <PaymentSplitEditor
+                  totalCents={(() => { try { return maskToCents(checkoutListPlan.amountMask || "0,00"); } catch { return 0; } })()}
+                  splits={checkoutListPlan.splits || []}
+                  wallets={checkingWallets}
+                  creditCards={creditCards}
+                  rawData={data}
+                  allowCaixinha={false}
+                  allowInstallments={false}
+                  onChange={(nextSplits) => setCheckoutListPlan((old) => ({ ...old, splits: nextSplits }))}
+                />
+              ) : (
+                <label>
+                  Conta ou cartão utilizado
+                  <select
+                    value={checkoutListPlan.creditCardId ? `card:${checkoutListPlan.creditCardId}` : checkoutListPlan.walletId}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v.startsWith("card:")) {
+                        const cid = v.slice(5);
+                        const c = creditCards.find((x) => x.id === cid);
+                        setCheckoutListPlan((old) => ({
+                          ...old,
+                          creditCardId: cid,
+                          walletId: c?.default_wallet_id || old.walletId,
+                        }));
+                      } else {
+                        setCheckoutListPlan((old) => ({ ...old, creditCardId: "", walletId: v }));
+                      }
+                    }}
+                  >
+                    {checkingWallets.map((w) => (
+                      <option key={w.id} value={w.id}>
+                        🏦 {w.name}
+                      </option>
+                    ))}
+                    {creditCards.map((c) => (
+                      <option key={c.id} value={`card:${c.id}`}>
+                        💳 {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <div className="form-grid">
                 <label>
                   Categoria
