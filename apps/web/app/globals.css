@@ -6143,3 +6143,86 @@ input:not([type=checkbox]):not([type=radio]), select, textarea { font-size: 16px
   display: grid;
   gap: 2px;
 }
+
+/* ==========================================================================
+   Divisão de pagamento (múltiplos cartões / conta / caixinha)
+   ========================================================================== */
+.split-editor {
+  display: grid;
+  gap: 10px;
+}
+.split-editor-list {
+  display: grid;
+  gap: 8px;
+}
+.split-row {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--kc-line);
+  background: #fff;
+}
+.split-row-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.split-row-top select {
+  flex: 1;
+  min-width: 0;
+}
+.split-row-nums {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.split-mini-field {
+  display: grid;
+  gap: 3px;
+  width: 78px;
+}
+.split-mini-field span {
+  font-size: 11px;
+  color: var(--kc-muted);
+}
+.split-mini-field input {
+  height: 38px !important;
+  padding: 0 8px !important;
+  text-align: center;
+}
+.split-editor-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.split-balance-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.split-balance-badge.ok {
+  background: #ecfdf3;
+  color: #067647;
+}
+.split-balance-badge.warn {
+  background: #fff4ed;
+  color: #b84404;
+}
+.split-sync-link {
+  border: 0;
+  background: transparent;
+  color: var(--kc-orange);
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0 2px;
+}

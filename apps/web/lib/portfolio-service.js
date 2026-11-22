@@ -49,6 +49,28 @@ const safeUrl = (raw) => {
   return /^https?:\/\//i.test(trimmed) ? trimmed : "";
 };
 
+function sanitizePaymentSplitsList(rawSplits, uuidFn) {
+  if (!Array.isArray(rawSplits)) return [];
+  return rawSplits.slice(0, 10).map((sp, spIdx) => {
+    const mode =
+      sp?.paymentMethod === "credit_card" && uuidFn(sp?.creditCardId)
+        ? "credit_card"
+        : sp?.paymentMethod === "caixinha" && uuidFn(sp?.sourceGoalId)
+          ? "caixinha"
+          : "standard";
+    return {
+      id: textValue(String(sp?.id || `sp-${spIdx + 1}`), 60) || `sp-${spIdx + 1}`,
+      paymentMethod: mode,
+      creditCardId: mode === "credit_card" ? sp.creditCardId : null,
+      walletId: mode === "standard" && uuidFn(sp?.walletId) ? sp.walletId : null,
+      sourceGoalId: mode === "caixinha" ? sp.sourceGoalId : null,
+      amountCents: Math.max(0, Number.isSafeInteger(Number(sp?.amountCents)) ? Number(sp.amountCents) : 0),
+      installmentCount: Math.max(1, Math.min(60, parseInt(sp?.installmentCount, 10) || 1)),
+      interestBps: Math.min(10000, Math.max(0, Math.round(Number(sp?.interestBps || 0)))),
+    };
+  }).filter((sp) => sp.amountCents > 0);
+}
+
 function sanitizePlanningQuotes(rawQuotes, amountFn, uuidFn) {
   if (!Array.isArray(rawQuotes)) return [];
   return rawQuotes.slice(0, 12).map((q, idx) => {
@@ -60,6 +82,7 @@ function sanitizePlanningQuotes(rawQuotes, amountFn, uuidFn) {
           paymentMethod: it?.paymentMethod === "credit_card" && uuidFn(it?.creditCardId) ? "credit_card" : "standard",
           creditCardId: it?.paymentMethod === "credit_card" && uuidFn(it?.creditCardId) ? it.creditCardId : null,
           installmentCount: Math.max(1, Math.min(60, parseInt(it?.installmentCount, 10) || 1)),
+          paymentSplits: sanitizePaymentSplitsList(it?.paymentSplits, uuidFn),
           checked: Boolean(it?.checked),
         }))
       : [];
@@ -73,6 +96,7 @@ function sanitizePlanningQuotes(rawQuotes, amountFn, uuidFn) {
     const instCentsRaw = Number(q?.installmentCents);
     const installmentCents = Number.isSafeInteger(instCentsRaw) && instCentsRaw >= 0 ? instCentsRaw : 0;
     const interestBps = Math.min(10000, Math.max(0, Math.round(Number(q?.interestBps || 0))));
+    const paymentSplits = sanitizePaymentSplitsList(q?.paymentSplits, uuidFn);
     return {
       id: textValue(String(q?.id || `q-${idx + 1}`), 60) || `q-${idx + 1}`,
       label: textValue(String(q?.label || `Cotação ${idx + 1}`), 120) || `Cotação ${idx + 1}`,
@@ -90,6 +114,7 @@ function sanitizePlanningQuotes(rawQuotes, amountFn, uuidFn) {
       sourceGoalId: uuidFn(q?.sourceGoalId) ? q.sourceGoalId : null,
       parentWalletId: uuidFn(q?.parentWalletId) ? q.parentWalletId : null,
       notes: typeof q?.notes === "string" ? q.notes.trim().slice(0, 300) : "",
+      paymentSplits,
       items,
       isChosen: Boolean(q?.isChosen),
     };

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildExecutionTitlesFromGoal, comparePlanningQuotes, compareSavedPlans, simulateGoalPurchase } from "./goal-planner.js";
+import { buildExecutionTitlesFromGoal, comparePlanningQuotes, compareSavedPlans, simulateGoalPurchase, validatePaymentSplits } from "./goal-planner.js";
 import { buildFinancialHealthPlan } from "./financial-health.js";
 
 test("FH-02: R$ 700 cash with R$ 600 rent tomorrow rejects R$ 500 down payment today", () => {
@@ -429,4 +429,94 @@ test("compareSavedPlans ranks 2+ saved plans side by side after creation", () =>
   assert.equal(cmp.hasComparison, true);
   assert.equal(cmp.winner.id, "p-bus");
   assert.equal(cmp.totalSavedVsWorstCents, 160000);
+});
+
+test("multi-card and hybrid paymentSplits validate limits per card and expand execution titles", () => {
+  const rawData = {
+    wallets: [{ id: "w-chk", name: "Nubank", opening_balance_cents: 400000, opening_at: "2026-11-01T00:00:00Z", wallet_kind: "checking" }],
+    goals: [{ id: "g-cx", title: "Reserva Viagem", category: "capital_goal", target_cents: 100000, wallet_id: "w-cx" }],
+    creditCards: [
+      { id: "cc-a", name: "Nubank", limit_cents: 200000, closing_day: 5, due_day: 12 },
+      { id: "cc-b", name: "PicPay", limit_cents: 150000, closing_day: 20, due_day: 27 },
+    ],
+    titles: [],
+    settlements: [],
+    assets: [],
+    liabilities: [],
+  };
+
+  // Validate split sum reconciliation
+  assert.equal(
+    validatePaymentSplits({
+      totalCents: 300000,
+      splits: [
+        { paymentMethod: "credit_card", creditCardId: "cc-a", amountCents: 180000 },
+        { paymentMethod: "credit_card", creditCardId: "cc-b", amountCents: 100000 },
+      ],
+    }).ok,
+    false
+  );
+  assert.equal(
+    validatePaymentSplits({
+      totalCents: 300000,
+      splits: [
+        { paymentMethod: "credit_card", creditCardId: "cc-a", amountCents: 180000 },
+        { paymentMethod: "credit_card", creditCardId: "cc-b", amountCents: 120000 },
+      ],
+    }).ok,
+    true
+  );
+
+  // Simulate 1 purchase of R$ 3.000 split across 2 cards (R$ 1.800 on cc-a + R$ 1.200 on cc-b)
+  const sim = simulateGoalPurchase(
+    rawData,
+    {
+      title: "Notebook",
+      targetCents: 300000,
+      desiredOn: "2026-11-22",
+      paymentSplits: [
+        { id: "s1", paymentMethod: "credit_card", creditCardId: "cc-a", amountCents: 180000, installmentCount: 6 },
+        { id: "s2", paymentMethod: "credit_card", creditCardId: "cc-b", amountCents: 120000, installmentCount: 4 },
+      ],
+    },
+    { today: "2026-11-22" }
+  );
+
+  assert.equal(sim.isFeasible, true);
+  assert.equal(sim.projectedPositions.cardPositions.length, 2);
+  assert.equal(sim.projectedPositions.cardPositions[0].availableLimitAfterCents, 20000);
+  assert.equal(sim.projectedPositions.cardPositions[1].availableLimitAfterCents, 30000);
+
+  // Per-item split inside a trip expands into individual launchable titles
+  const tripGoal = {
+    id: "g-trip",
+    title: "Viagem",
+    desired_on: "2026-12-10",
+    quotes_json: [
+      {
+        id: "q-1",
+        isChosen: true,
+        items: [
+          {
+            id: "it-flight",
+            title: "Passagens",
+            amountCents: 120000,
+            paymentSplits: [
+              { id: "sp1", paymentMethod: "credit_card", creditCardId: "cc-a", amountCents: 70000, installmentCount: 6 },
+              { id: "sp2", paymentMethod: "credit_card", creditCardId: "cc-b", amountCents: 50000, installmentCount: 3 },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+
+  const execTitles = buildExecutionTitlesFromGoal(tripGoal, { defaultWalletId: "w-chk", defaultCategory: "Lazer", today: "2026-11-22" });
+  assert.equal(execTitles.length, 2);
+  assert.equal(execTitles[0].description, "Passagens (1/2)");
+  assert.equal(execTitles[0].creditCardId, "cc-a");
+  assert.equal(execTitles[0].installmentCount, 6);
+  assert.equal(execTitles[1].description, "Passagens (2/2)");
+  assert.equal(execTitles[1].creditCardId, "cc-b");
+  assert.equal(execTitles[1].installmentCount, 3);
 });

@@ -13,10 +13,11 @@ import {
   Wallet,
 } from "lucide-react";
 import MoneyInput from "./MoneyInput";
+import PaymentSplitEditor, { hydrateSplitRow, serializeSplitRow } from "./PaymentSplitEditor";
 import { brDay, cents, isoDate, money } from "../../lib/finance";
 import { centsToMask, maskToCents } from "../../lib/money-input";
 import { computeCardUsage } from "../../lib/credit-cards";
-import { simulateGoalPurchase } from "../../lib/goal-planner";
+import { simulateGoalPurchase, validatePaymentSplits } from "../../lib/goal-planner";
 
 const fdate = (d) => {
   const s = isoDate(d).split("-");
@@ -96,6 +97,7 @@ export default function PlanningWizard({
   const [itemPayMode, setItemPayMode] = useState("standard");
   const [itemCardId, setItemCardId] = useState(creditCards[0]?.id || "");
   const [itemInst, setItemInst] = useState("1");
+  const [splitItemId, setSplitItemId] = useState(null);
 
   const checkingWallets = wallets;
   const planType = ["purchase", "trip", "shopping_list"].includes(form.goalPlanType)
@@ -178,6 +180,19 @@ export default function PlanningWizard({
   const itemsSumCents = items.reduce((s, it) => s + cents(it.amountCents), 0);
   const effectiveTargetCents =
     planType === "trip" && itemsSumCents > 0 ? itemsSumCents : safeCents(activeQuote.target);
+  const activeSplits = Array.isArray(activeQuote.paymentSplits) ? activeQuote.paymentSplits : [];
+  const isSplitMode = planType === "purchase" && activeSplits.length > 0;
+  const splitRows = useMemo(
+    () => activeSplits.map((sp) => hydrateSplitRow(sp, checkingWallets[0]?.id || "")),
+    [activeSplits, checkingWallets]
+  );
+  const splitCheck = useMemo(
+    () =>
+      isSplitMode
+        ? validatePaymentSplits({ totalCents: effectiveTargetCents, splits: activeSplits })
+        : { ok: true, remainingCents: 0, error: "" },
+    [isSplitMode, effectiveTargetCents, activeSplits]
+  );
   const pStruct = activeQuote.paymentStructure || "upfront";
   const downPaymentCents = pStruct === "hybrid" ? Math.min(effectiveTargetCents, safeCents(activeQuote.downPayment)) : 0;
   const instCount = pStruct === "upfront" ? 1 : Math.max(2, Math.min(120, Number(activeQuote.installmentCount || 12)));
@@ -204,6 +219,8 @@ export default function PlanningWizard({
         downPaymentSource: activeQuote.downPaymentSource || "checking",
         sourceGoalId: activeQuote.downPaymentSource === "caixinha" ? activeQuote.sourceGoalId || null : null,
         createLinkedCaixinha: activeQuote.downPaymentSource === "create_caixinha",
+        paymentSplits: isSplitMode ? activeSplits : [],
+        items: planType === "trip" ? items : [],
       },
       { today: brDay() }
     );
@@ -221,6 +238,10 @@ export default function PlanningWizard({
     activeQuote.selectedWalletId,
     activeQuote.downPaymentSource,
     activeQuote.sourceGoalId,
+    isSplitMode,
+    activeSplits,
+    planType,
+    items,
     checkingWallets,
   ]);
 
@@ -426,44 +447,134 @@ export default function PlanningWizard({
 
             {items.length > 0 && (
               <ul className="wizard-items-list">
-                {items.map((it) => (
-                  <li key={it.id}>
-                    <span>
-                      <strong>{it.title}</strong>
-                      {planType === "trip" && (
-                        <small className="hint" style={{ marginLeft: 6 }}>
-                          {it.paymentMethod === "credit_card"
-                            ? `${it.installmentCount || 1}x no cartão`
-                            : "Conta / À vista"}
-                        </small>
+                {items.map((it) => {
+                  const itSplits = Array.isArray(it.paymentSplits) ? it.paymentSplits : [];
+                  const isEditingSplit = planType === "trip" && splitItemId === it.id;
+                  const itSplitRows = (itSplits.length > 0
+                    ? itSplits
+                    : [
+                        {
+                          id: `sp-${it.id}-1`,
+                          paymentMethod: it.paymentMethod || "standard",
+                          creditCardId: it.creditCardId || "",
+                          walletId: checkingWallets[0]?.id || "",
+                          amountCents: cents(it.amountCents),
+                          installmentCount: it.installmentCount || 1,
+                        },
+                      ]
+                  ).map((sp) => hydrateSplitRow(sp, checkingWallets[0]?.id || ""));
+                  return (
+                    <li key={it.id} style={{ flexDirection: "column", alignItems: "stretch", gap: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                        <span>
+                          <strong>{it.title}</strong>
+                          {planType === "trip" && (
+                            <small className="hint" style={{ marginLeft: 6 }}>
+                              {itSplits.length > 1
+                                ? `${itSplits.length} formas de pagamento`
+                                : it.paymentMethod === "credit_card"
+                                  ? `${it.installmentCount || 1}x no cartão`
+                                  : "Conta / À vista"}
+                            </small>
+                          )}
+                        </span>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          {cents(it.amountCents) > 0 && <strong>{money(it.amountCents)}</strong>}
+                          {planType === "trip" && cents(it.amountCents) > 0 && (
+                            <button
+                              type="button"
+                              className="tiny-btn"
+                              onClick={() => setSplitItemId(isEditingSplit ? null : it.id)}
+                            >
+                              {isEditingSplit ? "Fechar divisão" : "Dividir"}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="plain-icon"
+                            style={{ width: 26, height: 26 }}
+                            aria-label={`Remover ${it.title}`}
+                            onClick={() => removeItem(it.id)}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </span>
+                      </div>
+                      {isEditingSplit && (
+                        <PaymentSplitEditor
+                          totalCents={cents(it.amountCents)}
+                          splits={itSplitRows}
+                          wallets={checkingWallets}
+                          creditCards={creditCards}
+                          caixinhas={caixinhas}
+                          rawData={rawData}
+                          allowCaixinha={false}
+                          onChange={(nextRows) => {
+                            const serialized = nextRows.map((r) => serializeSplitRow(r, checkingWallets[0]?.id || ""));
+                            const nextItems = items.map((x) =>
+                              x.id === it.id ? { ...x, paymentSplits: serialized } : x
+                            );
+                            updateQuote({ items: nextItems });
+                          }}
+                        />
                       )}
-                    </span>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                      {cents(it.amountCents) > 0 && <strong>{money(it.amountCents)}</strong>}
-                      <button
-                        type="button"
-                        className="plain-icon"
-                        style={{ width: 26, height: 26 }}
-                        aria-label={`Remover ${it.title}`}
-                        onClick={() => removeItem(it.id)}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </span>
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
         )}
 
-        {/* PAGAMENTO (Foco limpo para Compra / Objetivo; em Viagem apenas conta padrão para itens à vista) */}
+        {/* PAGAMENTO (Foco limpo para Compra / Objetivo; com suporte a múltiplos cartões/meios) */}
         {planType === "purchase" && (
           <div className="repeat-config" style={{ gap: 10 }}>
-            <span className="field-caption" style={{ fontWeight: 600 }}>
-              Como pretende pagar?
-            </span>
-            <div className="direction-cards three" role="group" aria-label="Estrutura de pagamento">
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+              <span className="field-caption" style={{ fontWeight: 600 }}>
+                Como pretende pagar?
+              </span>
+              <button
+                type="button"
+                className={`tiny-btn${isSplitMode ? " active" : ""}`}
+                onClick={() => {
+                  if (isSplitMode) {
+                    updateQuote({ paymentSplits: [] });
+                  } else {
+                    const seedSplit = {
+                      id: `sp-${Date.now()}-1`,
+                      paymentMethod: activeQuote.paymentMethod === "credit_card" ? "credit_card" : "standard",
+                      creditCardId: activeQuote.creditCardId || creditCards[0]?.id || "",
+                      walletId: activeQuote.selectedWalletId || checkingWallets[0]?.id || "",
+                      sourceGoalId: activeQuote.downPaymentSource === "caixinha" ? activeQuote.sourceGoalId || "" : "",
+                      amountCents: Math.max(0, effectiveTargetCents),
+                      installmentCount: pStruct === "upfront" ? 1 : Number(activeQuote.installmentCount || 1),
+                      interestBps,
+                    };
+                    updateQuote({ paymentSplits: [seedSplit] });
+                  }
+                }}
+              >
+                {isSplitMode ? "Usar pagamento único" : "+ Dividir pagamento (2+ cartões / Pix)"}
+              </button>
+            </div>
+
+            {isSplitMode ? (
+              <PaymentSplitEditor
+                totalCents={effectiveTargetCents}
+                splits={splitRows}
+                wallets={checkingWallets}
+                creditCards={creditCards}
+                caixinhas={caixinhas}
+                rawData={rawData}
+                onSyncTotal={(newMask) => updateQuote({ target: newMask })}
+                onChange={(nextRows) => {
+                  const serialized = nextRows.map((r) => serializeSplitRow(r, checkingWallets[0]?.id || ""));
+                  updateQuote({ paymentSplits: serialized });
+                }}
+              />
+            ) : (
+              <>
+                <div className="direction-cards three" role="group" aria-label="Estrutura de pagamento">
               {[
                 ["upfront", "À vista", "Na data ou 1x cartão"],
                 ["installments", "Parcelado", "Em Nx mensais"],
@@ -626,6 +737,8 @@ export default function PlanningWizard({
                 </label>
               )}
             </div>
+              </>
+            )}
           </div>
         )}
 
@@ -647,6 +760,14 @@ export default function PlanningWizard({
                   : `Total: ${money(liveVerdict.totalCostCents || effectiveTargetCents)} · Menor saldo futuro: ${money(
                       liveVerdict.projectedPositions?.walletPosition?.minFutureBalanceAfterCents ?? 0
                     )}.`}
+                {(liveVerdict.projectedPositions?.cardPositions || []).length > 0 && (
+                  <>
+                    {" · "}
+                    {(liveVerdict.projectedPositions.cardPositions || [])
+                      .map((cp) => `${cp.cardName}: ${money(cp.availableLimitBeforeCents)} → ${money(cp.availableLimitAfterCents)}`)
+                      .join(" · ")}
+                  </>
+                )}
               </small>
             </div>
           </div>
@@ -654,7 +775,7 @@ export default function PlanningWizard({
 
         {/* Único CTA principal (sem duplicidade com cabeçalho) */}
         <div className="wizard-nav" style={{ justifyContent: "flex-end", paddingTop: 4 }}>
-          <button type="submit" className="pill pill-primary" disabled={busy}>
+          <button type="submit" className="pill pill-primary" disabled={busy || (isSplitMode && !splitCheck.ok)}>
             <CheckCircle2 size={16} aria-hidden="true" />
             {busy ? "Salvando..." : form.goalId ? "Salvar alterações" : "Salvar planejamento"}
           </button>

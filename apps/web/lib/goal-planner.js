@@ -145,6 +145,124 @@ function buildSchedule(goal, startDate, coveredByCaixinhaCents = 0, selectedCard
   return outflows;
 }
 
+/**
+ * Validates that payment splits sum to totalCents without negative values.
+ */
+export function validatePaymentSplits({ totalCents = 0, splits = [] }) {
+  const total = Math.max(0, cents(totalCents));
+  const list = Array.isArray(splits) ? splits : [];
+  if (list.length === 0) {
+    return { ok: true, allocatedCents: total, remainingCents: 0, error: "" };
+  }
+  const allocatedCents = list.reduce((s, sp) => s + Math.max(0, cents(sp?.amountCents)), 0);
+  const remainingCents = total - allocatedCents;
+  if (total > 0 && remainingCents > 0) {
+    return { ok: false, allocatedCents, remainingCents, error: "A soma das formas de pagamento ainda está abaixo do valor total." };
+  }
+  if (total > 0 && remainingCents < 0) {
+    return { ok: false, allocatedCents, remainingCents, error: "A soma das formas de pagamento ultrapassa o valor total." };
+  }
+  return { ok: true, allocatedCents, remainingCents: 0, error: "" };
+}
+
+function collectPlanSplits(goal = {}) {
+  const topSplits = Array.isArray(goal.paymentSplits)
+    ? goal.paymentSplits.filter((sp) => cents(sp?.amountCents) > 0)
+    : [];
+  if (topSplits.length > 0) return topSplits;
+
+  const items = Array.isArray(goal.items) ? goal.items.filter((it) => cents(it?.amountCents) > 0) : [];
+  const itemSplits = [];
+  let hasItemLevelSplits = false;
+  for (const it of items) {
+    if (Array.isArray(it.paymentSplits) && it.paymentSplits.length > 0) {
+      hasItemLevelSplits = true;
+      for (const sp of it.paymentSplits) {
+        if (cents(sp?.amountCents) > 0) itemSplits.push(sp);
+      }
+    } else {
+      itemSplits.push({
+        paymentMethod: it.paymentMethod || "standard",
+        creditCardId: it.creditCardId || null,
+        walletId: it.walletId || goal.selectedWalletId || null,
+        sourceGoalId: it.sourceGoalId || null,
+        amountCents: cents(it.amountCents),
+        installmentCount: Math.max(1, Number(it.installmentCount || 1)),
+        interestBps: Number(it.interestBps || 0),
+      });
+    }
+  }
+  if (hasItemLevelSplits) return itemSplits;
+  return null;
+}
+
+function buildScheduleFromSplits(splits, startDate, allCards = [], caixinhaBalancesByGoalId = new Map()) {
+  const outflows = [];
+  const remainingCaixinhaById = new Map(caixinhaBalancesByGoalId);
+
+  for (const sp of splits) {
+    const amt = Math.max(0, cents(sp?.amountCents));
+    if (amt <= 0) continue;
+    const count = Math.max(1, Math.min(120, Number(sp?.installmentCount || 1)));
+    const bps = Math.min(10000, Math.max(0, Number(sp?.interestBps || 0)));
+
+    if (sp.paymentMethod === "caixinha" && sp.sourceGoalId) {
+      const avail = remainingCaixinhaById.get(String(sp.sourceGoalId)) || 0;
+      const used = Math.min(amt, avail);
+      remainingCaixinhaById.set(String(sp.sourceGoalId), Math.max(0, avail - used));
+      const uncovered = Math.max(0, amt - used);
+      if (uncovered > 0) {
+        outflows.push({ date: startDate, amountCents: uncovered, kind: "down_payment" });
+      }
+      continue;
+    }
+
+    if (sp.paymentMethod === "credit_card" && sp.creditCardId) {
+      const card = allCards.find((c) => String(c.id) === String(sp.creditCardId) && !c.archived_at);
+      const perInst =
+        count > 1
+          ? computePriceInstallmentCents({ financedCents: amt, installmentCount: count, monthlyInterestBps: bps })
+          : amt;
+      if (card) {
+        const firstCycle = computeInvoiceCycleForPurchase({
+          purchaseDate: startDate,
+          closingDay: card.closing_day,
+          dueDay: card.due_day,
+        });
+        for (let i = 0; i < count; i++) {
+          const ym = addMonthsYm(firstCycle.invoiceMonth, i);
+          const { dueDate } = getInvoiceCycleDates(card, ym);
+          outflows.push({
+            date: dueDate,
+            amountCents: perInst,
+            kind: "card_installment",
+            invoiceMonth: ym,
+            index: i + 1,
+          });
+        }
+      } else {
+        for (let i = 0; i < count; i++) {
+          outflows.push({ date: addMonthsIso(startDate, i), amountCents: perInst, kind: "installment", index: i + 1 });
+        }
+      }
+      continue;
+    }
+
+    // Standard checking account payment
+    if (count === 1) {
+      outflows.push({ date: startDate, amountCents: amt, kind: "single" });
+    } else {
+      const perInst = computePriceInstallmentCents({ financedCents: amt, installmentCount: count, monthlyInterestBps: bps });
+      for (let i = 0; i < count; i++) {
+        outflows.push({ date: addMonthsIso(startDate, i), amountCents: perInst, kind: "installment", index: i + 1 });
+      }
+    }
+  }
+
+  outflows.sort((a, b) => a.date.localeCompare(b.date));
+  return outflows;
+}
+
 function evaluateCandidate(daily, floorCents, outflows, horizonEnd, cardCheck = null, candidateStartDate = null) {
   if (cardCheck && candidateStartDate) {
     const cardEval = cardCheck(candidateStartDate);
@@ -335,9 +453,27 @@ export function simulateGoalPurchase(rawData, goal, options = {}) {
           })
         : 0;
 
-  // Per-card requirements support both single-card quote and multi-item trip (some items on card, some upfront)
+  const explicitSplits = collectPlanSplits(goal);
+  const caixinhaBalancesByGoalId = new Map();
+  for (const gRow of rawData?.goals || []) {
+    if (gRow?.category === "capital_goal" && gRow.wallet_id) {
+      const wb = (reconciled.walletBreakdown || []).find((w) => String(w.id) === String(gRow.wallet_id));
+      caixinhaBalancesByGoalId.set(String(gRow.id), Math.max(0, wb?.balanceCents ?? 0));
+    }
+  }
+
+  // Per-card requirements support single-card, multi-card splits, and multi-item trips
   const itemCardRequirements = new Map();
-  if (rawItems.length > 0 && downCents === 0 && !selectedCard) {
+  if (explicitSplits) {
+    for (const sp of explicitSplits) {
+      if (sp.paymentMethod === "credit_card" && sp.creditCardId) {
+        itemCardRequirements.set(
+          String(sp.creditCardId),
+          (itemCardRequirements.get(String(sp.creditCardId)) || 0) + Math.max(0, cents(sp.amountCents))
+        );
+      }
+    }
+  } else if (rawItems.length > 0 && downCents === 0 && !selectedCard) {
     for (const it of rawItems) {
       if (it.paymentMethod === "credit_card" && it.creditCardId) {
         itemCardRequirements.set(
@@ -352,17 +488,32 @@ export function simulateGoalPurchase(rawData, goal, options = {}) {
       ? allCards.find((c) => itemCardRequirements.has(String(c.id)) && !c.archived_at) || null
       : null;
   const effectiveCardForVerdict = selectedCard || primaryCardFromItems;
-  const cardRequiredLimitCents = selectedCard
+  const cardRequiredLimitCents = selectedCard && !explicitSplits
     ? Math.max(0, financedCents)
-    : primaryCardFromItems
-      ? itemCardRequirements.get(String(primaryCardFromItems.id)) || 0
+    : effectiveCardForVerdict
+      ? itemCardRequirements.get(String(effectiveCardForVerdict.id)) || 0
       : 0;
-  const totalInterestCents =
-    rawItems.length > 0 && downCents === 0 && !selectedCard
+  const splitsTotalCostCents = explicitSplits
+    ? explicitSplits.reduce((sum, sp) => {
+        const amt = Math.max(0, cents(sp?.amountCents));
+        const cnt = Math.max(1, Number(sp?.installmentCount || 1));
+        const bps = Math.min(10000, Math.max(0, Number(sp?.interestBps || 0)));
+        if (sp.paymentMethod === "caixinha" || cnt === 1) return sum + amt;
+        const pInst = computePriceInstallmentCents({ financedCents: amt, installmentCount: cnt, monthlyInterestBps: bps });
+        return sum + pInst * cnt;
+      }, 0)
+    : 0;
+  const splitsPrincipalCents = explicitSplits
+    ? explicitSplits.reduce((sum, sp) => sum + Math.max(0, cents(sp?.amountCents)), 0)
+    : 0;
+  const totalInterestCents = explicitSplits
+    ? Math.max(0, splitsTotalCostCents - splitsPrincipalCents)
+    : rawItems.length > 0 && downCents === 0 && !selectedCard
       ? 0
       : Math.max(0, perInstallmentCents * installmentCount - financedCents);
-  const totalCostCents =
-    rawItems.length > 0 && downCents === 0 && !selectedCard
+  const totalCostCents = explicitSplits
+    ? splitsTotalCostCents
+    : rawItems.length > 0 && downCents === 0 && !selectedCard
       ? targetCents
       : downCents + perInstallmentCents * installmentCount;
 
@@ -426,7 +577,7 @@ export function simulateGoalPurchase(rawData, goal, options = {}) {
   const allTitlesForCards = expanded.titles || rawData?.titles || [];
   const cardLimitCheck = effectiveCardForVerdict
     ? (candidateDay) => {
-        if (selectedCard) {
+        if (selectedCard && !explicitSplits) {
           const usage = computeCardUsageAtDate(selectedCard, allTitlesForCards, candidateDay, today);
           return {
             ok: usage.availableLimitCents >= cardRequiredLimitCents,
@@ -446,14 +597,19 @@ export function simulateGoalPurchase(rawData, goal, options = {}) {
       }
     : null;
 
-  const desiredSchedule = buildSchedule(effectiveNormalizedGoal, desiredDate, coveredByCaixinhaCents, selectedCard, allCards);
+  const buildActiveSchedule = (startDay) =>
+    explicitSplits
+      ? buildScheduleFromSplits(explicitSplits, startDay, allCards, caixinhaBalancesByGoalId)
+      : buildSchedule(effectiveNormalizedGoal, startDay, coveredByCaixinhaCents, selectedCard, allCards);
+
+  const desiredSchedule = buildActiveSchedule(desiredDate);
   const desiredEval = evaluateCandidate(daily, protectedFloorCents, desiredSchedule, simulationEnd, cardLimitCheck, desiredDate);
 
   // Search for first feasible date up to baseHorizonEnd
   let firstFeasibleDate = desiredEval.feasible ? desiredDate : null;
   if (!firstFeasibleDate) {
     for (let d = today; d <= baseHorizonEnd; d = dayAdd(d, 1)) {
-      const sched = buildSchedule(effectiveNormalizedGoal, d, coveredByCaixinhaCents, selectedCard, allCards);
+      const sched = buildActiveSchedule(d);
       const ev = evaluateCandidate(daily, protectedFloorCents, sched, simulationEnd, cardLimitCheck, d);
       if (ev.feasible) {
         firstFeasibleDate = d;
@@ -575,7 +731,48 @@ export function simulateGoalPurchase(rawData, goal, options = {}) {
     };
   }
 
-  const cardPosition = creditCardVerdict
+  const cardPositions = [];
+  const cardReqEntries =
+    itemCardRequirements.size > 0
+      ? Array.from(itemCardRequirements.entries())
+      : effectiveCardForVerdict
+        ? [[String(effectiveCardForVerdict.id), cardRequiredLimitCents]]
+        : [];
+  for (const [cid, reqCents] of cardReqEntries) {
+    const cardObj = allCards.find((c) => String(c.id) === cid && !c.archived_at);
+    if (!cardObj) continue;
+    const uDesired = computeCardUsageAtDate(cardObj, allTitlesForCards, desiredDate, today);
+    const cyc = computeInvoiceCycleForPurchase({
+      purchaseDate: desiredDate,
+      closingDay: cardObj.closing_day,
+      dueDay: cardObj.due_day,
+    });
+    const hasEnough = uDesired.availableLimitCents >= reqCents;
+    let readyDay = hasEnough ? desiredDate : null;
+    if (!readyDay) {
+      for (let d = today; d <= simulationEnd; d = dayAdd(d, 1)) {
+        const u = computeCardUsageAtDate(cardObj, allTitlesForCards, d, today);
+        if (u.availableLimitCents >= reqCents) {
+          readyDay = d;
+          break;
+        }
+      }
+    }
+    cardPositions.push({
+      cardId: cardObj.id,
+      cardName: cardObj.name,
+      limitCents: uDesired.limitCents,
+      availableLimitBeforeCents: uDesired.availableLimitCents,
+      chargeAmountCents: reqCents,
+      availableLimitAfterCents: Math.max(0, uDesired.availableLimitCents - reqCents),
+      hasEnoughLimit: hasEnough,
+      limitReadyDate: readyDay,
+      firstInvoiceMonth: cyc.invoiceMonth,
+      firstInvoiceDueDate: cyc.dueDate,
+      invoiceInstallmentCents: perInstallmentCents,
+    });
+  }
+  const cardPosition = cardPositions[0] || (creditCardVerdict
     ? {
         cardId: creditCardVerdict.cardId,
         cardName: creditCardVerdict.cardName,
@@ -592,7 +789,7 @@ export function simulateGoalPurchase(rawData, goal, options = {}) {
         firstInvoiceDueDate: creditCardVerdict.firstInvoiceDueDate,
         invoiceInstallmentCents: perInstallmentCents,
       }
-    : null;
+    : null);
 
   const budgetCatId = goal.budgetCategoryId || goal.budget_category_id || null;
   const matchedBudget = budgetCatId
@@ -746,6 +943,7 @@ export function simulateGoalPurchase(rawData, goal, options = {}) {
       walletPosition,
       caixinhaPosition,
       cardPosition,
+      cardPositions,
       budgetPosition,
     },
     scenarios,
@@ -808,6 +1006,7 @@ export function comparePlanningQuotes(rawData, goalRecord = {}, options = {}) {
         budgetCategoryId: q.budgetCategoryId || baseCategory,
         desiredOn,
         items: q.items || [],
+        paymentSplits: Array.isArray(q.paymentSplits) ? q.paymentSplits : [],
       },
       options
     );
@@ -888,16 +1087,69 @@ export function buildExecutionTitlesFromGoal(
   const fallbackWallet = goalRecord.selected_wallet_id || chosenQuote?.selectedWalletId || defaultWalletId;
 
   if (pricedItems.length > 0) {
-    return pricedItems.map((it, idx) => {
+    const out = [];
+    for (let idx = 0; idx < pricedItems.length; idx++) {
+      const it = pricedItems[idx];
+      const baseTitle = String(it.title || `Item ${idx + 1}`).slice(0, 110);
+      const splits = Array.isArray(it.paymentSplits)
+        ? it.paymentSplits.filter((sp) => cents(sp?.amountCents) > 0 && sp?.paymentMethod !== "caixinha")
+        : [];
+      if (splits.length > 0) {
+        splits.forEach((sp, sIdx) => {
+          const inst = Math.max(1, Math.min(60, Number(sp.installmentCount || 1)));
+          const useCard = sp.paymentMethod === "credit_card" && Boolean(sp.creditCardId);
+          out.push({
+            itemId: `${it.id || `item-${idx + 1}`}-sp-${sIdx + 1}`,
+            description: (splits.length > 1 ? `${baseTitle} (${sIdx + 1}/${splits.length})` : baseTitle).slice(0, 120),
+            amountCents: cents(sp.amountCents),
+            paymentMethod: useCard ? "credit_card" : "standard",
+            creditCardId: useCard ? String(sp.creditCardId) : null,
+            walletId: sp.walletId || it.walletId || fallbackWallet,
+            installmentCount: inst,
+            mode: inst > 1 ? "installments" : "single",
+            valueMode: "total",
+            category: defaultCategory,
+            occurredOn: today,
+            dueOn: effectiveDueOn,
+          });
+        });
+        continue;
+      }
       const inst = Math.max(1, Math.min(60, Number(it.installmentCount || 1)));
       const useCard = it.paymentMethod === "credit_card" && Boolean(it.creditCardId);
-      return {
+      out.push({
         itemId: String(it.id || `item-${idx + 1}`),
-        description: String(it.title || `Item ${idx + 1}`).slice(0, 120),
+        description: baseTitle.slice(0, 120),
         amountCents: cents(it.amountCents),
         paymentMethod: useCard ? "credit_card" : "standard",
         creditCardId: useCard ? String(it.creditCardId) : null,
         walletId: it.walletId || fallbackWallet,
+        installmentCount: inst,
+        mode: inst > 1 ? "installments" : "single",
+        valueMode: "total",
+        category: defaultCategory,
+        occurredOn: today,
+        dueOn: effectiveDueOn,
+      });
+    }
+    return out;
+  }
+
+  const topSplits = Array.isArray(chosenQuote?.paymentSplits)
+    ? chosenQuote.paymentSplits.filter((sp) => cents(sp?.amountCents) > 0 && sp?.paymentMethod !== "caixinha")
+    : [];
+  if (topSplits.length > 0) {
+    const baseTitle = String(goalRecord.title || "Planejamento").slice(0, 110);
+    return topSplits.map((sp, sIdx) => {
+      const inst = Math.max(1, Math.min(60, Number(sp.installmentCount || 1)));
+      const useCard = sp.paymentMethod === "credit_card" && Boolean(sp.creditCardId);
+      return {
+        itemId: `${goalRecord.id || "plan"}-sp-${sIdx + 1}`,
+        description: (topSplits.length > 1 ? `${baseTitle} (${sIdx + 1}/${topSplits.length})` : baseTitle).slice(0, 120),
+        amountCents: cents(sp.amountCents),
+        paymentMethod: useCard ? "credit_card" : "standard",
+        creditCardId: useCard ? String(sp.creditCardId) : null,
+        walletId: sp.walletId || fallbackWallet,
         installmentCount: inst,
         mode: inst > 1 ? "installments" : "single",
         valueMode: "total",
