@@ -208,7 +208,7 @@ export default function EntryDrawer({
     {(balanceDue>0||isSeries(selectedTitleObj))&&<button type="button" className="text-button" onClick={()=>onAction("cancel",selectedTitleObj.id)}>Excluir este lançamento ou sua série</button>}
     <div className="detail-history"><h3>Histórico de pagamentos</h3>{settlements.filter(s=>s.title_id===selectedTitleObj?.id).length?settlements.filter(s=>s.title_id===selectedTitleObj?.id).map(s=><div className={"history-row"+(s.reversed_at?" reversed":"")} key={s.id}><p><CheckCircle2 size={15}/>{fdate(s.settled_on)} — {money(cents(s.amount_cents))} {s.reversed_at&&<span>• Revertido</span>}</p>{!s.reversed_at&&<button type="button" disabled={busy} onClick={()=>onAction("reverse",s.id)}>Desfazer pagamento</button>}</div>):<p><Clock3 size={15}/> Nenhum pagamento registrado.</p>}</div>
     <p className="hint">Ao editar este lançamento, as demais parcelas da série não serão alteradas.</p>
-   </div>:<form id="entry-form" className={`entry-form${isMobilePhone&&titleEntry&&(!newTitle||intent==="bill")?" kc-mob-list-form":""}`} onSubmit={onSave}>
+   </div>:<form id="entry-form" className={`entry-form${isMobilePhone?" kc-mob-any-form":""}${isMobilePhone&&((titleEntry&&(!newTitle||intent==="bill"||intent==="transfer"))||drawer==="budget"||drawer==="settle")?" kc-mob-list-form":""}`} onSubmit={onSave}>
     {newTitle&&(!isMobilePhone||mobTypeSwitcherOpen||intent==="lend")&&<div className="direction-cards four" role="group" aria-label="Tipo de lançamento">
       <button type="button" className={`direction-card expense${intent==="bill"&&form.direction!=="income"?" active":""}`} aria-pressed={intent==="bill"&&form.direction!=="income"} onClick={()=>{setForm(old=>({...old,intent:"bill",direction:"expense",category:old.direction==="expense"?old.category:""}));setMobTypeSwitcherOpen(false);}}>
         <ArrowDownCircle size={20} aria-hidden="true"/>
@@ -236,9 +236,112 @@ export default function EntryDrawer({
     {/* TRANSFERÊNCIA ENTRE CONTAS */}
     {newTitle&&intent==="transfer"&&<>
       {checkingWallets.length < 2 ? (
-        <div className="notice warning" style={{margin:"0 0 16px"}}>
+        <div className="notice warning" style={{margin:isMobilePhone?"16px":"0 0 16px"}}>
           <strong>Você precisa de pelo menos 2 contas bancárias para transferir.</strong>
           <p style={{margin:"6px 0 0"}}>Para guardar dinheiro em reserva ou objetivos, use Planejamento → Reservar valor. Para transferir entre bancos, cadastre outra conta em Novo › Conta bancária.</p>
+        </div>
+      ) : isMobilePhone ? (
+        <div className="kc-mob-form-rows">
+          <div className="kc-mob-row">
+            <AlignLeft size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+            <input className="kc-mob-row-input" aria-label="Identificação da transferência (opcional)" placeholder="Descrição (opcional)" value={form.description||""} maxLength={120} onChange={e=>field("description",e.target.value)}/>
+          </div>
+          <div className="kc-mob-row kc-mob-row-money">
+            <CircleDollarSign size={22} className="kc-mob-row-icon" aria-hidden="true"/>
+            <span className="kc-mob-currency">R$</span>
+            <MoneyInput ariaLabel="Valor a transferir em reais" value={form.amount} onChange={v=>field("amount",v)}/>
+          </div>
+          <div className="kc-mob-row kc-mob-row-entity">
+            <div className="kc-mob-entity-block">
+              <span className="kc-mob-row-caption">De qual conta sai (Origem)</span>
+              <div className="kc-mob-entity-controls">
+                <div className="kc-mob-entity-select-box">
+                  <BankIcon name={checkingWallets.find(w=>w.id===form.fromWalletId)?.name||"Conta"} size={36}/>
+                  <select
+                    required
+                    value={form.fromWalletId||""}
+                    onChange={e=>{
+                      const newFrom = e.target.value;
+                      field("fromWalletId", newFrom);
+                      if (newFrom && form.toWalletId === newFrom) {
+                        const alt = checkingWallets.find(w => w.id !== newFrom);
+                        if (alt) field("toWalletId", alt.id);
+                      }
+                    }}
+                  >
+                    <option value="">Selecione a conta de origem</option>
+                    {checkingWallets.map(w=>(
+                      <option key={w.id} value={w.id}>{w.name}{walletBalances[w.id]!=null?` (${money(walletBalances[w.id])})`:""}</option>
+                    ))}
+                  </select>
+                  <ChevronDown size={16} className="kc-mob-entity-caret" aria-hidden="true"/>
+                </div>
+                <button
+                  type="button"
+                  className="kc-mob-entity-action"
+                  aria-label="Inverter conta de origem e conta de destino"
+                  onClick={()=>{
+                    const curFrom = form.fromWalletId;
+                    const curTo = form.toWalletId;
+                    setForm(old=>({...old,fromWalletId:curTo,toWalletId:curFrom}));
+                  }}
+                >
+                  <ArrowLeftRight size={18}/>
+                </button>
+              </div>
+            </div>
+          </div>
+          <div className="kc-mob-row kc-mob-row-entity">
+            <div className="kc-mob-entity-block">
+              <span className="kc-mob-row-caption">Para qual conta vai (Destino)</span>
+              <div className="kc-mob-entity-controls">
+                <div className="kc-mob-entity-select-box">
+                  <BankIcon name={checkingWallets.find(w=>w.id===form.toWalletId)?.name||"Conta"} size={36}/>
+                  <select
+                    required
+                    value={form.toWalletId||""}
+                    onChange={e=>field("toWalletId",e.target.value)}
+                  >
+                    <option value="">Selecione a conta de destino</option>
+                    {checkingWallets.map(w=>(
+                      <option key={w.id} value={w.id} disabled={w.id === form.fromWalletId}>
+                        {w.name}{walletBalances[w.id]!=null?` (${money(walletBalances[w.id])})`:""}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown size={16} className="kc-mob-entity-caret" aria-hidden="true"/>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="kc-mob-row kc-mob-row-inline">
+            <CalendarDays size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+            <span className="kc-mob-inline-label">Data da transferência</span>
+            <input
+              className="kc-mob-date-right"
+              required
+              type="date"
+              value={form.transferredOn||form.dueOn||brDay()}
+              onChange={e=>{
+                const d = e.target.value;
+                field("transferredOn", d);
+                if (d > brDay()) field("settlementState", "pending");
+              }}
+            />
+          </div>
+          <div className="kc-mob-row kc-mob-row-inline">
+            <CheckCircle2 size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+            <span className="kc-mob-inline-label">Efetivada</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={(form.settlementState||"paid")==="paid"}
+              className={`kc-mob-switch${(form.settlementState||"paid")==="paid"?" is-on":""}`}
+              onClick={()=>field("settlementState",(form.settlementState||"paid")==="paid"?"pending":"paid")}
+            >
+              <span className="kc-mob-switch-knob"/>
+            </button>
+          </div>
         </div>
       ) : (
         <>
@@ -877,13 +980,96 @@ export default function EntryDrawer({
       </label>
     </>}
 
-    {drawer==="settle"&&<><p className="hint">Confirmar o valor pago ou recebido. A parte restante permanece pendente.</p><div className="settle-title">{selectedTitleObj?.description}<small>Saldo em aberto: {money(balanceDue)}</small></div><label>Valor efetivado (R$)<MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Valor efetivado em reais"/></label><label>Data da efetivação<input required type="date" max={brDay()} value={form.settledOn} onChange={e=>field("settledOn",e.target.value)}/></label></>}
-    {drawer==="budget"&&<>
+    {drawer==="settle"&&(isMobilePhone?(
+      <div className="kc-mob-form-rows">
+        <div className="kc-mob-row kc-mob-row-inline">
+          <CircleDollarSign size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+          <span className="kc-mob-inline-label">{selectedTitleObj?.description||"Lançamento"}</span>
+          <span className="kc-mob-launch-meta">{money(balanceDue)}</span>
+        </div>
+        <div className="kc-mob-row kc-mob-row-money">
+          <CheckCircle2 size={22} className="kc-mob-row-icon" aria-hidden="true"/>
+          <span className="kc-mob-currency">R$</span>
+          <MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Valor efetivado em reais"/>
+        </div>
+        <div className="kc-mob-row kc-mob-row-inline">
+          <CalendarDays size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+          <span className="kc-mob-inline-label">Data da efetivação</span>
+          <input className="kc-mob-date-right" required type="date" max={brDay()} value={form.settledOn} onChange={e=>field("settledOn",e.target.value)}/>
+        </div>
+        <div className="kc-mob-row kc-mob-row-entity">
+          <div className="kc-mob-entity-block">
+            <span className="kc-mob-row-caption">Conta</span>
+            <div className="kc-mob-entity-controls">
+              <div className="kc-mob-entity-trigger">
+                <BankIcon name={wallets.find(w=>w.id===selectedTitleObj?.wallet_id)?.name||"Conta"} size={36}/>
+                <div className="kc-mob-entity-text">
+                  <strong>{wallets.find(w=>w.id===selectedTitleObj?.wallet_id)?.name||"Conta vinculada"}</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    ):<><p className="hint">Confirmar o valor pago ou recebido. A parte restante permanece pendente.</p><div className="settle-title">{selectedTitleObj?.description}<small>Saldo em aberto: {money(balanceDue)}</small></div><label>Valor efetivado (R$)<MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Valor efetivado em reais"/></label><label>Data da efetivação<input required type="date" max={brDay()} value={form.settledOn} onChange={e=>field("settledOn",e.target.value)}/></label></>)}
+    {drawer==="budget"&&(isMobilePhone?(
+      <div className="kc-mob-form-rows">
+        <div className="kc-mob-row kc-mob-row-entity">
+          <div className="kc-mob-entity-block">
+            <span className="kc-mob-row-caption">Categoria</span>
+            <div className="kc-mob-entity-controls">
+              <div className="kc-mob-entity-trigger">
+                <CategoryCircleIcon name={form.category||"Categoria"} direction="expense"/>
+                <div className="kc-mob-entity-text">
+                  <strong>{form.category||"Categoria"}</strong>
+                  <small>Competência: {form.budgetMonth}</small>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="kc-mob-row">
+          <div className="kc-mob-period-pills">
+            <span className="kc-mob-period-pill active">
+              <CalendarDays size={15}/> Mensal
+            </span>
+            <span className="kc-mob-period-pill">
+              Renda mês: {money(monthlyIncomeCents)}
+            </span>
+          </div>
+        </div>
+        <div className="kc-mob-row kc-mob-row-inline">
+          <CalendarDays size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+          <span className="kc-mob-inline-label">Vigente a partir de</span>
+          <span className="kc-mob-launch-meta">{fdate(`${form.budgetMonth||selectedMonth||brDay().slice(0,7)}-01`)}</span>
+        </div>
+        <div className="kc-mob-row kc-mob-row-inline">
+          <CheckCircle2 size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+          <span className="kc-mob-inline-label">Controlar limite mensal</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={form.budgetActive!==false}
+            className={`kc-mob-switch${form.budgetActive!==false?" is-on":""}`}
+            onClick={()=>field("budgetActive",form.budgetActive===false)}
+          >
+            <span className="kc-mob-switch-knob"/>
+          </button>
+        </div>
+        {form.budgetActive!==false&&(
+          <div className="kc-mob-row kc-mob-row-money">
+            <CircleDollarSign size={22} className="kc-mob-row-icon" aria-hidden="true"/>
+            <span className="kc-mob-currency">Meta R$</span>
+            <MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Limite mensal em reais"/>
+          </div>
+        )}
+      </div>
+    ):<>
       <div className="settle-title">{form.category}<small>Competência: {form.budgetMonth}</small></div>
       <label className="kc-check"><input type="checkbox" checked={form.budgetActive!==false} onChange={e=>field("budgetActive",e.target.checked)}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Controlar limite mensal nesta categoria</span></label>
       {form.budgetActive!==false&&<label>Limite mensal (R$)<MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Limite mensal em reais"/></label>}
       {form.budgetActive===false&&<p className="hint">Esta categoria apenas acompanha os gastos, sem trava de limite mensal.</p>}
-    </>}
+    </>)}
     {drawer==="asset"&&<><label>Descrição do bem ou investimento<input required maxLength={120} placeholder="Ex.: Imóvel, Veículo, Previdência" value={form.label} onChange={e=>field("label",e.target.value)}/></label><label>Valor estimado (R$)<MoneyInput value={form.amount} onChange={v=>field("amount",v)} ariaLabel="Valor atual"/></label><p className="hint">Não inclua novamente o dinheiro já registrado nas suas contas ou carteiras.</p></>}
 
     {drawer==="loan"&&<>

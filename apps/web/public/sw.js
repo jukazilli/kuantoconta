@@ -9,7 +9,7 @@
  */
 
 const CACHE_PREFIX = "kc-static-";
-const CACHE_NAME = "kc-static-v2";
+const CACHE_NAME = "kc-static-v3";
 const OFFLINE_URL = "/offline";
 
 const PRECACHE_URLS = [

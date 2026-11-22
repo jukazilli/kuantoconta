@@ -299,7 +299,7 @@ test("Mobile Exclusive UI/UX (Minhas Finanças + Kuantoconta Thesis): MobileWork
   assert.match(dashSrc, /<MobileWorkspace/);
   assert.match(dashSrc, /isMobilePhone=\{isMobilePhone\}/);
 
-  // 2. Minhas Finanças inspired mobile shell: 1-line topbar, lateral drawer, 3-point hero, Despesas|Receitas pending tabs, 2x2 Visão Geral with Endividamento, 31/12 cuts gauge, FAB Speed Dial
+  // 2. Minhas Finanças inspired mobile shell with Kuantoconta Orange theme, lateral drawer, 3-point hero, A pagar|A receber pending tabs, 2x2 Visão Geral with Endividamento, 31/12 cuts gauge, FAB Speed Dial (A pagar, A receber, Emprestar, etc.), Complete Cards, Transactions & Charts
   assert.match(mobileSrc, /kc-mob-topbar/);
   assert.match(mobileSrc, /kc-mob-drawer/);
   assert.match(mobileSrc, /kc-mob-hero-card/);
@@ -307,8 +307,18 @@ test("Mobile Exclusive UI/UX (Minhas Finanças + Kuantoconta Thesis): MobileWork
   assert.match(mobileSrc, /Ver despesas pendentes/);
   assert.match(mobileSrc, />Endividamento</);
   assert.match(mobileSrc, /Cortes & Fim do Ano/);
+  assert.match(mobileSrc, />A pagar</);
+  assert.match(mobileSrc, />A receber</);
+  assert.match(mobileSrc, />Emprestar</);
   assert.match(mobileSrc, /Despesa cartão/);
+  assert.match(mobileSrc, /Guardar em caixinha/);
   assert.match(mobileSrc, /kc-mob-speed-dial/);
+  assert.match(mobileSrc, /Fatura parcial/);
+  assert.match(mobileSrc, /Registrar pagamento/);
+  assert.match(mobileSrc, /Ranking categorias/);
+  assert.match(mobileSrc, /Despesas por recorrência/);
+  assert.match(mobileSrc, /Despesas Conta x Cartão/);
+  assert.match(mobileSrc, /kc-mob-tx-item/);
 
   // 3. Full-screen List-Row Mobile Form (Nova Receita / Nova Despesa / Toggle Switch Efetivada / CategoryCircleIcon)
   assert.match(drawerSrc, /kc-mob-fullscreen-drawer/);
