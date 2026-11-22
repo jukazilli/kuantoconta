@@ -5,7 +5,9 @@ import { isValidMonth, computeMonthlyIncomeCeilingCents, validateBudgetAllocatio
 import { decodeOccurrenceId } from "./recurring.js";
 import { validScope } from "./cancel-scope.js";
 import { computePriceInstallmentCents } from "./goal-planner.js";
-import { computeInvoiceCycleForPurchase } from "./credit-cards.js";
+import { addMonthsYm, computeInvoiceCycleForPurchase, getInvoiceCycleDates } from "./credit-cards.js";
+import { addMonthsToIsoDate } from "./lending.js";
+import { DEFAULT_DESKTOP_COLUMNS, sanitizeColumnSettings, sanitizeWorkspaceColumns } from "./workspace-columns.js";
 
 export const isDay = (s) =>
   typeof s === "string" &&
@@ -178,6 +180,18 @@ export async function loadPortfolio(ownerId) {
   } catch (e) {
     if (e?.code !== "42P01") throw e;
   }
+  let workspacePrefs = { desktopColumns: [...DEFAULT_DESKTOP_COLUMNS], columnSettings: {} };
+  try {
+    const prefRows = await sql`SELECT desktop_columns,column_settings FROM public.kc_user_preferences WHERE user_id=${owner.id} LIMIT 1`;
+    if (prefRows.length) {
+      workspacePrefs = {
+        desktopColumns: sanitizeWorkspaceColumns(prefRows[0].desktop_columns),
+        columnSettings: sanitizeColumnSettings(prefRows[0].column_settings),
+      };
+    }
+  } catch (e) {
+    if (e?.code !== "42P01") throw e;
+  }
   return {
     wallets,
     titles,
@@ -198,6 +212,7 @@ export async function loadPortfolio(ownerId) {
     spendingPlanApplications,
     people,
     creditCards,
+    workspacePrefs,
     as_of: new Date().toISOString(),
   };
 }
@@ -391,31 +406,114 @@ export async function executePortfolioPost(ownerId, x) {
   if (x.action === "lend") {
     const description = textValue(x.description, 140);
     if (!description) return fail("Informe a descrição do empréstimo.");
-    const amountCents = amount(x.amount, false, false);
-    if (!uuid(x.walletId)) return fail("Selecione de qual conta o dinheiro saiu.");
+    const rawAmountCents = amount(x.amount, false, false);
     if (!uuid(x.personId)) return fail("Selecione para quem você emprestou.");
+
+    const hasCard = uuid(x.creditCardId);
+    if (!hasCard && !uuid(x.walletId)) return fail("Selecione de qual conta ou cartão o valor saiu.");
+
     const lentOn = day(x.lentOn) ? x.lentOn : brDay();
-    if (lentOn > brDay()) return fail("A data de saída não pode ser futura.");
+    if (lentOn > brDay()) return fail("A data de saída/compra não pode ser futura.");
     const expectedRepaymentOn = day(x.expectedRepaymentOn) ? x.expectedRepaymentOn : null;
     if (!expectedRepaymentOn) return fail("Informe a previsão de pagamento.");
     if (expectedRepaymentOn < lentOn) return fail("A previsão de pagamento deve ser igual ou posterior à data de saída.");
 
-    const [wRows, pRows] = await Promise.all([
-      sql`SELECT id,name FROM public.kc_wallets WHERE id=${x.walletId}::uuid AND user_id=${owner.id} LIMIT 1`,
-      sql`SELECT id,name,relationship FROM public.kc_people WHERE id=${x.personId}::uuid AND user_id=${owner.id} LIMIT 1`,
-    ]);
-    if (!wRows.length) return fail("Conta não encontrada.", 404);
+    const cardInstallments = hasCard ? Math.max(1, Math.min(60, Number(x.cardInstallments || 1))) : 1;
+    const repaymentCount = Math.max(1, Math.min(60, Number(x.repaymentCount || 1)));
+    if (!Number.isInteger(cardInstallments) || !Number.isInteger(repaymentCount)) {
+      return fail("Quantidade de parcelas inválida.");
+    }
+    const valueMode = x.valueMode === "installment" ? "installment" : "total";
+    const totalCents =
+      valueMode === "installment"
+        ? rawAmountCents * (hasCard ? cardInstallments : repaymentCount)
+        : rawAmountCents;
+
+    const pRows = await sql`SELECT id,name,relationship FROM public.kc_people WHERE id=${x.personId}::uuid AND user_id=${owner.id} LIMIT 1`;
     if (!pRows.length) return fail("Pessoa não encontrada.", 404);
     const person = pRows[0];
 
-    const outLabel = `${description} (${person.name})`;
-    const inLabel = `Devolução: ${description} (${person.name})`;
-    const linkId = crypto.randomUUID();
-    const outTitle = await sql`INSERT INTO public.kc_titles(user_id,wallet_id,description,direction,category,amount_cents,settled_cents,due_on,recurrence,entry_kind,person_id,transfer_id) VALUES(${owner.id},${x.walletId}::uuid,${outLabel.slice(0, 140)},'expense','Empréstimos',${amountCents},${amountCents},${lentOn}::date,'single','loan_out',${person.id}::uuid,${linkId}::uuid) RETURNING id`;
-    await sql`INSERT INTO public.kc_settlements(user_id,title_id,wallet_id,amount_cents,settled_on,idempotency_key) VALUES(${owner.id},${outTitle[0].id}::uuid,${x.walletId}::uuid,${amountCents},${lentOn}::date,${crypto.randomUUID()}::uuid)`;
-    const inTitle = await sql`INSERT INTO public.kc_titles(user_id,wallet_id,description,direction,category,amount_cents,settled_cents,due_on,recurrence,entry_kind,person_id,transfer_id) VALUES(${owner.id},${x.walletId}::uuid,${inLabel.slice(0, 140)},'income','Reembolsos',${amountCents},0,${expectedRepaymentOn}::date,'single','loan_repayment',${person.id}::uuid,${linkId}::uuid) RETURNING id`;
+    let card = null;
+    let outWalletId = x.walletId || null;
+    let repayWalletId = uuid(x.repaymentWalletId) ? x.repaymentWalletId : x.walletId || null;
 
-    return ok({ saved: true, outTitleId: outTitle[0]?.id, repaymentTitleId: inTitle[0]?.id, linkId, person }, 201);
+    if (hasCard) {
+      const cRows = await sql`SELECT id,name,closing_day,due_day,default_wallet_id FROM public.kc_credit_cards WHERE id=${x.creditCardId}::uuid AND user_id=${owner.id} AND archived_at IS NULL LIMIT 1`;
+      if (!cRows.length) return fail("Cartão de crédito não encontrado.", 404);
+      card = cRows[0];
+      if (!uuid(repayWalletId)) {
+        repayWalletId =
+          card.default_wallet_id ||
+          (await sql`SELECT id FROM public.kc_wallets WHERE user_id=${owner.id} AND archived_at IS NULL ORDER BY created_at LIMIT 1`)[0]?.id;
+      }
+      outWalletId = repayWalletId;
+    }
+
+    if (!uuid(outWalletId) || !uuid(repayWalletId)) return fail("Conta bancária inválida.");
+    const wCheckIds = outWalletId === repayWalletId ? [outWalletId] : [outWalletId, repayWalletId];
+    const wRows = await sql`SELECT id,name FROM public.kc_wallets WHERE id = ANY(${wCheckIds}::uuid[]) AND user_id=${owner.id}`;
+    if (wRows.length !== wCheckIds.length) return fail("Conta não encontrada.", 404);
+
+    const linkId = crypto.randomUUID();
+    const outTitleIds = [];
+
+    if (card) {
+      const firstCycle = computeInvoiceCycleForPurchase({
+        purchaseDate: lentOn,
+        closingDay: card.closing_day,
+        dueDay: card.due_day,
+      });
+      const outSeriesId = cardInstallments > 1 ? crypto.randomUUID() : null;
+      const basePart = Math.floor(totalCents / cardInstallments);
+      const remPart = totalCents - basePart * cardInstallments;
+
+      for (let i = 1; i <= cardInstallments; i++) {
+        const ym = i === 1 ? firstCycle.invoiceMonth : addMonthsYm(firstCycle.invoiceMonth, i - 1);
+        const cycle = i === 1 ? firstCycle : getInvoiceCycleDates(card, ym);
+        const partCents = basePart + (i === 1 ? remPart : 0);
+        const outLabel =
+          cardInstallments > 1
+            ? `${description} (${i}/${cardInstallments} · ${person.name})`
+            : `${description} (${person.name})`;
+        const inserted = await sql`INSERT INTO public.kc_titles(user_id,wallet_id,description,direction,category,amount_cents,settled_cents,due_on,recurrence,installment_index,installment_total,series_id,entry_kind,person_id,credit_card_id,invoice_month,transfer_id) VALUES(${owner.id},${outWalletId}::uuid,${outLabel.slice(0, 140)},'expense','Empréstimos',${partCents},0,${cycle.dueDate}::date,${cardInstallments > 1 ? "installments" : "single"},${i},${cardInstallments},${outSeriesId}::uuid,'loan_out',${person.id}::uuid,${card.id}::uuid,${cycle.invoiceMonth},${linkId}::uuid) RETURNING id`;
+        if (inserted[0]?.id) outTitleIds.push(inserted[0].id);
+      }
+    } else {
+      const outLabel = `${description} (${person.name})`;
+      const outTitle = await sql`INSERT INTO public.kc_titles(user_id,wallet_id,description,direction,category,amount_cents,settled_cents,due_on,recurrence,entry_kind,person_id,transfer_id) VALUES(${owner.id},${outWalletId}::uuid,${outLabel.slice(0, 140)},'expense','Empréstimos',${totalCents},${totalCents},${lentOn}::date,'single','loan_out',${person.id}::uuid,${linkId}::uuid) RETURNING id`;
+      await sql`INSERT INTO public.kc_settlements(user_id,title_id,wallet_id,amount_cents,settled_on,idempotency_key) VALUES(${owner.id},${outTitle[0].id}::uuid,${outWalletId}::uuid,${totalCents},${lentOn}::date,${crypto.randomUUID()}::uuid)`;
+      if (outTitle[0]?.id) outTitleIds.push(outTitle[0].id);
+    }
+
+    const repaySeriesId = repaymentCount > 1 ? crypto.randomUUID() : null;
+    const repayBase = Math.floor(totalCents / repaymentCount);
+    const repayRem = totalCents - repayBase * repaymentCount;
+    const repaymentTitleIds = [];
+
+    for (let j = 1; j <= repaymentCount; j++) {
+      const repayDue = j === 1 ? expectedRepaymentOn : addMonthsToIsoDate(expectedRepaymentOn, j - 1);
+      const partCents = repayBase + (j === 1 ? repayRem : 0);
+      const inLabel =
+        repaymentCount > 1
+          ? `Devolução (${j}/${repaymentCount}): ${description} (${person.name})`
+          : `Devolução: ${description} (${person.name})`;
+      const inTitle = await sql`INSERT INTO public.kc_titles(user_id,wallet_id,description,direction,category,amount_cents,settled_cents,due_on,recurrence,installment_index,installment_total,series_id,entry_kind,person_id,transfer_id) VALUES(${owner.id},${repayWalletId}::uuid,${inLabel.slice(0, 140)},'income','Reembolsos',${partCents},0,${repayDue}::date,${repaymentCount > 1 ? "installments" : "single"},${j},${repaymentCount},${repaySeriesId}::uuid,'loan_repayment',${person.id}::uuid,${linkId}::uuid) RETURNING id`;
+      if (inTitle[0]?.id) repaymentTitleIds.push(inTitle[0].id);
+    }
+
+    return ok(
+      {
+        saved: true,
+        outTitleId: outTitleIds[0] || null,
+        outTitleIds,
+        repaymentTitleId: repaymentTitleIds[0] || null,
+        repaymentTitleIds,
+        linkId,
+        person,
+        creditCardId: card?.id || null,
+      },
+      201
+    );
   }
 
   if (x.action === "transfer_capital") {
@@ -885,6 +983,19 @@ export async function executePortfolioPost(ownerId, x) {
     return ok({ saved: true, id: rows[0]?.id, sourceGoalId, paymentMethod, creditCardId, planType, paymentStructure }, 201);
   }
 
+  if (x.action === "save_workspace_prefs") {
+    const desktopColumns = sanitizeWorkspaceColumns(x.desktopColumns);
+    const columnSettings = sanitizeColumnSettings(x.columnSettings);
+    try {
+      await sql`INSERT INTO public.kc_user_preferences(user_id,desktop_columns,column_settings,updated_at)
+        VALUES(${owner.id},${JSON.stringify(desktopColumns)}::jsonb,${JSON.stringify(columnSettings)}::jsonb,now())
+        ON CONFLICT (user_id) DO UPDATE SET desktop_columns=EXCLUDED.desktop_columns, column_settings=EXCLUDED.column_settings, updated_at=now()`;
+    } catch (e) {
+      if (e?.code !== "42P01") throw e;
+    }
+    return ok({ saved: true, desktopColumns, columnSettings });
+  }
+
   return fail("Ação não reconhecida.");
 }
 
@@ -1010,11 +1121,13 @@ export async function executePortfolioPatch(ownerId, x) {
       return ok({ saved: true, cancelled_titles: pair.length, ...info });
     }
     if (title[0].transfer_id && title[0].entry_kind === "loan_out") {
-      const result = await sql`SELECT public.kc_cancel_title_scope(${owner.id},${x.titleId}::uuid,'only') AS info`;
+      const result = await sql`SELECT public.kc_cancel_title_scope(${owner.id},${x.titleId}::uuid,${x.scope}) AS info`;
       await sql`SELECT public.kc_sync_cancelled_economic_events(${owner.id},${x.titleId}::uuid)`;
-      const openRepays = await sql`SELECT id FROM public.kc_titles WHERE user_id=${owner.id} AND transfer_id=${title[0].transfer_id}::uuid AND id<>${x.titleId}::uuid AND entry_kind='loan_repayment' AND settled_cents=0 AND cancelled_at IS NULL`;
-      for (const r of openRepays) {
-        await sql`SELECT public.kc_cancel_title_scope(${owner.id},${r.id}::uuid,'only')`;
+      if (x.scope === "all" || Number(title[0].installment_total || 1) <= 1) {
+        const openRepays = await sql`SELECT id FROM public.kc_titles WHERE user_id=${owner.id} AND transfer_id=${title[0].transfer_id}::uuid AND id<>${x.titleId}::uuid AND entry_kind='loan_repayment' AND settled_cents=0 AND cancelled_at IS NULL`;
+        for (const r of openRepays) {
+          await sql`SELECT public.kc_cancel_title_scope(${owner.id},${r.id}::uuid,'only')`;
+        }
       }
       return ok({ saved: true, ...result[0]?.info });
     }
@@ -1275,6 +1388,19 @@ export async function executePortfolioPatch(ownerId, x) {
     const result = await sql`SELECT public.kc_cancel_title_scope(${owner.id},${x.titleId}::uuid,'only') AS info`;
     await sql`SELECT public.kc_sync_cancelled_economic_events(${owner.id},${x.titleId}::uuid)`;
     return ok({ saved: true, ...result[0]?.info });
+  }
+
+  if (x.action === "save_workspace_prefs") {
+    const desktopColumns = sanitizeWorkspaceColumns(x.desktopColumns);
+    const columnSettings = sanitizeColumnSettings(x.columnSettings);
+    try {
+      await sql`INSERT INTO public.kc_user_preferences(user_id,desktop_columns,column_settings,updated_at)
+        VALUES(${owner.id},${JSON.stringify(desktopColumns)}::jsonb,${JSON.stringify(columnSettings)}::jsonb,now())
+        ON CONFLICT (user_id) DO UPDATE SET desktop_columns=EXCLUDED.desktop_columns, column_settings=EXCLUDED.column_settings, updated_at=now()`;
+    } catch (e) {
+      if (e?.code !== "42P01") throw e;
+    }
+    return ok({ saved: true, desktopColumns, columnSettings });
   }
 
   return fail("Ação não reconhecida.");

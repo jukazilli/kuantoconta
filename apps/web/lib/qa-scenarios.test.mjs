@@ -3,6 +3,16 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { computeRange } from "./period.js";
+import { computeTotalDebtCents } from "./budgets.js";
+import { addMonthsToIsoDate, summarizePeopleLoans } from "./lending.js";
+import {
+  DEFAULT_DESKTOP_COLUMNS,
+  addWorkspaceColumn,
+  moveWorkspaceColumn,
+  removeWorkspaceColumn,
+  reorderWorkspaceColumns,
+  sanitizeWorkspaceColumns,
+} from "./workspace-columns.js";
 import { computeBudgetSummary } from "./budgets.js";
 
 const repoRoot = path.resolve(process.cwd(), "..", "..");
@@ -203,4 +213,67 @@ test("Section 8: Migration 018, Unified Command Bar header with total balance pi
   assert.match(wizardSrc, /2\. Opções e pagamento/);
   assert.match(wizardSrc, /3\. Comparação e contas/);
   assert.match(cssSrc, /\.drawer\.drawer-wide/);
+});
+
+test("Lending upgrade: credit card loans, installment repayments, debt inclusion, and date clamping", () => {
+  assert.equal(addMonthsToIsoDate("2026-01-31", 1), "2026-02-28");
+  assert.equal(addMonthsToIsoDate("2026-11-22", 2), "2027-01-22");
+
+  const summary = summarizePeopleLoans({
+    people: [{ id: "p1", name: "João", relationship: "Amigo" }],
+    titles: [
+      { id: "o1", person_id: "p1", entry_kind: "loan_out", amount_cents: 60000, settled_cents: 0, due_on: "2026-12-10", credit_card_id: "cc1" },
+      { id: "r2", person_id: "p1", entry_kind: "loan_repayment", amount_cents: 30000, settled_cents: 0, due_on: "2027-01-10", installment_index: 2, installment_total: 2 },
+      { id: "r1", person_id: "p1", entry_kind: "loan_repayment", amount_cents: 30000, settled_cents: 0, due_on: "2026-12-10", installment_index: 1, installment_total: 2 },
+    ],
+  });
+  assert.equal(summary[0].openBalanceCents, 60000);
+  assert.equal(summary[0].openRepaymentTitles[0].id, "r1");
+  assert.equal(summary[0].openRepaymentTitles[0].installmentTotal, 2);
+
+  // Unpaid credit card loan_out counts in Endividamento; cash loan_out does not
+  const debt = computeTotalDebtCents({
+    knownCash: true,
+    titles: [
+      { id: "o1", direction: "expense", entry_kind: "loan_out", credit_card_id: "cc1", amount_cents: 60000, settled_cents: 0, due_on: "2026-12-10" },
+      { id: "o2", direction: "expense", entry_kind: "loan_out", credit_card_id: null, amount_cents: 50000, settled_cents: 50000, due_on: "2026-11-22" },
+    ],
+    liabilities: [],
+  });
+  assert.equal(debt, 60000);
+
+  const serviceSrc = fs.readFileSync(path.join(repoRoot, "apps", "web", "lib", "portfolio-service.js"), "utf8");
+  const drawerSrc = fs.readFileSync(path.join(repoRoot, "apps", "web", "app", "dashboard", "EntryDrawer.jsx"), "utf8");
+  assert.match(serviceSrc, /cardInstallments/);
+  assert.match(serviceSrc, /repaymentCount/);
+  assert.match(drawerSrc, /lendCreditCardId/);
+  assert.match(drawerSrc, /Acompanhar parcelas do cartão/);
+});
+
+test("Desktop Column Workspace: column helpers, persistence migration 019, and responsive invariants", () => {
+  assert.deepEqual(sanitizeWorkspaceColumns(null), DEFAULT_DESKTOP_COLUMNS);
+  assert.deepEqual(sanitizeWorkspaceColumns(["overview", "invalid", "budgets", "overview"]), ["overview", "budgets"]);
+  assert.deepEqual(addWorkspaceColumn(["overview", "movements"], "planning"), ["overview", "movements", "planning"]);
+  assert.deepEqual(addWorkspaceColumn(["overview", "movements"], "overview"), ["overview", "movements"]);
+  assert.deepEqual(removeWorkspaceColumn(["overview", "movements", "health"], "movements"), ["overview", "health"]);
+  assert.deepEqual(moveWorkspaceColumn(["overview", "movements", "health"], "health", -1), ["overview", "health", "movements"]);
+  assert.deepEqual(reorderWorkspaceColumns(["overview", "movements", "health"], "health", "overview"), ["health", "overview", "movements"]);
+
+  const sql019 = fs.readFileSync(path.join(repoRoot, "apps", "web", "db", "019_workspace_preferences.sql"), "utf8");
+  assert.match(sql019, /CREATE TABLE IF NOT EXISTS public\.kc_user_preferences/i);
+  assert.match(sql019, /desktop_columns JSONB/i);
+
+  const serviceSrc = fs.readFileSync(path.join(repoRoot, "apps", "web", "lib", "portfolio-service.js"), "utf8");
+  const dashSrc = fs.readFileSync(path.join(repoRoot, "apps", "web", "app", "dashboard", "Dashboard.jsx"), "utf8");
+  const desktopSrc = fs.readFileSync(path.join(repoRoot, "apps", "web", "app", "dashboard", "DesktopWorkspace.jsx"), "utf8");
+  const cssSrc = fs.readFileSync(path.join(repoRoot, "apps", "web", "app", "globals.css"), "utf8");
+
+  assert.match(serviceSrc, /save_workspace_prefs/);
+  assert.match(dashSrc, /isDesktopWorkspace/);
+  assert.match(dashSrc, /<DesktopWorkspace/);
+  assert.match(dashSrc, /topbar-cols-pill/);
+  assert.match(desktopSrc, /workspace-deck-viewport/);
+  assert.match(desktopSrc, /workspace-add-rail/);
+  assert.match(cssSrc, /min-width:\s*390px/);
+  assert.match(cssSrc, /flex:\s*0 0 clamp\(395px,\s*29vw,\s*440px\)/);
 });

@@ -1,6 +1,22 @@
 import { cents, isoDate } from "./finance.js";
 
 /**
+ * Adds `monthsDelta` calendar months to an ISO date (YYYY-MM-DD), clamping day
+ * to the target month's last day (e.g. 2026-01-31 + 1 month -> 2026-02-28).
+ */
+export function addMonthsToIsoDate(iso, monthsDelta) {
+  const clean = isoDate(iso);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(clean) || !monthsDelta) return clean;
+  const [y, m, d] = clean.split("-").map(Number);
+  const target = new Date(Date.UTC(y, m - 1 + monthsDelta, 1));
+  const ty = target.getUTCFullYear();
+  const tm = target.getUTCMonth() + 1;
+  const maxDay = new Date(Date.UTC(ty, tm, 0)).getUTCDate();
+  const clamped = Math.min(d, maxDay);
+  return `${String(ty).padStart(4, "0")}-${String(tm).padStart(2, "0")}-${String(clamped).padStart(2, "0")}`;
+}
+
+/**
  * Keeps unpaid loan_repayment receivables visible in the current month's collection
  * cadence when the previous month closes without full repayment.
  * Preserves `original_due_on` for overdue visibility while rolling effective `due_on`
@@ -65,9 +81,16 @@ export function summarizePeopleLoans({ people = [], titles = [] }) {
           settledCents: settled,
           remainingCents: rem,
           rolledOver: Boolean(t.rolled_over),
+          transferId: t.transfer_id || null,
+          installmentIndex: Number(t.installment_index || 1),
+          installmentTotal: Number(t.installment_total || 1),
         });
       }
     }
+  }
+
+  for (const entry of byPerson.values()) {
+    entry.openRepaymentTitles.sort((a, b) => a.dueOn.localeCompare(b.dueOn));
   }
 
   return [...byPerson.values()].sort((a, b) => b.openBalanceCents - a.openBalanceCents || a.person.name.localeCompare(b.person.name));
