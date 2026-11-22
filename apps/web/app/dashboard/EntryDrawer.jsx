@@ -10,7 +10,7 @@ import {maskToCents,maskToDecimal} from "../../lib/money-input";
 import {isSeries} from "../../lib/cancel-scope";
 import {findMatchingSpendingPlans,computePlanRemainingCents} from "../../lib/spending-plans";
 import {computeCapitalPace} from "../../lib/capital-pace";
-import {computeInvoiceCycleForPurchase} from "../../lib/credit-cards";
+import {computeInvoiceCycleForPurchase,computeCardUsage} from "../../lib/credit-cards";
 
 const fdate=d=>{const s=isoDate(d).split("-");return s.length===3?`${s[2]}/${s[1]}/${s[0]}`:"—";};
 
@@ -288,30 +288,170 @@ export default function EntryDrawer({
       )}
     </>}
 
-    {/* EMPRESTAR DINHEIRO */}
-    {newTitle&&intent==="lend"&&<>
-      <div className="field-row major"><ReceiptText/><input aria-label="Descrição do empréstimo" placeholder="Ex.: Ajuda conserto carro, Empréstimo" required value={form.description} maxLength={140} onChange={e=>field("description",e.target.value)}/></div>
-      <div className="field-row money-input"><CircleDollarSign/><span>R$</span><MoneyInput ariaLabel="Valor emprestado em reais" value={form.amount} onChange={v=>field("amount",v)}/></div>
-      <div className="form-group">
-        <label>De qual conta saiu<select required value={form.walletId} onChange={e=>field("walletId",e.target.value)}><option value="">Selecione a conta</option>{wallets.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}</select></label>
-        <div className="controlled-classification">
-          <div className="budget-picker-field">
-            <span className="field-caption">Para quem</span>
-            <input className="sr-only-input" tabIndex={-1} aria-hidden="true" required value={form.personId||""} onChange={()=>{}}/>
-            <button type="button" className="budget-picker-trigger" onClick={()=>{setNewPersonMode(false);setPersonQuery("");setPersonPicker(true);}}>
-              <span>{selectedPerson?selectedPerson.name:"Buscar ou cadastrar pessoa"}</span>
-              <small>{selectedPerson?selectedPerson.relationship:"Escolher da carteira de pessoas ›"}</small>
-            </button>
+    {/* EMPRESTAR DINHEIRO OU CARTÃO */}
+    {newTitle&&intent==="lend"&&(()=>{
+      const lendCard=form.lendCreditCardId?creditCards.find(c=>c.id===form.lendCreditCardId):null;
+      const cardInst=lendCard?Math.max(1,Number(form.lendCardInstallments||1)):1;
+      const repayInst=Math.max(1,Number(form.lendRepaymentCount||1));
+      const hasInstallments=cardInst>1||repayInst>1;
+      const rawAmt=amountValue();
+      const totalLendCents=form.valueMode==="installment"&&hasInstallments?rawAmt*(lendCard?cardInst:repayInst):rawAmt;
+      const lendDate=form.lentOn||brDay();
+      const cardCycle=lendCard?computeInvoiceCycleForPurchase({purchaseDate:lendDate,closingDay:lendCard.closing_day,dueDay:lendCard.due_day}):null;
+      const cardUsage=lendCard?computeCardUsage(lendCard,rawData?.titles||[]):null;
+      const cardOverLimit=Boolean(cardUsage&&lendCard.limit_cents>0&&totalLendCents>cardUsage.availableLimitCents);
+      return <>
+        <div className="field-row major"><ReceiptText/><input aria-label="Descrição do empréstimo" placeholder="Ex.: Compras no cartão, Ajuda conserto" required value={form.description} maxLength={140} onChange={e=>field("description",e.target.value)}/></div>
+        <div className="field-row money-input"><CircleDollarSign/><span>R$</span><MoneyInput ariaLabel="Valor emprestado em reais" value={form.amount} onChange={v=>field("amount",v)}/></div>
+
+        <div className="form-group">
+          <div className="controlled-classification">
+            <div className="budget-picker-field">
+              <span className="field-caption">Para quem</span>
+              <input className="sr-only-input" tabIndex={-1} aria-hidden="true" required value={form.personId||""} onChange={()=>{}}/>
+              <button type="button" className="budget-picker-trigger" onClick={()=>{setNewPersonMode(false);setPersonQuery("");setPersonPicker(true);}}>
+                <span>{selectedPerson?selectedPerson.name:"Buscar ou cadastrar pessoa"}</span>
+                <small>{selectedPerson?selectedPerson.relationship:"Escolher da carteira de pessoas ›"}</small>
+              </button>
+            </div>
+            <button type="button" className="inline-plus" aria-label="Pesquisar ou cadastrar pessoa" onClick={()=>{setNewPersonMode(false);setPersonQuery("");setPersonPicker(true);}}><Search size={18}/></button>
           </div>
-          <button type="button" className="inline-plus" aria-label="Pesquisar ou cadastrar pessoa" onClick={()=>{setNewPersonMode(false);setPersonQuery("");setPersonPicker(true);}}><Search size={18}/></button>
+
+          <label>{creditCards.length>0?"De onde sai (conta ou cartão)":"De qual conta saiu"}
+            <select required value={form.lendCreditCardId?`card:${form.lendCreditCardId}`:(form.walletId||"")} onChange={e=>{
+              const v=e.target.value;
+              if(v.startsWith("card:")){
+                const cid=v.slice(5);
+                const c=creditCards.find(x=>x.id===cid);
+                const cyc=c?computeInvoiceCycleForPurchase({purchaseDate:form.lentOn||brDay(),closingDay:c.closing_day,dueDay:c.due_day}):null;
+                const defWallet=c?.default_wallet_id||checkingWallets[0]?.id||wallets[0]?.id||"";
+                setForm(old=>({...old,lendCreditCardId:cid,walletId:defWallet,lendRepaymentWalletId:old.lendRepaymentWalletId||defWallet,expectedRepaymentOn:cyc?.dueDate||old.expectedRepaymentOn}));
+              }else{
+                setForm(old=>({...old,lendCreditCardId:"",lendCardInstallments:1,walletId:v,lendRepaymentWalletId:v||old.lendRepaymentWalletId}));
+              }
+            }}>
+              <option value="">Selecione a conta ou cartão</option>
+              <optgroup label="Contas bancárias">
+                {(checkingWallets.length?checkingWallets:wallets).map(w=><option key={w.id} value={w.id}>{w.name}</option>)}
+              </optgroup>
+              {creditCards.length>0&&(
+                <optgroup label="Cartões de crédito">
+                  {creditCards.map(c=><option key={c.id} value={`card:${c.id}`}>💳 {c.name} (vence dia {c.due_day})</option>)}
+                </optgroup>
+              )}
+            </select>
+          </label>
+
+          <div className="form-grid">
+            <label>{lendCard?"Data da compra":"Data de saída"}<input required type="date" max={brDay()} value={lendDate} onChange={e=>{
+              const nextDate=e.target.value;
+              if(lendCard&&nextDate){
+                const cyc=computeInvoiceCycleForPurchase({purchaseDate:nextDate,closingDay:lendCard.closing_day,dueDay:lendCard.due_day});
+                setForm(old=>({...old,lentOn:nextDate,expectedRepaymentOn:cyc.dueDate}));
+              }else{
+                field("lentOn",nextDate);
+              }
+            }}/></label>
+            {lendCard?(
+              <label>Parcelas no cartão
+                <select value={cardInst>1?"installments":"1"} onChange={e=>{
+                  const nextCount=e.target.value==="installments"?Math.max(2,cardInst):1;
+                  setForm(old=>({...old,lendCardInstallments:nextCount,lendRepaymentCount:nextCount}));
+                }}>
+                  <option value="1">À vista (1x)</option>
+                  <option value="installments">Parcelado (2x–60x)</option>
+                </select>
+              </label>
+            ):(
+              <label>Devolução pelo amigo
+                <select value={repayInst>1?"installments":"1"} onChange={e=>{
+                  const nextCount=e.target.value==="installments"?Math.max(2,repayInst):1;
+                  field("lendRepaymentCount",nextCount);
+                }}>
+                  <option value="1">À vista (1x)</option>
+                  <option value="installments">Parcelada (2x–60x)</option>
+                </select>
+              </label>
+            )}
+          </div>
+
+          {lendCard&&cardInst>1&&(
+            <div className="repeat-config">
+              <div className="section-header"><h3>Parcelamento no cartão</h3><span>{cardInst}x</span></div>
+              <div className="form-grid">
+                <label>Qtd. de parcelas<input type="number" min="2" max="60" value={form.lendCardInstallments||2} onChange={e=>field("lendCardInstallments",Math.max(2,Math.min(60,Number(e.target.value||2))))}/></label>
+                <label>Valor informado é<select value={form.valueMode||"total"} onChange={e=>field("valueMode",e.target.value)}><option value="total">Valor total</option><option value="installment">Valor da parcela</option></select></label>
+              </div>
+              <div className="repeat-preview">
+                <strong>Total: {money(totalLendCents)}</strong>
+                <span>{cardInst}x de {money(Math.round(totalLendCents/cardInst))}</span>
+              </div>
+            </div>
+          )}
+
+          {lendCard&&cardCycle&&(
+            <div className={`notice ${cardOverLimit?"warning":"info"}`} style={{margin:0}}>
+              <strong>Fatura inicial: {cardCycle.invoiceMonth} (venc. {fdate(cardCycle.dueDate)})</strong>
+              <p style={{margin:"4px 0 0"}}>
+                Limite disponível: <strong>{money(cardUsage.availableLimitCents)}</strong>
+                {cardOverLimit?" — atenção: este valor excede o limite disponível do cartão!":" — as parcelas entram na fatura sem distorcer seus orçamentos pessoais."}
+              </p>
+            </div>
+          )}
+
+          {lendCard&&(
+            <div className="form-grid">
+              <label>Devolução pelo amigo
+                <select value={repayInst>1?"installments":"1"} onChange={e=>field("lendRepaymentCount",e.target.value==="installments"?Math.max(2,repayInst):1)}>
+                  <option value="1">À vista (1x)</option>
+                  <option value="installments">Parcelada (2x–60x)</option>
+                </select>
+              </label>
+              {repayInst>1&&(
+                <label>Parcelas da devolução
+                  <input type="number" min="2" max="60" value={form.lendRepaymentCount||2} onChange={e=>field("lendRepaymentCount",Math.max(2,Math.min(60,Number(e.target.value||2))))}/>
+                </label>
+              )}
+            </div>
+          )}
+
+          {!lendCard&&repayInst>1&&(
+            <div className="repeat-config">
+              <div className="section-header"><h3>Parcelamento da devolução</h3><span>{repayInst}x</span></div>
+              <div className="form-grid">
+                <label>Qtd. de parcelas<input type="number" min="2" max="60" value={form.lendRepaymentCount||2} onChange={e=>field("lendRepaymentCount",Math.max(2,Math.min(60,Number(e.target.value||2))))}/></label>
+                <label>Valor informado é<select value={form.valueMode||"total"} onChange={e=>field("valueMode",e.target.value)}><option value="total">Valor total</option><option value="installment">Valor da parcela</option></select></label>
+              </div>
+              <div className="repeat-preview">
+                <strong>Total: {money(totalLendCents)}</strong>
+                <span>{repayInst}x de {money(Math.round(totalLendCents/repayInst))}</span>
+              </div>
+            </div>
+          )}
+
+          {lendCard&&cardInst>1&&repayInst!==cardInst&&(
+            <button type="button" className="mini-pill" onClick={()=>setForm(old=>({...old,lendRepaymentCount:cardInst,expectedRepaymentOn:cardCycle?.dueDate||old.expectedRepaymentOn}))}>
+              Acompanhar parcelas do cartão ({cardInst}x)
+            </button>
+          )}
+
+          <div className="form-grid">
+            <label>{repayInst>1?"1ª devolução prevista":"Previsão de pagamento"}<input required type="date" min={lendDate} value={form.expectedRepaymentOn||lendDate} onChange={e=>field("expectedRepaymentOn",e.target.value)}/></label>
+            <label>Conta para receber
+              <select required value={form.lendRepaymentWalletId||form.walletId||""} onChange={e=>field("lendRepaymentWalletId",e.target.value)}>
+                <option value="">Selecione a conta</option>
+                {(checkingWallets.length?checkingWallets:wallets).map(w=><option key={w.id} value={w.id}>{w.name}</option>)}
+              </select>
+            </label>
+          </div>
+          <p className="hint" style={{margin:0}}>
+            {lendCard
+              ? "As parcelas entram na fatura do cartão e consomem o limite; os recebíveis da pessoa ficam vinculados ao pagamento."
+              : "O valor sai da sua conta hoje e cria os recebíveis previstos na carteira dessa pessoa (acompanha virada de mês)."}
+          </p>
         </div>
-        <div className="form-grid">
-          <label>Data de saída<input required type="date" max={brDay()} value={form.lentOn||brDay()} onChange={e=>field("lentOn",e.target.value)}/></label>
-          <label>Previsão de pagamento<input required type="date" min={form.lentOn||brDay()} value={form.expectedRepaymentOn||brDay()} onChange={e=>field("expectedRepaymentOn",e.target.value)}/></label>
-        </div>
-        <p className="hint" style={{margin:0}}>O valor sai da sua conta hoje e cria um recebível previsto na carteira dessa pessoa (aceita devoluções parciais e acompanha a cobrança se virar o mês).</p>
-      </div>
-    </>}
+      </>;
+    })()}
 
     {/* CONTA A PAGAR / A RECEBER (unificado) ou edição */}
     {titleEntry&&(!newTitle||intent==="bill")&&<>

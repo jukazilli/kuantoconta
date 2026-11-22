@@ -206,6 +206,40 @@ test("computeTotalDebtCents sums all future finite installments (including 2028)
   assert.equal(debt, 125000);
 });
 
+test("computeTotalDebtCents in future position (dez/2028) drops paid-off earlier installments while keeping period fixed expenses", () => {
+  const titles = [
+    { id: "1", direction: "expense", amount_cents: 50000, settled_cents: 0, due_on: "2026-12-10", series_id: "s-loan", category: "Empréstimos", installment_total: 10 },
+    { id: "2", direction: "expense", amount_cents: 50000, settled_cents: 0, due_on: "2027-08-10", series_id: "s-loan", category: "Empréstimos", installment_total: 10 },
+    { id: "3", direction: "expense", amount_cents: 79000, settled_cents: 0, due_on: "2028-11-05", virtual: true, category: "Moradia" },
+    { id: "4", direction: "expense", amount_cents: 79000, settled_cents: 0, due_on: "2028-12-05", virtual: true, category: "Moradia" },
+  ];
+  const liabilities = [
+    { id: "l-1", principal_cents: 100000, status: "active", series_id: "s-loan" },
+  ];
+
+  const allInDec2028 = computeTotalDebtCents({
+    knownCash: true,
+    titles,
+    liabilities,
+    mode: "all_commitments",
+    rangeStart: "2028-12-01",
+    date: "2028-12-31",
+    today: "2026-11-20",
+  });
+  const financialOnlyInDec2028 = computeTotalDebtCents({
+    knownCash: true,
+    titles,
+    liabilities,
+    mode: "financial_only",
+    rangeStart: "2028-12-01",
+    date: "2028-12-31",
+    today: "2026-11-20",
+  });
+
+  assert.equal(allInDec2028, 79000);
+  assert.equal(financialOnlyInDec2028, 0);
+});
+
 test("buildNotifications surfaces planned goals, due bills, budget overruns, capital reminders, and cash risk", () => {
   const alerts = buildNotifications({
     today: "2026-11-19",

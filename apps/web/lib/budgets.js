@@ -654,32 +654,53 @@ export function computeSafeMonthlyContributionCents({
 }
 
 /**
- * Total Endividamento: sum of ALL remaining pending payable installments/titles
- * across the entire future horizon (2028, 2029, etc.), excluding open-ended recurring bills
- * without an end date, plus active liabilities not already linked to a title series.
+ * Total Endividamento: sum of remaining pending payable installments/titles
+ * from the active horizon onward (when `rangeStart > today`, past installments before
+ * `rangeStart` are already settled in the projected timeline), plus fixed recurring
+ * expenses (`virtual`) falling inside `rangeStart..date` (when a period is supplied),
+ * plus active liabilities not linked to a title series.
  */
-export function computeTotalDebtCents({ titles = [], liabilities = [], knownCash = false, mode = "all_commitments" }) {
+export function computeTotalDebtCents({
+  titles = [],
+  liabilities = [],
+  knownCash = false,
+  mode = "all_commitments",
+  rangeStart = null,
+  date = null,
+  today = null,
+}) {
   const isFinancialDebtTitle = (t) => {
     const kind = t.entry_kind || "standard";
-    if (kind === "debt_payment" || t.liability_id) return true;
+    if (kind === "debt_payment" || t.liability_id || t.credit_card_id) return true;
     if (Number(t.installment_total || 1) > 1) return true;
     const cat = normalizeCategoryName(t.category || "");
     return cat.includes("emprestimo") || cat.includes("cartao") || cat.includes("financiamento") || cat.includes("divida");
   };
 
-  const pendingTitles = titles.filter(
-    (t) =>
-      !t.cancelled_at &&
-      t.direction === "expense" &&
-      (t.entry_kind || "standard") !== "reserve_transfer" &&
-      (t.entry_kind || "standard") !== "loan_out" &&
-      (t.entry_kind || "standard") !== "transfer" &&
-      !t.virtual && // open-ended virtual recurrences are excluded; materialized & finite installments are included
-      (mode !== "financial_only" || isFinancialDebtTitle(t))
+  const isFutureHorizon = Boolean(rangeStart && today && String(rangeStart) > String(today));
+  const hasPeriodWindow = Boolean(rangeStart && date);
+
+  const allSeriesIds = new Set(
+    titles.filter((t) => !t.cancelled_at && t.series_id).map((t) => String(t.series_id))
   );
-  const titleSeriesIds = new Set(
-    pendingTitles.filter((t) => t.series_id).map((t) => String(t.series_id))
-  );
+
+  const pendingTitles = titles.filter((t) => {
+    if (t.cancelled_at || t.direction !== "expense") return false;
+    const kind = t.entry_kind || "standard";
+    if (kind === "reserve_transfer" || kind === "transfer") return false;
+    if (kind === "loan_out" && !t.credit_card_id) return false;
+    if (mode === "financial_only" && !isFinancialDebtTitle(t)) return false;
+
+    const due = String(t.due_on || "").slice(0, 10);
+    if (t.virtual) {
+      // Open-ended fixed expenses count only for the currently inspected period window
+      return hasPeriodWindow && due >= String(rangeStart) && due <= String(date);
+    }
+    if (isFutureHorizon && due && due < String(rangeStart)) {
+      return false;
+    }
+    return true;
+  });
 
   const pendingPayableCents = pendingTitles.reduce((sum, t) => {
     const rem = Math.max(0, cents(t.amount_cents) - cents(t.settled_cents));
@@ -687,7 +708,14 @@ export function computeTotalDebtCents({ titles = [], liabilities = [], knownCash
   }, 0);
 
   const unlinkedLiabilitiesCents = (liabilities || [])
-    .filter((l) => l.status !== "settled" && (!l.series_id || !titleSeriesIds.has(String(l.series_id))))
+    .filter((l) => {
+      if (l.status === "settled") return false;
+      if (l.series_id && allSeriesIds.has(String(l.series_id))) return false;
+      if (isFutureHorizon && l.maturity_on && String(l.maturity_on).slice(0, 10) < String(rangeStart)) {
+        return false;
+      }
+      return true;
+    })
     .reduce((sum, l) => sum + Math.max(0, cents(l.principal_cents)), 0);
 
   if (!knownCash && pendingTitles.length === 0 && (liabilities || []).length === 0) {

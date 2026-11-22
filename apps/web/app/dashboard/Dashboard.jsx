@@ -36,6 +36,7 @@ import {
   Plane,
   ShoppingBag,
   ListChecks,
+  Columns3,
 } from "lucide-react";
 import { authClient } from "../../lib/auth/client";
 import { money, cents, brDay, isoDate } from "../../lib/finance";
@@ -58,6 +59,8 @@ import CancelScopeDialog from "./CancelScopeDialog";
 import FinanceChart from "./FinanceChart";
 import HealthDiagnosisCard from "./HealthDiagnosisCard";
 import PlanningGoalsPanel from "./PlanningGoalsPanel";
+import DesktopWorkspace from "./DesktopWorkspace";
+import { DEFAULT_DESKTOP_COLUMNS, sanitizeColumnSettings, sanitizeWorkspaceColumns } from "../../lib/workspace-columns";
 import GuidedTour from "./GuidedTour";
 import BankIcon from "./BankIcon";
 import McpConnectionsCard from "./McpConnectionsCard";
@@ -207,7 +210,67 @@ export default function Dashboard({ user }) {
   const [tourOpen, setTourOpen] = useState(false);
   const [manageWalletsOpen, setManageWalletsOpen] = useState(false);
   const [invoiceModal, setInvoiceModal] = useState(null); // { cardId, month } | null
+  const [isDesktopWorkspace, setIsDesktopWorkspace] = useState(false);
+  const [desktopColumns, setDesktopColumns] = useState(DEFAULT_DESKTOP_COLUMNS);
+  const [columnSettings, setColumnSettings] = useState({});
+  const [addColumnOpen, setAddColumnOpen] = useState(false);
+  const [focusColumnKey, setFocusColumnKey] = useState(null);
+  const [evolutionModalOpen, setEvolutionModalOpen] = useState(false);
   const filterRef = useRef(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const sync = () => setIsDesktopWorkspace(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const storageKey = `kc_desktop_workspace_${user?.email || "user"}`;
+    if (data?.workspacePrefs?.desktopColumns) {
+      const cols = sanitizeWorkspaceColumns(data.workspacePrefs.desktopColumns);
+      const cfg = sanitizeColumnSettings(data.workspacePrefs.columnSettings);
+      setDesktopColumns(cols);
+      setColumnSettings(cfg);
+      window.localStorage.setItem(storageKey, JSON.stringify({ desktopColumns: cols, columnSettings: cfg }));
+      return;
+    }
+    try {
+      const cached = JSON.parse(window.localStorage.getItem(storageKey) || "null");
+      if (cached?.desktopColumns) {
+        setDesktopColumns(sanitizeWorkspaceColumns(cached.desktopColumns));
+        setColumnSettings(sanitizeColumnSettings(cached.columnSettings));
+      }
+    } catch {}
+  }, [data?.workspacePrefs, user?.email]);
+
+  const persistWorkspacePrefs = (nextCols, nextSettings) => {
+    if (typeof window !== "undefined") {
+      const storageKey = `kc_desktop_workspace_${user?.email || "user"}`;
+      window.localStorage.setItem(storageKey, JSON.stringify({ desktopColumns: nextCols, columnSettings: nextSettings }));
+    }
+    request("POST", {
+      action: "save_workspace_prefs",
+      desktopColumns: nextCols,
+      columnSettings: nextSettings,
+    }).catch(() => {});
+  };
+
+  const handleChangeColumns = (nextCols, focusKey = null) => {
+    const clean = sanitizeWorkspaceColumns(nextCols);
+    setDesktopColumns(clean);
+    if (focusKey) setFocusColumnKey(focusKey);
+    persistWorkspacePrefs(clean, columnSettings);
+  };
+
+  const handleChangeColumnSettings = (nextSettings) => {
+    const clean = sanitizeColumnSettings(nextSettings);
+    setColumnSettings(clean);
+    persistWorkspacePrefs(desktopColumns, clean);
+  };
 
   useEffect(() => {
     if (!data || loading) return;
@@ -441,7 +504,8 @@ export default function Dashboard({ user }) {
     return titles.reduce((sum, t) => {
       if (t.cancelled_at) return sum;
       const kind = t.entry_kind || "standard";
-      if (["transfer", "reserve_transfer", "loan_out", "loan_repayment"].includes(kind)) return sum;
+      if (["transfer", "reserve_transfer"].includes(kind)) return sum;
+      if (kind === "loan_out" && !t.credit_card_id) return sum;
       if (t.direction === "income" && (kind === "debt_payment" || kind === "loan_principal" || t.liability_id)) return sum;
       const due = isoDate(t.due_on);
       if (due >= rangeStart) return sum;
@@ -475,8 +539,11 @@ export default function Dashboard({ user }) {
         liabilities: data?.liabilities || [],
         knownCash: summary.knownCash,
         mode: debtMode,
+        rangeStart,
+        date,
+        today: TODAY,
       }),
-    [expanded, data, summary.knownCash, debtMode]
+    [expanded, data, summary.knownCash, debtMode, rangeStart, date]
   );
   const notifications = useMemo(
     () =>
@@ -588,6 +655,10 @@ export default function Dashboard({ user }) {
       transferredOn: TODAY,
       lentOn: TODAY,
       expectedRepaymentOn: lastDayOfMonth(TODAY),
+      lendCreditCardId: "",
+      lendCardInstallments: 1,
+      lendRepaymentCount: 1,
+      lendRepaymentWalletId: t?.wallet_id || defaultChecking,
       category: t?.category || "",
       amount:
         kind === "settle" && t
@@ -922,11 +993,17 @@ export default function Dashboard({ user }) {
           settled: form.settlementState === "paid",
         });
       } else if (drawer === "title" && form.intent === "lend") {
+        const usingCard = Boolean(form.lendCreditCardId);
         await request("POST", {
           action: "lend",
           description: form.description,
           amount: maskToDecimal(form.amount),
-          walletId: form.walletId,
+          walletId: usingCard ? null : form.walletId,
+          creditCardId: usingCard ? form.lendCreditCardId : null,
+          cardInstallments: usingCard ? Number(form.lendCardInstallments || 1) : 1,
+          repaymentCount: Number(form.lendRepaymentCount || 1),
+          valueMode: form.valueMode || "total",
+          repaymentWalletId: form.lendRepaymentWalletId || form.walletId,
           personId: form.personId,
           lentOn: form.lentOn || TODAY,
           expectedRepaymentOn: form.expectedRepaymentOn || form.dueOn || TODAY,
@@ -1121,13 +1198,21 @@ export default function Dashboard({ user }) {
   }
 
   return (
-    <div className="app">
+    <div className={`app${isDesktopWorkspace && active !== "profile" ? " app--desktop" : ""}`}>
       <header className="topbar" aria-label="Cabeçalho e ações">
         <div className="topbar-left">
           <button type="button" className="brand" onClick={() => setTab("overview")} aria-label="kuantoconta, Visão geral">
             <span className="brand-mark">k</span>
             <span className="brand-name">kuantoconta</span>
           </button>
+          {isDesktopWorkspace && active === "profile" && (
+            <>
+              <span className="topbar-divider" aria-hidden="true" />
+              <button type="button" className="pill pill-secondary pill-compact" onClick={() => setTab("overview")}>
+                <ChevronLeft size={15} aria-hidden="true" /> Voltar ao workspace
+              </button>
+            </>
+          )}
           {active !== "profile" && (
             <>
               <span className="topbar-divider" aria-hidden="true" />
@@ -1182,6 +1267,18 @@ export default function Dashboard({ user }) {
         )}
 
         <div className="topbar-right">
+          {isDesktopWorkspace && active !== "profile" && (
+            <button
+              type="button"
+              className="topbar-cols-pill"
+              aria-label="Adicionar ou gerenciar colunas"
+              onClick={() => setAddColumnOpen((v) => !v)}
+            >
+              <Columns3 size={14} aria-hidden="true" />
+              <span>Colunas</span>
+              <strong>{desktopColumns.length}</strong>
+            </button>
+          )}
           {summary.knownCash && (
             <button
               type="button"
@@ -1235,6 +1332,83 @@ export default function Dashboard({ user }) {
       )}
 
       <main className="dashboard" aria-label="Conteúdo principal" data-tour="workspace">
+        {isDesktopWorkspace && active !== "profile" ? (
+          <DesktopWorkspace
+            columns={desktopColumns}
+            columnSettings={columnSettings}
+            onChangeColumns={handleChangeColumns}
+            onChangeColumnSettings={handleChangeColumnSettings}
+            addPopoverOpen={addColumnOpen}
+            onToggleAddPopover={setAddColumnOpen}
+            focusColumnKey={focusColumnKey}
+            onFocusHandled={() => setFocusColumnKey(null)}
+            today={TODAY}
+            date={date}
+            monthLong={monthLong}
+            monthOnly={monthOnly}
+            summary={summary}
+            display={display}
+            money={money}
+            cents={cents}
+            isoDate={isoDate}
+            fmtDate={fmtDate}
+            projectedBalanceCents={projectedBalanceCents}
+            checkingBalanceCents={checkingBalanceCents}
+            capitalBalanceCents={capitalBalanceCents}
+            caixinhaBalance={caixinhaBalance}
+            debtDisplay={debtDisplay}
+            titlesTable={titlesTable}
+            budgetItems={budgetItems}
+            monthlyIncomeCents={monthlyIncomeCents}
+            allocatedBudgetCents={allocatedBudgetCents}
+            remainingAllocableCents={remainingAllocableCents}
+            months={months}
+            expenses={expenses}
+            charts={charts}
+            showCategories={showCategories}
+            filter={filter}
+            setFilter={setFilter}
+            query={query}
+            setQuery={setQuery}
+            checkingWallets={checkingWallets}
+            wallets={wallets}
+            walletBalance={walletBalance}
+            bankCaixinhasTotal={bankCaixinhasTotal}
+            creditCards={creditCards}
+            expandedTitles={expanded?.titles || []}
+            capitalGoals={capitalGoals}
+            purchaseGoals={purchaseGoals}
+            reserveCaixinhasCents={reserveCaixinhasCents}
+            goalCaixinhasCents={goalCaixinhasCents}
+            reservedThisMonthCents={reservedThisMonthCents}
+            safeContribution={safeContribution}
+            capitalBudget={capitalBudget}
+            capitalProjectedAtDateCents={capitalProjectedAtDateCents}
+            netWorthAtDateCents={netWorthAtDateCents}
+            peopleLoans={peopleLoans}
+            healthPlan={healthPlan}
+            habits={habits}
+            data={data}
+            screenFilters={screenFilters}
+            open={open}
+            openBudget={openBudget}
+            openReserveCaixinha={openReserveCaixinha}
+            fulfillPlan={fulfillPlan}
+            editPlan={editPlan}
+            cancelPlan={cancelPlan}
+            handleAction={handleAction}
+            setActionMenu={setActionMenu}
+            setSelectedWallet={setSelectedWallet}
+            setManageWalletsOpen={setManageWalletsOpen}
+            setInvoiceModal={setInvoiceModal}
+            setSelectedCaixinha={setSelectedCaixinha}
+            setSelectedGoal={setSelectedGoal}
+            setHealthModal={setHealthModal}
+            onOpenEvolutionModal={() => setEvolutionModalOpen(true)}
+            Empty={Empty}
+          />
+        ) : (
+          <>
         {active === "overview" && (
           <>
             <section className="summary-grid" aria-label="Indicadores principais">
@@ -1887,6 +2061,9 @@ export default function Dashboard({ user }) {
                           <span className="small-flag" style={{ marginLeft: 8, fontSize: 10 }}>{person.relationship}</span>
                           <div className="hint" style={{ marginTop: 2 }}>
                             Emprestado: {money(totalLentCents)} · Devolvido: {money(totalRepaidCents)}
+                            {openRepaymentTitles[0] && (
+                              <> · Próx.: {fmtDate(openRepaymentTitles[0].dueOn)}{openRepaymentTitles[0].installmentTotal > 1 ? ` (${openRepaymentTitles[0].installmentIndex}/${openRepaymentTitles[0].installmentTotal})` : ""} · {money(openRepaymentTitles[0].remainingCents)}{openRepaymentTitles.length > 1 ? ` (+${openRepaymentTitles.length - 1})` : ""}</>
+                            )}
                           </div>
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -2162,8 +2339,11 @@ export default function Dashboard({ user }) {
             <McpConnectionsCard />
           </div>
         )}
+          </>
+        )}
       </main>
 
+      {!isDesktopWorkspace && (
       <nav className="bottom-dock" aria-label="Navegação principal" data-tour="dock">
         {TABS.map(([key, label]) => {
           const TabIcon = TAB_ICONS[key] || LayoutGrid;
@@ -2183,6 +2363,61 @@ export default function Dashboard({ user }) {
           );
         })}
       </nav>
+      )}
+
+      {evolutionModalOpen && (
+        <div
+          className="action-overlay open"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setEvolutionModalOpen(false);
+          }}
+        >
+          <div className="dialog dialog-wide" role="dialog" aria-modal="true" aria-labelledby="evolutionDialogTitle">
+            <div className="dialog-head">
+              <h2 id="evolutionDialogTitle">Evolução mês a mês</h2>
+              <button type="button" className="dialog-close" onClick={() => setEvolutionModalOpen(false)} aria-label="Fechar">
+                <X size={17} />
+              </button>
+            </div>
+            <div className="table-scroll">
+              <table className="finance-table">
+                <thead>
+                  <tr>
+                    <th>Mês</th>
+                    <th>Entradas</th>
+                    <th>Saídas</th>
+                    <th>Sobra/déficit</th>
+                    <th>Saldo (contratual)</th>
+                    <th>Saldo (com planos)</th>
+                    <th>Saldo (com limites)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {months.map((m) => (
+                    <tr key={m.month}>
+                      <td>
+                        <strong>
+                          {new Date(`${m.month}-15T12:00:00Z`).toLocaleDateString("pt-BR", {
+                            month: "long",
+                            year: "numeric",
+                            timeZone: "UTC",
+                          })}
+                        </strong>
+                      </td>
+                      <td>{money(m.income)}</td>
+                      <td>{money(m.expense)}</td>
+                      <td className={m.result < 0 ? "red" : ""}>{money(m.result)}</td>
+                      <td className="money-cell">{display(m.balance)}</td>
+                      <td className="money-cell">{display(m.balanceWithPlans)}</td>
+                      <td className="money-cell">{display(m.balanceWithinBudgets)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
 
       {actionMenu && (
         <div
