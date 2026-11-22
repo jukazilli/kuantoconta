@@ -1,9 +1,10 @@
 "use client";
 import {useMemo,useState} from "react";
-import {X,Plus,CalendarDays,ReceiptText,CircleDollarSign,Repeat2,CheckCircle2,Clock3,ChevronDown,ChevronRight,Check,ArrowDownCircle,ArrowUpCircle,HandCoins,Search,UserPlus,ArrowLeftRight,PiggyBank} from "lucide-react";
+import {X,Plus,CalendarDays,ReceiptText,CircleDollarSign,Repeat2,CheckCircle2,Clock3,ChevronDown,ChevronRight,Check,ArrowDownCircle,ArrowUpCircle,HandCoins,Search,UserPlus,ArrowLeftRight,PiggyBank,AlignLeft,MoreHorizontal,CreditCard,Tag,Utensils,Home,Car,HeartPulse,Gamepad2,GraduationCap,Briefcase} from "lucide-react";
 import MoneyInput from "./MoneyInput";
 import BankIcon from "./BankIcon";
 import PlanningWizard from "./PlanningWizard";
+import {getCategoryVisual} from "./MobileWorkspace";
 import {BANK_BRANDS} from "../../lib/bank-brands";
 import {cents,money,isoDate,brDay} from "../../lib/finance";
 import {maskToCents,maskToDecimal} from "../../lib/money-input";
@@ -13,6 +14,20 @@ import {computeCapitalPace} from "../../lib/capital-pace";
 import {computeInvoiceCycleForPurchase,computeCardUsage} from "../../lib/credit-cards";
 
 const fdate=d=>{const s=isoDate(d).split("-");return s.length===3?`${s[2]}/${s[1]}/${s[0]}`:"—";};
+
+function CategoryCircleIcon({name,direction="expense"}){
+ const vis=getCategoryVisual(name,direction);
+ const Icon=
+  /alimenta|mercado|refei/i.test(name)?Utensils:
+  /moradia|aluguel|casa/i.test(name)?Home:
+  /transporte|carro|uber/i.test(name)?Car:
+  /sa[uú]de|farm/i.test(name)?HeartPulse:
+  /lazer|viagem/i.test(name)?Gamepad2:
+  /educa|faculdade|curso/i.test(name)?GraduationCap:
+  /sal[aá]rio|renda|benef/i.test(name)?Briefcase:
+  Tag;
+ return <span className="kc-mob-cat-circle" style={{background:vis.bg,color:vis.fg}} aria-hidden="true"><Icon size={17}/></span>;
+}
 
 export default function EntryDrawer({
   drawer,
@@ -40,9 +55,10 @@ export default function EntryDrawer({
   onAddPerson,
   creditCards=[],
   safeContribution=null,
-  cancellations=[]
+  cancellations=[],
+  isMobilePhone=false
 }){
- const [quick,setQuick]=useState(null),[budgetPicker,setBudgetPicker]=useState(false),[personPicker,setPersonPicker]=useState(false),[personQuery,setPersonQuery]=useState(""),[newPersonMode,setNewPersonMode]=useState(false),[personMore,setPersonMore]=useState(false),[pName,setPName]=useState(""),[pRel,setPRel]=useState("Amigo"),[pEmail,setPEmail]=useState(""),[pPhone,setPPhone]=useState(""),[pNotes,setPNotes]=useState(""),[pBusy,setPBusy]=useState(false),[pErr,setPErr]=useState(""),[newName,setNewName]=useState(""),[trackBudget,setTrackBudget]=useState(false),[quickLimit,setQuickLimit]=useState(""),[quickError,setQuickError]=useState(""),[quickBusy,setQuickBusy]=useState(false),[showMore,setShowMore]=useState(false);
+ const [quick,setQuick]=useState(null),[budgetPicker,setBudgetPicker]=useState(false),[personPicker,setPersonPicker]=useState(false),[personQuery,setPersonQuery]=useState(""),[newPersonMode,setNewPersonMode]=useState(false),[personMore,setPersonMore]=useState(false),[pName,setPName]=useState(""),[pRel,setPRel]=useState("Amigo"),[pEmail,setPEmail]=useState(""),[pPhone,setPPhone]=useState(""),[pNotes,setPNotes]=useState(""),[pBusy,setPBusy]=useState(false),[pErr,setPErr]=useState(""),[newName,setNewName]=useState(""),[trackBudget,setTrackBudget]=useState(false),[quickLimit,setQuickLimit]=useState(""),[quickError,setQuickError]=useState(""),[quickBusy,setQuickBusy]=useState(false),[showMore,setShowMore]=useState(false),[mobTypeSwitcherOpen,setMobTypeSwitcherOpen]=useState(false);
  const field=(name,value)=>setForm(old=>({...old,[name]:value}));
  const edit=drawer==="edit",newTitle=drawer==="title",editPlan=drawer==="edit_plan",titleEntry=newTitle||edit;
  const intent=newTitle?(form.intent==="transfer"?"transfer":form.intent==="lend"?"lend":"bill"):"bill";
@@ -126,6 +142,14 @@ export default function EntryDrawer({
   drawer==="budget"?"Orçamento mensal":
   "Bem ou patrimônio";
 
+ const mobileFormTitle=
+  newTitle?(intent==="transfer"?"Transferência":intent==="lend"?"Emprestar":form.direction==="income"?"Nova Receita":form.creditCardId?"Despesa Cartão":"Nova Despesa"):
+  formTitle;
+
+ const saveToneClass=
+  newTitle&&intent==="bill"&&form.direction==="income"?" is-income":
+  newTitle&&(intent==="transfer"||form.creditCardId)?" is-blue":"";
+
  const canSubmit=drawer!=="detail";
  const isCaixinhaW=w=>Boolean(w?.parent_wallet_id)||Boolean(w?.caixinha_purpose)||Boolean(w?.is_reserved)||w?.wallet_kind==="reserve"||w?.wallet_kind==="investment";
  const checkingWallets=wallets.filter(w=>!isCaixinhaW(w));
@@ -134,9 +158,30 @@ export default function EntryDrawer({
   if(g.wallet_id&&walletBalances[g.wallet_id]!==undefined&&walletBalances[g.wallet_id]!==null)return walletBalances[g.wallet_id];
   return 0;
  };
+ const activeBankOrCardName=useMemo(()=>{
+  if(form.creditCardId){
+   const c=creditCards.find(x=>x.id===form.creditCardId);
+   if(c)return c.name;
+  }
+  const w=wallets.find(x=>x.id===form.walletId);
+  return w?.name||wallets[0]?.name||"Conta";
+ },[form.creditCardId,form.walletId,creditCards,wallets]);
 
- return <div className="overlay" onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}><section className={`drawer${drawer==="goal_sim"?" drawer-wide":""}`} role="dialog" aria-modal="true" aria-label={formTitle}>
-   <header className="drawer-head"><button type="button" className="plain-icon" onClick={onClose} aria-label="Fechar"><X size={23}/></button><h2>{formTitle}</h2>{canSubmit?<button className="save-pill" form="entry-form" type="submit" disabled={busy}>{busy?"Salvando...":"Salvar"}</button>:<span className="drawer-head-spacer"/>}</header>
+ return <div className={`overlay${isMobilePhone?" kc-mob-overlay":""}`} onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}><section className={`drawer${drawer==="goal_sim"?" drawer-wide":""}${isMobilePhone?" kc-mob-fullscreen-drawer":""}`} role="dialog" aria-modal="true" aria-label={isMobilePhone?mobileFormTitle:formTitle}>
+   <header className={`drawer-head${isMobilePhone?" kc-mob-form-head":""}`}>
+     <div className="kc-mob-form-head-left">
+       <button type="button" className="plain-icon" onClick={onClose} aria-label="Fechar"><X size={23}/></button>
+       <h2>{isMobilePhone?mobileFormTitle:formTitle}</h2>
+     </div>
+     <div className="kc-mob-form-head-right">
+       {canSubmit?<button className={`save-pill${saveToneClass}`} form="entry-form" type="submit" disabled={busy}>{busy?"Salvando...":"Salvar"}</button>:<span className="drawer-head-spacer"/>}
+       {isMobilePhone&&newTitle&&(
+         <button type="button" className="plain-icon" aria-label="Trocar tipo de lançamento" aria-expanded={mobTypeSwitcherOpen} onClick={()=>setMobTypeSwitcherOpen(v=>!v)}>
+           <MoreHorizontal size={21}/>
+         </button>
+       )}
+     </div>
+   </header>
    {error&&<div className="notice error" role="alert" style={{margin:"14px 20px"}}>{error}</div>}
    {drawer==="detail"?<div className="detail-layout">
     <div className="detail-amount"><small>{selectedTitleObj?.entry_kind==="transfer"?(selectedTitleObj?.direction==="income"?"Transferência recebida":"Transferência enviada"):selectedTitleObj?.direction==="income"?"A receber":"A pagar"}</small><strong>{money(cents(selectedTitleObj?.amount_cents))}</strong><p>{selectedTitleObj?.description}</p></div>
@@ -163,13 +208,13 @@ export default function EntryDrawer({
     {(balanceDue>0||isSeries(selectedTitleObj))&&<button type="button" className="text-button" onClick={()=>onAction("cancel",selectedTitleObj.id)}>Excluir este lançamento ou sua série</button>}
     <div className="detail-history"><h3>Histórico de pagamentos</h3>{settlements.filter(s=>s.title_id===selectedTitleObj?.id).length?settlements.filter(s=>s.title_id===selectedTitleObj?.id).map(s=><div className={"history-row"+(s.reversed_at?" reversed":"")} key={s.id}><p><CheckCircle2 size={15}/>{fdate(s.settled_on)} — {money(cents(s.amount_cents))} {s.reversed_at&&<span>• Revertido</span>}</p>{!s.reversed_at&&<button type="button" disabled={busy} onClick={()=>onAction("reverse",s.id)}>Desfazer pagamento</button>}</div>):<p><Clock3 size={15}/> Nenhum pagamento registrado.</p>}</div>
     <p className="hint">Ao editar este lançamento, as demais parcelas da série não serão alteradas.</p>
-   </div>:<form id="entry-form" className="entry-form" onSubmit={onSave}>
-    {newTitle&&<div className="direction-cards four" role="group" aria-label="Tipo de lançamento">
-      <button type="button" className={`direction-card expense${intent==="bill"&&form.direction!=="income"?" active":""}`} aria-pressed={intent==="bill"&&form.direction!=="income"} onClick={()=>setForm(old=>({...old,intent:"bill",direction:"expense",category:old.direction==="expense"?old.category:""}))}>
+   </div>:<form id="entry-form" className={`entry-form${isMobilePhone&&titleEntry&&(!newTitle||intent==="bill")?" kc-mob-list-form":""}`} onSubmit={onSave}>
+    {newTitle&&(!isMobilePhone||mobTypeSwitcherOpen||intent==="lend")&&<div className="direction-cards four" role="group" aria-label="Tipo de lançamento">
+      <button type="button" className={`direction-card expense${intent==="bill"&&form.direction!=="income"?" active":""}`} aria-pressed={intent==="bill"&&form.direction!=="income"} onClick={()=>{setForm(old=>({...old,intent:"bill",direction:"expense",category:old.direction==="expense"?old.category:""}));setMobTypeSwitcherOpen(false);}}>
         <ArrowDownCircle size={20} aria-hidden="true"/>
         <div><strong>A pagar</strong><small>Conta ou gasto</small></div>
       </button>
-      <button type="button" className={`direction-card income${intent==="bill"&&form.direction==="income"?" active":""}`} aria-pressed={intent==="bill"&&form.direction==="income"} onClick={()=>setForm(old=>({...old,intent:"bill",direction:"income",category:old.direction==="income"?old.category:""}))}>
+      <button type="button" className={`direction-card income${intent==="bill"&&form.direction==="income"?" active":""}`} aria-pressed={intent==="bill"&&form.direction==="income"} onClick={()=>{setForm(old=>({...old,intent:"bill",direction:"income",creditCardId:"",category:old.direction==="income"?old.category:""}));setMobTypeSwitcherOpen(false);}}>
         <ArrowUpCircle size={20} aria-hidden="true"/>
         <div><strong>A receber</strong><small>Salário ou entrada</small></div>
       </button>
@@ -177,11 +222,12 @@ export default function EntryDrawer({
         const fW = (checkingWallets.some(w => w.id === form.fromWalletId) ? form.fromWalletId : null) || checkingWallets[0]?.id || "";
         const tW = (checkingWallets.some(w => w.id === form.toWalletId && w.id !== fW) ? form.toWalletId : null) || (checkingWallets.find(w => w.id !== fW)?.id || "");
         setForm(old=>({...old,intent:"transfer",fromWalletId:fW,toWalletId:tW,transferredOn:old.transferredOn||old.dueOn||brDay(),settlementState:old.settlementState||"paid"}));
+        setMobTypeSwitcherOpen(false);
       }}>
         <ArrowLeftRight size={20} aria-hidden="true"/>
         <div><strong>Transferir</strong><small>Entre contas</small></div>
       </button>
-      <button type="button" className={`direction-card lend${intent==="lend"?" active":""}`} aria-pressed={intent==="lend"} onClick={()=>setForm(old=>({...old,intent:"lend",lentOn:old.lentOn||brDay(),expectedRepaymentOn:old.expectedRepaymentOn||old.dueOn||brDay()}))}>
+      <button type="button" className={`direction-card lend${intent==="lend"?" active":""}`} aria-pressed={intent==="lend"} onClick={()=>{setForm(old=>({...old,intent:"lend",lentOn:old.lentOn||brDay(),expectedRepaymentOn:old.expectedRepaymentOn||old.dueOn||brDay()}));setMobTypeSwitcherOpen(false);}}>
         <HandCoins size={20} aria-hidden="true"/>
         <div><strong>Emprestar</strong><small>Para alguém</small></div>
       </button>
@@ -454,7 +500,234 @@ export default function EntryDrawer({
     })()}
 
     {/* CONTA A PAGAR / A RECEBER (unificado) ou edição */}
-    {titleEntry&&(!newTitle||intent==="bill")&&<>
+    {titleEntry&&(!newTitle||intent==="bill")&&(isMobilePhone?(
+      <div className="kc-mob-form-rows">
+        {/* Linha 1: Descrição */}
+        <div className="kc-mob-row">
+          <AlignLeft size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+          <input
+            className="kc-mob-row-input"
+            aria-label="Descrição do lançamento"
+            placeholder="Descrição"
+            required
+            value={form.description}
+            maxLength={120}
+            onChange={e=>field("description",e.target.value)}
+          />
+        </div>
+
+        {/* Linha 2: Valor R$ 0,00 */}
+        <div className="kc-mob-row kc-mob-row-money">
+          <CircleDollarSign size={22} className="kc-mob-row-icon" aria-hidden="true"/>
+          <span className="kc-mob-currency">R$</span>
+          <MoneyInput ariaLabel="Valor em reais" value={form.amount} onChange={v=>field("amount",v)}/>
+        </div>
+
+        {/* Linha 3: Repetição */}
+        {edit?(
+          <div className="editing-scope-note" style={{margin:"10px 16px"}}>
+            A alteração será aplicada <strong>somente a este lançamento</strong>.
+          </div>
+        ):(
+          <>
+            <div className="kc-mob-row">
+              <Repeat2 size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+              <label className="kc-mob-row-stack">
+                <span className="kc-mob-row-caption">Repetição</span>
+                <div className="kc-mob-select-wrap">
+                  <select value={form.mode} onChange={e=>field("mode",e.target.value)}>
+                    <option value="single">Não recorrente</option>
+                    <option value="monthly">Fixa mensal</option>
+                    <option value="installments">Parcelada</option>
+                  </select>
+                  <ChevronDown size={17} aria-hidden="true"/>
+                </div>
+              </label>
+            </div>
+            {form.mode==="installments"&&(
+              <div className="kc-mob-sub-block">
+                <div className="kc-mob-sub-row">
+                  <span>Total de parcelas (2 a 60)</span>
+                  <input type="number" min="2" max="60" value={form.count} onChange={e=>field("count",e.target.value)}/>
+                </div>
+                <div className="kc-mob-sub-row">
+                  <span>Começar na parcela</span>
+                  <input type="number" min="1" max={form.count} value={form.startIndex} onChange={e=>field("startIndex",e.target.value)}/>
+                </div>
+                <div className="kc-mob-sub-row">
+                  <span>O valor informado é</span>
+                  <select value={form.valueMode} onChange={e=>field("valueMode",e.target.value)}>
+                    <option value="total">Valor total</option>
+                    <option value="installment">Valor da parcela</option>
+                  </select>
+                </div>
+                <div className="kc-mob-sub-note">
+                  <strong>{Math.max(0,Number(form.count)-Number(form.startIndex)+1)||0} parcelas futuras</strong>
+                  <span>{form.valueMode==="installment"?"Mensal: "+money(amountValue()):"Total: "+money(amountValue())}</span>
+                </div>
+              </div>
+            )}
+            {form.mode==="monthly"&&(
+              <div className="kc-mob-sub-block">
+                <div className="kc-mob-sub-row">
+                  <span>Encerrar em (opcional)</span>
+                  <input type="date" min={form.dueOn} max="2099-12-31" value={form.endsOn||""} onChange={ev=>field("endsOn",ev.target.value)}/>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Linha 4: Data de Vencimento / Compra */}
+        {newTitle&&form.direction!=="income"&&form.creditCardId?(()=>{
+          const card=creditCards.find(c=>c.id===form.creditCardId);
+          const pDate=form.occurredOn||brDay();
+          const cyc=card?computeInvoiceCycleForPurchase({purchaseDate:pDate,closingDay:card.closing_day,dueDay:card.due_day}):null;
+          return <>
+            <div className="kc-mob-row kc-mob-row-inline">
+              <CalendarDays size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+              <span className="kc-mob-inline-label">Data da Compra</span>
+              <input className="kc-mob-date-right" required type="date" value={pDate} onChange={e=>setForm(old=>({...old,occurredOn:e.target.value,dueOn:e.target.value}))}/>
+            </div>
+            {cyc&&(
+              <div className="kc-mob-sub-block">
+                <div className="kc-mob-sub-note">
+                  <strong>Fatura: {cyc.invoiceMonth}</strong>
+                  <span>Vence em {fdate(cyc.dueDate)} (fecha dia {card.closing_day})</span>
+                </div>
+              </div>
+            )}
+          </>;
+        })():newTitle&&form.mode==="single"&&form.settlementState==="paid"?(
+          <div className="kc-mob-row kc-mob-row-inline">
+            <CalendarDays size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+            <span className="kc-mob-inline-label">Data de Vencimento</span>
+            <input className="kc-mob-date-right" required type="date" max={brDay()} value={form.settledOn||brDay()} onChange={e=>field("settledOn",e.target.value)}/>
+          </div>
+        ):(
+          <div className="kc-mob-row kc-mob-row-inline">
+            <CalendarDays size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+            <span className="kc-mob-inline-label">Data de Vencimento</span>
+            <input className="kc-mob-date-right" required type="date" value={form.dueOn} onChange={e=>field("dueOn",e.target.value)}/>
+          </div>
+        )}
+
+        {/* Linha 5: Efetivada (Toggle Switch nativo igual à Imagem 1) */}
+        {newTitle&&form.mode==="single"&&!form.creditCardId&&(
+          <div className="kc-mob-row kc-mob-row-inline">
+            <CheckCircle2 size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+            <span className="kc-mob-inline-label">Efetivada</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={form.settlementState==="paid"}
+              aria-label="Marcar como efetivada"
+              className={`kc-mob-switch${form.settlementState==="paid"?" is-on":""}`}
+              onClick={()=>field("settlementState",form.settlementState==="paid"?"pending":"paid")}
+            >
+              <span className="kc-mob-switch-knob"/>
+            </button>
+          </div>
+        )}
+
+        {/* Linha 6: Categoria com Ícone Circular Colorido + Botão + */}
+        <div className="kc-mob-row kc-mob-row-entity">
+          <div className="kc-mob-entity-block">
+            <span className="kc-mob-row-caption">Categoria</span>
+            <input className="sr-only-input" tabIndex={-1} aria-hidden="true" required value={form.category} onChange={()=>{}}/>
+            <div className="kc-mob-entity-controls">
+              <button type="button" className="kc-mob-entity-trigger" onClick={()=>setBudgetPicker(true)}>
+                <CategoryCircleIcon name={form.category||"Categoria"} direction={form.direction}/>
+                <div className="kc-mob-entity-text">
+                  <strong>{form.category||"Selecione a categoria"}</strong>
+                  {form.direction==="expense"&&form.category&&(
+                    <small>{formatBudgetMeta(form.category)}</small>
+                  )}
+                </div>
+                <ChevronDown size={16} className="kc-mob-entity-caret" aria-hidden="true"/>
+              </button>
+              <button
+                type="button"
+                className="kc-mob-entity-action"
+                aria-label="Nova categoria"
+                onClick={()=>{setQuick("category");setNewName("");setQuickError("");}}
+              >
+                <Plus size={20}/>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Linha 7: Conta / Cartão com Logo Circular do Banco */}
+        <div className="kc-mob-row kc-mob-row-entity">
+          <div className="kc-mob-entity-block">
+            <span className="kc-mob-row-caption">{form.creditCardId?"Cartão de crédito":"Conta"}</span>
+            <div className="kc-mob-entity-controls">
+              <div className="kc-mob-entity-select-box">
+                <BankIcon name={activeBankOrCardName} size={36}/>
+                {newTitle&&form.direction!=="income"&&creditCards.length>0?(
+                  <select
+                    required
+                    value={form.creditCardId?`card:${form.creditCardId}`:form.walletId}
+                    onChange={e=>{
+                      const v=e.target.value;
+                      if(v.startsWith("card:")){
+                        const cid=v.slice(5);
+                        const c=creditCards.find(x=>x.id===cid);
+                        setForm(old=>({...old,creditCardId:cid,walletId:c?.default_wallet_id||old.walletId||wallets[0]?.id||"",settlementState:"pending",occurredOn:old.occurredOn||brDay()}));
+                      }else{
+                        setForm(old=>({...old,creditCardId:"",walletId:v}));
+                      }
+                    }}
+                  >
+                    <option value="">Selecione a conta ou cartão</option>
+                    <optgroup label="Contas bancárias">
+                      {wallets.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}
+                    </optgroup>
+                    <optgroup label="Cartões de crédito">
+                      {creditCards.map(c=><option key={c.id} value={`card:${c.id}`}>💳 {c.name} (vence dia {c.due_day})</option>)}
+                    </optgroup>
+                  </select>
+                ):(
+                  <select required value={form.walletId} onChange={e=>field("walletId",e.target.value)}>
+                    <option value="">Selecione uma conta</option>
+                    {wallets.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}
+                  </select>
+                )}
+                <ChevronDown size={16} className="kc-mob-entity-caret" aria-hidden="true"/>
+              </div>
+              <span className="kc-mob-entity-badge" aria-hidden="true">
+                {form.creditCardId?<CreditCard size={19}/>:<ReceiptText size={19}/>}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Linha 8: Salvar e continuar */}
+        {newTitle&&(
+          <div className="kc-mob-row kc-mob-row-inline">
+            <Repeat2 size={19} className="kc-mob-row-icon" aria-hidden="true"/>
+            <span className="kc-mob-inline-label">Salvar e continuar lançando</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={Boolean(form.keepOpen)}
+              className={`kc-mob-switch${form.keepOpen?" is-on":""}`}
+              onClick={()=>field("keepOpen",!form.keepOpen)}
+            >
+              <span className="kc-mob-switch-knob"/>
+            </button>
+          </div>
+        )}
+
+        {/* Linha 9: Data de Lançamento (Igual ao rodapé da Imagem 1) */}
+        <div className="kc-mob-row kc-mob-row-inline kc-mob-row-footer">
+          <Clock3 size={20} className="kc-mob-row-icon" aria-hidden="true"/>
+          <span className="kc-mob-inline-label">Data de<br/>Lançamento</span>
+          <span className="kc-mob-launch-meta">{fdate(brDay())}</span>
+        </div>
+      </div>
+    ):<>
       <div className="field-row major"><ReceiptText/><input aria-label="Descrição do lançamento" placeholder={form.direction==="income"?"Ex.: Salário, Reembolso":"Ex.: Mercado, Aluguel, Energia"} required value={form.description} maxLength={120} onChange={e=>field("description",e.target.value)}/></div>
       <div className="field-row money-input"><CircleDollarSign/><span>R$</span><MoneyInput ariaLabel="Valor em reais" value={form.amount} onChange={v=>field("amount",v)}/></div>
       {edit?<div className="editing-scope-note">
@@ -549,7 +822,7 @@ export default function EntryDrawer({
       </div>
       {!wallets.length&&<p className="hint">Cadastre uma conta antes de registrar receitas ou contas.</p>}
       {newTitle&&<label className="kc-check"><input type="checkbox" checked={form.keepOpen} onChange={e=>field("keepOpen",e.target.checked)}/><span className="kc-check-box" aria-hidden="true"><Check size={12} strokeWidth={3}/></span><span>Salvar e continuar</span></label>}
-    </>}
+    </>)}
 
     {editPlan&&<>
       <p className="hint">Ajustar esta previsão não altera compras já realizadas.</p>
@@ -784,7 +1057,10 @@ export default function EntryDrawer({
          const meta=formatBudgetMeta(c.name);
          const isOver=meta.startsWith("Estourado");
          return <button type="button" key={c.id} className={form.category===c.name?"selected":""} onClick={()=>{setForm(old=>({...old,category:c.name,spendingPlanId:""}));setBudgetPicker(false);}}>
-           <span>{c.name}<small className={isOver?"red":""}>{meta}</small></span>
+           <span style={{display:"flex",alignItems:"center",gap:12}}>
+             <CategoryCircleIcon name={c.name} direction={form.direction}/>
+             <span>{c.name}{meta&&<small className={isOver?"red":""}>{meta}</small>}</span>
+           </span>
            <span>{form.category===c.name?<Check size={16}/>:"›"}</span>
          </button>;
        })}

@@ -285,3 +285,43 @@ test("Desktop Column Workspace: column helpers, persistence migration 019, and r
   assert.doesNotMatch(budgetListSrc, /Toque para ver detalhes/);
   assert.match(bankIconSrc, /alt=""/);
 });
+
+test("Mobile Exclusive UI/UX (Minhas Finanças + Kuantoconta Thesis): MobileWorkspace, Lateral Drawer, Endividamento, 31/12 Cuts, Speed Dial, and Full-Screen List-Row Form", () => {
+  const dashSrc = fs.readFileSync(path.join(repoRoot, "apps", "web", "app", "dashboard", "Dashboard.jsx"), "utf8");
+  const mobileSrc = fs.readFileSync(path.join(repoRoot, "apps", "web", "app", "dashboard", "MobileWorkspace.jsx"), "utf8");
+  const drawerSrc = fs.readFileSync(path.join(repoRoot, "apps", "web", "app", "dashboard", "EntryDrawer.jsx"), "utf8");
+  const cssSrc = fs.readFileSync(path.join(repoRoot, "apps", "web", "app", "globals.css"), "utf8");
+
+  // 1. Exclusive mobile detection (<= 767px) separate from tablet & desktop (>= 1024px)
+  assert.match(dashSrc, /matchMedia\("\(max-width: 767px\)"\)/);
+  assert.match(dashSrc, /<MobileWorkspace/);
+  assert.match(dashSrc, /isMobilePhone=\{isMobilePhone\}/);
+
+  // 2. Minhas Finanças inspired mobile shell: 1-line topbar, lateral drawer, 3-point hero, Despesas|Receitas pending tabs, 2x2 Visão Geral with Endividamento, 31/12 cuts gauge, FAB Speed Dial
+  assert.match(mobileSrc, /kc-mob-topbar/);
+  assert.match(mobileSrc, /kc-mob-drawer/);
+  assert.match(mobileSrc, /kc-mob-hero-card/);
+  assert.match(mobileSrc, /31\/12 c\/ cortes/);
+  assert.match(mobileSrc, /Ver despesas pendentes/);
+  assert.match(mobileSrc, />Endividamento</);
+  assert.match(mobileSrc, /Cortes & Fim do Ano/);
+  assert.match(mobileSrc, /Despesa cartão/);
+  assert.match(mobileSrc, /kc-mob-speed-dial/);
+
+  // 3. Full-screen List-Row Mobile Form (Nova Receita / Nova Despesa / Toggle Switch Efetivada / CategoryCircleIcon)
+  assert.match(drawerSrc, /kc-mob-fullscreen-drawer/);
+  assert.match(drawerSrc, /Nova Receita/);
+  assert.match(drawerSrc, /Nova Despesa/);
+  assert.match(drawerSrc, /Despesa Cartão/);
+  assert.match(drawerSrc, /Efetivada/);
+  assert.match(drawerSrc, /kc-mob-switch/);
+  assert.match(drawerSrc, /CategoryCircleIcon/);
+
+  // 4. Zero :hover rules inside the mobile exclusive CSS section
+  const mobileCssSection = cssSrc.split("KUANTOCONTA MOBILE EXCLUSIVE UI & UX")[1] || "";
+  assert.ok(mobileCssSection.length > 500);
+  const mobileHoverRules = mobileCssSection
+    .split(/\r?\n/)
+    .filter((line) => !line.trim().startsWith("/*") && !line.trim().startsWith("*") && line.includes(":hover"));
+  assert.equal(mobileHoverRules.length, 0, "Mobile exclusive CSS must not contain any :hover rules");
+});

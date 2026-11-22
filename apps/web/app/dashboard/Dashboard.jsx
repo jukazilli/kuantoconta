@@ -60,6 +60,7 @@ import FinanceChart from "./FinanceChart";
 import HealthDiagnosisCard from "./HealthDiagnosisCard";
 import PlanningGoalsPanel from "./PlanningGoalsPanel";
 import DesktopWorkspace from "./DesktopWorkspace";
+import MobileWorkspace from "./MobileWorkspace";
 import { DEFAULT_DESKTOP_COLUMNS, sanitizeColumnSettings, sanitizeWorkspaceColumns } from "../../lib/workspace-columns";
 import GuidedTour from "./GuidedTour";
 import BankIcon from "./BankIcon";
@@ -211,6 +212,7 @@ export default function Dashboard({ user }) {
   const [manageWalletsOpen, setManageWalletsOpen] = useState(false);
   const [invoiceModal, setInvoiceModal] = useState(null); // { cardId, month } | null
   const [isDesktopWorkspace, setIsDesktopWorkspace] = useState(false);
+  const [isMobilePhone, setIsMobilePhone] = useState(false);
   const [desktopColumns, setDesktopColumns] = useState(DEFAULT_DESKTOP_COLUMNS);
   const [columnSettings, setColumnSettings] = useState({});
   const [addColumnOpen, setAddColumnOpen] = useState(false);
@@ -220,11 +222,22 @@ export default function Dashboard({ user }) {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const mq = window.matchMedia("(min-width: 1024px)");
-    const sync = () => setIsDesktopWorkspace(mq.matches);
+    const mqDesktop = window.matchMedia("(min-width: 1024px)");
+    const mqMobile = window.matchMedia("(max-width: 767px)");
+    const sync = () => {
+      const w = window.innerWidth || 0;
+      setIsDesktopWorkspace(mqDesktop.matches || w >= 1024);
+      setIsMobilePhone(mqMobile.matches || (w > 0 && w <= 767));
+    };
     sync();
-    mq.addEventListener("change", sync);
-    return () => mq.removeEventListener("change", sync);
+    mqDesktop.addEventListener("change", sync);
+    mqMobile.addEventListener("change", sync);
+    window.addEventListener("resize", sync);
+    return () => {
+      mqDesktop.removeEventListener("change", sync);
+      mqMobile.removeEventListener("change", sync);
+      window.removeEventListener("resize", sync);
+    };
   }, []);
 
   useEffect(() => {
@@ -627,16 +640,24 @@ export default function Dashboard({ user }) {
   }
 
   function open(kind, id, intentOverride = null) {
+    if (kind === "card_expense" && creditCards.length === 0) {
+      open("credit_card", null);
+      return;
+    }
+    const isCardExpense = kind === "card_expense";
+    const actualDrawer = isCardExpense || kind === "income" ? "title" : kind;
     const t = titles.find((item) => item.id === id);
     const dir = kind === "income" ? "income" : t?.direction || "expense";
     const nextIntent = intentOverride || "bill";
     const defaultChecking = checkingWallets[0]?.id || wallets[0]?.id || "";
     const secondChecking = checkingWallets.find((w) => w.id !== defaultChecking)?.id || "";
+    const firstCard = isCardExpense ? creditCards[0] : null;
     setForm({
       ...defaultForm(dir),
       intent: nextIntent,
       settlementState: nextIntent === "transfer" ? "paid" : "pending",
-      walletId: t?.wallet_id || defaultChecking,
+      creditCardId: firstCard ? firstCard.id : "",
+      walletId: firstCard?.default_wallet_id || t?.wallet_id || defaultChecking,
       fromWalletId: t?.wallet_id || defaultChecking,
       toWalletId: secondChecking,
       parentWalletId: defaultChecking,
@@ -671,7 +692,7 @@ export default function Dashboard({ user }) {
     });
     setSelectedTitle(id || null);
     setError("");
-    setDrawer(kind);
+    setDrawer(actualDrawer);
   }
 
   function openBudget(item) {
@@ -1197,8 +1218,57 @@ export default function Dashboard({ user }) {
     );
   }
 
+  const profileSectionContent = (
+    <div className="workspace">
+      <section className="card panel profile-panel">
+        <div className="account-icon large">{(user.name || user.email || "U")[0].toUpperCase()}</div>
+        <div>
+          <h2>{user.name}</h2>
+          <p>{user.email}</p>
+          <div className="profile-links">
+            <a href="/legal/terms">Termos de Uso</a>
+            <a href="/legal/privacy">Aviso de Privacidade</a>
+          </div>
+          <p className="hint">
+            Seus dados financeiros são privados e protegidos por autenticação.
+          </p>
+          <div className="toolbar-buttons" style={{ marginTop: 14 }}>
+            <button
+              type="button"
+              className="pill pill-secondary"
+              onClick={() => setManageWalletsOpen(true)}
+            >
+              <Wallet size={16} /> Gerenciar contas
+            </button>
+            <button
+              type="button"
+              className="pill pill-secondary"
+              onClick={() => setTourOpen(true)}
+            >
+              <Compass size={16} /> Tutorial guiado (&lt; 2 min)
+            </button>
+            <button
+              type="button"
+              className="pill pill-primary"
+              onClick={async () => {
+                await clearCachesOnSignOut();
+                await authClient.signOut();
+                window.location.replace("/auth/sign-in");
+              }}
+            >
+              <LogOut size={16} /> Sair da conta
+            </button>
+          </div>
+        </div>
+      </section>
+      <InstallAppCard />
+      <McpConnectionsCard />
+    </div>
+  );
+
   return (
-    <div className={`app${isDesktopWorkspace && active !== "profile" ? " app--desktop" : ""}`}>
+    <div className={`app${isMobilePhone ? " app--mobile" : isDesktopWorkspace && active !== "profile" ? " app--desktop" : ""}`}>
+      {!isMobilePhone && (
       <header className="topbar" aria-label="Cabeçalho e ações">
         <div className="topbar-left">
           <button type="button" className="brand" onClick={() => setTab("overview")} aria-label="kuantoconta, Visão geral">
@@ -1313,9 +1383,10 @@ export default function Dashboard({ user }) {
           </button>
         </div>
       </header>
+      )}
 
       {error && (
-        <div className="notice error" role="alert">
+        <div className="notice error" role="alert" style={isMobilePhone ? { margin: "10px 14px 0" } : undefined}>
           {error}
           <button type="button" onClick={() => setError("")} aria-label="Fechar">
             <X size={16} />
@@ -1323,7 +1394,7 @@ export default function Dashboard({ user }) {
         </div>
       )}
       {notice && (
-        <div className="notice success" role="status">
+        <div className="notice success" role="status" style={isMobilePhone ? { margin: "10px 14px 0" } : undefined}>
           {notice}
           <button type="button" onClick={() => setNotice("")} aria-label="Fechar">
             <X size={16} />
@@ -1331,8 +1402,91 @@ export default function Dashboard({ user }) {
         </div>
       )}
 
-      <main className="dashboard" aria-label="Conteúdo principal" data-tour="workspace">
-        {isDesktopWorkspace && active !== "profile" ? (
+      <main className={isMobilePhone ? "dashboard dashboard--mobile" : "dashboard"} aria-label="Conteúdo principal" data-tour="workspace">
+        {isMobilePhone ? (
+          <MobileWorkspace
+            user={user}
+            active={active}
+            setTab={setTab}
+            monthNavLabel={monthNavLabel}
+            monthLong={monthLong}
+            monthOnly={monthOnly}
+            selectMonth={selectMonth}
+            isCustomRange={isCustomRange}
+            rangeStart={rangeStart}
+            date={date}
+            today={TODAY}
+            fmtDate={fmtDate}
+            isoDate={isoDate}
+            money={money}
+            cents={cents}
+            display={display}
+            summary={summary}
+            projectedBalanceCents={projectedBalanceCents}
+            checkingBalanceCents={checkingBalanceCents}
+            capitalBalanceCents={capitalBalanceCents}
+            totalDebtCents={totalDebtCents}
+            debtDisplay={debtDisplay}
+            checkingWallets={checkingWallets}
+            wallets={wallets}
+            walletBalance={walletBalance}
+            bankCaixinhasTotal={bankCaixinhasTotal}
+            creditCards={creditCards}
+            expandedTitles={expanded?.titles || []}
+            rows={rows}
+            overviewRows={overviewRows}
+            filter={filter}
+            setFilter={setFilter}
+            query={query}
+            setQuery={setQuery}
+            screenFilters={screenFilters}
+            setScreenFilter={setScreenFilter}
+            budgetItems={budgetItems}
+            monthlyIncomeCents={monthlyIncomeCents}
+            allocatedBudgetCents={allocatedBudgetCents}
+            remainingAllocableCents={remainingAllocableCents}
+            months={months}
+            expenses={expenses}
+            charts={charts}
+            capitalGoals={capitalGoals}
+            purchaseGoals={purchaseGoals}
+            reserveCaixinhasCents={reserveCaixinhasCents}
+            goalCaixinhasCents={goalCaixinhasCents}
+            reservedThisMonthCents={reservedThisMonthCents}
+            safeContribution={safeContribution}
+            capitalBudget={capitalBudget}
+            caixinhaBalance={caixinhaBalance}
+            capitalProjectedAtDateCents={capitalProjectedAtDateCents}
+            netWorthAtDateCents={netWorthAtDateCents}
+            peopleLoans={peopleLoans}
+            healthPlan={healthPlan}
+            habits={habits}
+            notifications={notifications}
+            setNotificationsOpen={setNotificationsOpen}
+            setFilterOpen={setFilterOpen}
+            open={open}
+            openBudget={openBudget}
+            openReserveCaixinha={openReserveCaixinha}
+            fulfillPlan={fulfillPlan}
+            editPlan={editPlan}
+            cancelPlan={cancelPlan}
+            handleAction={handleAction}
+            setActionMenu={setActionMenu}
+            setSelectedWallet={setSelectedWallet}
+            setManageWalletsOpen={setManageWalletsOpen}
+            setInvoiceModal={setInvoiceModal}
+            setSelectedCaixinha={setSelectedCaixinha}
+            setSelectedGoal={setSelectedGoal}
+            setHealthModal={setHealthModal}
+            computeCardUsage={computeCardUsage}
+            computeInvoiceCycleForPurchase={computeInvoiceCycleForPurchase}
+            comparePlanningQuotes={comparePlanningQuotes}
+            computeCapitalPace={computeCapitalPace}
+            data={data}
+            Empty={Empty}
+            profileContent={profileSectionContent}
+          />
+        ) : isDesktopWorkspace && active !== "profile" ? (
           <DesktopWorkspace
             columns={desktopColumns}
             columnSettings={columnSettings}
@@ -2293,58 +2447,12 @@ export default function Dashboard({ user }) {
           );
         })()}
 
-        {active === "profile" && (
-          <div className="workspace">
-            <section className="card panel profile-panel">
-              <div className="account-icon large">{(user.name || user.email || "U")[0].toUpperCase()}</div>
-              <div>
-                <h2>{user.name}</h2>
-                <p>{user.email}</p>
-                <div className="profile-links">
-                  <a href="/legal/terms">Termos de Uso</a>
-                  <a href="/legal/privacy">Aviso de Privacidade</a>
-                </div>
-                <p className="hint">
-                  Seus dados financeiros são privados e protegidos por autenticação.
-                </p>
-                <div className="toolbar-buttons" style={{ marginTop: 14 }}>
-                  <button
-                    type="button"
-                    className="pill pill-secondary"
-                    onClick={() => setManageWalletsOpen(true)}
-                  >
-                    <Wallet size={16} /> Gerenciar contas
-                  </button>
-                  <button
-                    type="button"
-                    className="pill pill-secondary"
-                    onClick={() => setTourOpen(true)}
-                  >
-                    <Compass size={16} /> Tutorial guiado (&lt; 2 min)
-                  </button>
-                  <button
-                    type="button"
-                    className="pill pill-primary"
-                    onClick={async () => {
-                      await clearCachesOnSignOut();
-                      await authClient.signOut();
-                      window.location.replace("/auth/sign-in");
-                    }}
-                  >
-                    <LogOut size={16} /> Sair da conta
-                  </button>
-                </div>
-              </div>
-            </section>
-            <InstallAppCard />
-            <McpConnectionsCard />
-          </div>
-        )}
+        {active === "profile" && profileSectionContent}
           </>
         )}
       </main>
 
-      {!isDesktopWorkspace && (
+      {!isDesktopWorkspace && !isMobilePhone && (
       <nav className="bottom-dock" aria-label="Navegação principal" data-tour="dock">
         {TABS.map(([key, label]) => {
           const TabIcon = TAB_ICONS[key] || LayoutGrid;
@@ -3351,6 +3459,7 @@ export default function Dashboard({ user }) {
           creditCards={creditCards}
           safeContribution={safeContribution}
           cancellations={data?.cancellations || []}
+          isMobilePhone={isMobilePhone}
         />
       )}
 
