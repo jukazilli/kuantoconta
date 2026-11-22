@@ -150,7 +150,7 @@ export default function EntryDrawer({
   newTitle&&intent==="bill"&&form.direction==="income"?" is-income":
   newTitle&&(intent==="transfer"||form.creditCardId)?" is-blue":"";
 
- const canSubmit=drawer!=="detail";
+ const canSubmit=drawer!=="detail"&&drawer!=="goal_sim";
  const isCaixinhaW=w=>Boolean(w?.parent_wallet_id)||Boolean(w?.caixinha_purpose)||Boolean(w?.is_reserved)||w?.wallet_kind==="reserve"||w?.wallet_kind==="investment";
  const checkingWallets=wallets.filter(w=>!isCaixinhaW(w));
  const caixinhaBalanceOf=g=>{
@@ -919,6 +919,7 @@ export default function EntryDrawer({
         budgets={budgets}
         rawData={rawData}
         creditCards={creditCards}
+        busy={busy}
       />
     )}
     {false&&drawer==="goal_sim"&&<>

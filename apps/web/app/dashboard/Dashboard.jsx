@@ -43,7 +43,7 @@ import { money, cents, brDay, isoDate } from "../../lib/finance";
 import { computeRange, lastDayOfMonth, firstDayOfMonth, moveMonth, inRange } from "../../lib/period";
 import { computeMonthlyIncomeCeilingCents, computeProjectedBalanceWithBudgetsCents, computeSafeMonthlyContributionCents, computeTotalDebtCents } from "../../lib/budgets";
 import { buildNotifications } from "../../lib/notifications";
-import { comparePlanningQuotes, simulateGoalPurchase } from "../../lib/goal-planner";
+import { buildExecutionTitlesFromGoal, comparePlanningQuotes, compareSavedPlans, simulateGoalPurchase } from "../../lib/goal-planner";
 import { computeCapitalPace } from "../../lib/capital-pace";
 import { analyzeConsumptionHabits } from "../../lib/habit-analyzer";
 import { rolloverOverdueLoanRepayments, summarizePeopleLoans } from "../../lib/lending";
@@ -52,6 +52,7 @@ import { maskToCents, maskToDecimal, centsToMask } from "../../lib/money-input";
 import { expandRecurring } from "../../lib/recurring";
 import { buildFinancialHealthPlan } from "../../lib/financial-health";
 import EntryDrawer from "./EntryDrawer";
+import MoneyInput from "./MoneyInput";
 import { normalizeFormQuotes } from "./PlanningWizard";
 import MovementList from "./MovementList";
 import BudgetList from "./BudgetList";
@@ -218,6 +219,12 @@ export default function Dashboard({ user }) {
   const [addColumnOpen, setAddColumnOpen] = useState(false);
   const [focusColumnKey, setFocusColumnKey] = useState(null);
   const [evolutionModalOpen, setEvolutionModalOpen] = useState(false);
+  const [compareMode, setCompareMode] = useState(false);
+  const [compareIds, setCompareIds] = useState([]);
+  const [compareModalOpen, setCompareModalOpen] = useState(false);
+  const [batchExecutePlan, setBatchExecutePlan] = useState(null);
+  const [checkoutListPlan, setCheckoutListPlan] = useState(null);
+  const [inlineListItemText, setInlineListItemText] = useState("");
   const filterRef = useRef(null);
 
   useEffect(() => {
@@ -664,7 +671,7 @@ export default function Dashboard({ user }) {
       caixinhaPurpose: "goal",
       initialAmount: "",
       downPaymentSource: "checking",
-      sourceGoalId: capitalGoals[0]?.id || "",
+      sourceGoalId: "",
       goalId: null,
       goalPlanType: "purchase",
       goalBudgetCategoryId: "",
@@ -757,6 +764,138 @@ export default function Dashboard({ user }) {
       setNotice("Simulação salva sem gerar cobranças reais.");
     } catch (e) {
       setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveGoalItems(goal, nextItems, extra = {}) {
+    if (!goal?.id) return;
+    setSelectedGoal((old) => {
+      if (!old || old.raw.id !== goal.id) return old;
+      const curQuotes = Array.isArray(old.raw.quotes_json) ? old.raw.quotes_json : [];
+      const first = curQuotes[0] || { id: "q-1", label: "Lista principal", isChosen: true };
+      const nextQuotes = [{ ...first, items: nextItems }, ...curQuotes.slice(1)];
+      return { ...old, raw: { ...old.raw, quotes_json: nextQuotes } };
+    });
+    try {
+      await request("PATCH", {
+        action: "update_goal_items",
+        goalId: goal.id,
+        items: nextItems,
+        ...extra,
+      });
+      await refresh();
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  async function reuseGoalList(goal) {
+    if (!goal?.id) return;
+    const curQuotes = Array.isArray(goal.quotes_json) ? goal.quotes_json : [];
+    const curItems = Array.isArray(curQuotes[0]?.items) ? curQuotes[0].items : [];
+    const unchecked = curItems.map((it) => ({ ...it, checked: false }));
+    const nextMonthDate = moveMonth((isoDate(goal.desired_on) || TODAY).slice(0, 7), 1) + "-" + (isoDate(goal.desired_on) || TODAY).slice(8, 10);
+    const nextDesiredOn = nextMonthDate > TODAY ? nextMonthDate : TODAY;
+    setBusy(true);
+    setError("");
+    try {
+      await request("PATCH", {
+        action: "update_goal_items",
+        goalId: goal.id,
+        items: unchecked,
+        desiredOn: nextDesiredOn,
+        resetStatus: true,
+      });
+      await refresh();
+      setSelectedGoal(null);
+      setNotice(`Lista "${goal.title}" reiniciada para ${fmtDate(nextDesiredOn)}.`);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function executeBatchTitles(e) {
+    e.preventDefault();
+    if (!batchExecutePlan || busy) return;
+    const chosen = batchExecutePlan.items.filter((it) => it.selected && it.amountCents > 0);
+    if (!chosen.length) {
+      setError("Selecione ao menos um item com valor para lançar.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      for (const it of chosen) {
+        const effectiveDue = it.dueOn || batchExecutePlan.dueOn || TODAY;
+        await request("POST", {
+          action: "title",
+          walletId: it.walletId || checkingWallets[0]?.id || wallets[0]?.id,
+          creditCardId: it.paymentMethod === "credit_card" ? it.creditCardId : null,
+          direction: "expense",
+          description: it.description,
+          category: it.category || batchExecutePlan.category || "Outros",
+          amount: (it.amountCents / 100).toFixed(2),
+          occurredOn: TODAY,
+          dueOn: effectiveDue,
+          mode: it.installmentCount > 1 ? "installments" : "single",
+          valueMode: "total",
+          count: it.installmentCount > 1 ? String(it.installmentCount) : "1",
+          startIndex: "1",
+          settlementState: "pending",
+          idempotencyKey: crypto.randomUUID(),
+        });
+      }
+      if (batchExecutePlan.markFulfilled) {
+        await request("PATCH", { action: "fulfill_goal", goalId: batchExecutePlan.goal.id });
+      }
+      await refresh();
+      setBatchExecutePlan(null);
+      setNotice(`${chosen.length} lançamento(s) criado(s) individualmente com sucesso.`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitCheckoutList(e) {
+    e.preventDefault();
+    if (!checkoutListPlan || busy) return;
+    const amtCents = maskToCents(checkoutListPlan.amountMask || "0,00");
+    if (amtCents <= 0) {
+      setError("Informe o valor total pago no caixa.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const isCard = Boolean(checkoutListPlan.creditCardId);
+      const paidDay = checkoutListPlan.paidOn || TODAY;
+      await request("POST", {
+        action: "title",
+        walletId: checkoutListPlan.walletId || checkingWallets[0]?.id || wallets[0]?.id,
+        creditCardId: isCard ? checkoutListPlan.creditCardId : null,
+        direction: "expense",
+        description: checkoutListPlan.goal.title,
+        category: checkoutListPlan.category || "Alimentação",
+        amount: (amtCents / 100).toFixed(2),
+        occurredOn: paidDay,
+        dueOn: paidDay,
+        mode: "single",
+        settlementState: isCard ? "pending" : "paid",
+        settledOn: isCard ? null : paidDay,
+        idempotencyKey: crypto.randomUUID(),
+      });
+      await request("PATCH", { action: "fulfill_goal", goalId: checkoutListPlan.goal.id });
+      await refresh();
+      setCheckoutListPlan(null);
+      setNotice(`Compra "${checkoutListPlan.goal.title}" registrada em ${checkoutListPlan.category || "Alimentação"}.`);
+    } catch (err) {
+      setError(err.message);
     } finally {
       setBusy(false);
     }
@@ -2046,9 +2185,52 @@ export default function Dashboard({ user }) {
 
             <section className="card panel bento-purchases">
               <div className="card-heading" style={{ marginBottom: 14 }}>
-                <h2 className="card-title">Planejamentos</h2>
-                <span className="small-flag">{purchaseGoals.length} ativo(s)</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <h2 className="card-title">Planejamentos</h2>
+                  <span className="small-flag">{purchaseGoals.length} ativo(s)</span>
+                </div>
+                <div className="toolbar-buttons">
+                  {purchaseGoals.length >= 2 && (
+                    <button
+                      type="button"
+                      className={`pill pill-compact ${compareMode ? "pill-primary" : "pill-outline-orange"}`}
+                      onClick={() => {
+                        setCompareMode((v) => !v);
+                        setCompareIds([]);
+                      }}
+                    >
+                      {compareMode ? "Cancelar comparação" : "Comparar"}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="icon-ghost-btn"
+                    aria-label="Novo planejamento"
+                    title="Novo planejamento"
+                    onClick={() => open("goal_sim")}
+                  >
+                    <Plus size={18} aria-hidden="true" />
+                  </button>
+                </div>
               </div>
+              {compareMode && (
+                <div className="compare-select-bar">
+                  <span>
+                    {compareIds.length < 2
+                      ? "Selecione 2 ou mais planejamentos abaixo para comparar lado a lado."
+                      : `${compareIds.length} selecionado(s) para comparação.`}
+                  </span>
+                  {compareIds.length >= 2 && (
+                    <button
+                      type="button"
+                      className="pill pill-primary pill-compact"
+                      onClick={() => setCompareModalOpen(true)}
+                    >
+                      Comparar selecionados ({compareIds.length})
+                    </button>
+                  )}
+                </div>
+              )}
               {purchaseGoals.length ? (
                 <div className="goals-bento-grid">
                   {purchaseGoals
@@ -2063,16 +2245,34 @@ export default function Dashboard({ user }) {
                       const pType = g.plan_type || "purchase";
                       const TypeIcon = pType === "trip" ? Plane : pType === "shopping_list" ? ListChecks : Compass;
                       const typeLabel = pType === "trip" ? "Viagem" : pType === "shopping_list" ? "Lista" : "Compra";
+                      const isSelectedForCompare = compareIds.includes(g.id);
+                      const itemsArr = Array.isArray(g.quotes_json?.[0]?.items) ? g.quotes_json[0].items : [];
+                      const checkedCount = itemsArr.filter((it) => it.checked).length;
                       return (
                         <button
                           type="button"
                           key={g.id || idx}
-                          className="goal-bento-card"
-                          onClick={() => setSelectedGoal({ raw: g, sim, comparison })}
+                          className={`goal-bento-card${isSelectedForCompare ? " compare-selected" : ""}`}
+                          onClick={() => {
+                            if (compareMode) {
+                              setCompareIds((old) =>
+                                old.includes(g.id) ? old.filter((id) => id !== g.id) : [...old, g.id]
+                              );
+                              return;
+                            }
+                            setInlineListItemText("");
+                            setSelectedGoal({ raw: g, sim, comparison });
+                          }}
                         >
                           <div className="goal-bento-top">
                             <span className="goal-bento-icon">
-                              <TypeIcon size={18} />
+                              {compareMode ? (
+                                <span className={`compare-check-dot${isSelectedForCompare ? " checked" : ""}`}>
+                                  {isSelectedForCompare && <Check size={13} strokeWidth={3} />}
+                                </span>
+                              ) : (
+                                <TypeIcon size={18} />
+                              )}
                             </span>
                             <span className={`status ${sim.isFeasible ? "done" : sim.firstFeasibleDate ? "partial" : "late"}`}>
                               {sim.isFeasible ? "Viável na data" : sim.firstFeasibleDate ? `A partir de ${fmtDate(sim.firstFeasibleDate)}` : "Ainda não cabe"}
@@ -2082,15 +2282,13 @@ export default function Dashboard({ user }) {
                           <div className="goal-bento-meta">
                             <span>{money(cents(g.target_cents))}</span>
                             <small>
-                              {typeLabel}
-                              {comparison.hasComparison ? ` · ${comparison.quotes.length} cotações` : g.installment_count > 1 ? ` · ${g.installment_count}x de ${money(cents(g.installment_cents))}` : " · À vista"}
+                              {pType === "shopping_list" && itemsArr.length > 0
+                                ? `Lista · ${checkedCount}/${itemsArr.length} no carrinho`
+                                : pType === "trip" && itemsArr.length > 0
+                                  ? `Viagem · ${itemsArr.length} item(ns)`
+                                  : `${typeLabel}${g.installment_count > 1 ? ` · ${g.installment_count}x de ${money(cents(g.installment_cents))}` : " · À vista"}`}
                             </small>
                           </div>
-                          {comparison.hasComparison && comparison.winner && (
-                            <div className="hint" style={{ fontSize: 11, color: "#067647", fontWeight: 600 }}>
-                              🏆 Vence: {comparison.winner.label}
-                            </div>
-                          )}
                           {sim.twoStepVerdict?.linkedCaixinhaTitle && (
                             <div className="hint" style={{ fontSize: 11 }}>
                               Caixinha: {sim.twoStepVerdict.linkedCaixinhaTitle}
@@ -2983,178 +3181,371 @@ export default function Dashboard({ user }) {
         </div>
       )}
 
-      {selectedGoal && (
-        <div
-          className="action-overlay open"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setSelectedGoal(null);
-          }}
-        >
-          <div className="dialog dialog-wide" role="dialog" aria-modal="true" aria-labelledby="goalDetailTitle">
-            <div className="dialog-head">
-              <h2 id="goalDetailTitle">{selectedGoal.raw.title}</h2>
-              <button type="button" className="dialog-close" onClick={() => setSelectedGoal(null)} aria-label="Fechar">
-                <X size={17} />
-              </button>
-            </div>
-            <div className="detail-layout" style={{ padding: 0 }}>
-              <div className={`goal-verdict ${selectedGoal.sim.isFeasible ? "ok" : "warn"}`}>
-                <Award size={18} />
+      {selectedGoal && (() => {
+        const g = selectedGoal.raw;
+        const pType = g.plan_type || "purchase";
+        const planItems = Array.isArray(g.quotes_json?.[0]?.items) ? g.quotes_json[0].items : [];
+        const pricedItems = planItems.filter((it) => cents(it.amountCents) > 0);
+        const linkedBudget = g.budget_category_id
+          ? budgetItems.find((b) => String(b.categoryId) === String(g.budget_category_id))
+          : null;
+        const uncheckedItems = planItems.filter((it) => !it.checked);
+        const checkedItems = planItems.filter((it) => it.checked);
+
+        return (
+          <div
+            className="action-overlay open"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) setSelectedGoal(null);
+            }}
+          >
+            <div className="dialog dialog-wide" role="dialog" aria-modal="true" aria-labelledby="goalDetailTitle">
+              <div className="dialog-head">
                 <div>
-                  <strong>
-                    {selectedGoal.comparison?.hasComparison && selectedGoal.comparison.winner
-                      ? `Melhor opção: ${selectedGoal.comparison.winner.label}`
-                      : selectedGoal.sim.isFeasible
-                        ? `Cabe no plano na data desejada (${fmtDate(selectedGoal.raw.desired_on)})`
-                        : selectedGoal.sim.firstFeasibleDate
-                          ? `Melhor momento: a partir de ${fmtDate(selectedGoal.sim.firstFeasibleDate)}`
-                          : "Ainda não cabe no plano"}
-                  </strong>
-                  <small>
-                    {selectedGoal.comparison?.hasComparison
-                      ? `${selectedGoal.comparison.winnerReasonText}${selectedGoal.comparison.totalSavedVsWorstCents > 0 ? ` · Economia de ${money(selectedGoal.comparison.totalSavedVsWorstCents)}` : ""}`
-                      : selectedGoal.sim.bottleneckDate
-                        ? `Gargalo em ${fmtDate(selectedGoal.sim.bottleneckDate)} (falta de ${money(selectedGoal.sim.bottleneckShortfallCents)}).`
-                        : `Todas as ${selectedGoal.sim.installmentCountVerified || 1} parcela(s) verificadas sem comprometer o piso protegido.`}
-                  </small>
-                </div>
-              </div>
-
-              {selectedGoal.comparison?.hasComparison && (
-                <div className="compare-quotes-grid">
-                  {selectedGoal.comparison.quotes.map((q) => (
-                    <div key={q.id} className={`quote-compare-card${q.isWinner ? " winner" : ""}`}>
-                      <div className="quote-compare-head">
-                        <strong>{q.label}</strong>
-                        <span className={`status ${q.sim.isFeasible ? "done" : q.sim.firstFeasibleDate ? "partial" : "late"}`}>
-                          {q.isWinner ? "🏆 Vencedora" : q.sim.isFeasible ? "Viável" : "Aperta caixa"}
-                        </span>
-                      </div>
-                      <div className="quote-compare-nums">
-                        <span>Total: <strong>{money(q.sim.totalCostCents)}</strong></span>
-                        <span>{q.sim.perInstallmentCents > 0 ? `${q.sim.installmentCountVerified}x de ${money(q.sim.perInstallmentCents)}` : "À vista"}</span>
-                      </div>
-                      {q.url && (
-                        <a href={q.url} target="_blank" rel="noopener noreferrer" className="pill pill-secondary pill-compact" style={{ width: "fit-content" }}>
-                          Abrir anúncio <ExternalLink size={13} />
-                        </a>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {selectedGoal.sim.projectedPositions && (
-                <div className="positions-grid">
-                  <div className="position-box">
-                    <div className="position-box-head"><Wallet size={15} /> <strong>Conta bancária</strong></div>
-                    <small>
-                      Na data: <strong>{money(selectedGoal.sim.projectedPositions.walletPosition.balanceOnDateBeforeCents)}</strong> →{" "}
-                      <strong className={selectedGoal.sim.projectedPositions.walletPosition.balanceOnDateAfterCents < 0 ? "red" : ""}>
-                        {money(selectedGoal.sim.projectedPositions.walletPosition.balanceOnDateAfterCents)}
-                      </strong>
-                    </small>
-                    <small>
-                      Menor saldo futuro: <strong>{money(selectedGoal.sim.projectedPositions.walletPosition.minFutureBalanceAfterCents)}</strong>
-                    </small>
+                  <div className="eyebrow">
+                    {pType === "shopping_list" ? "LISTA DE COMPRAS" : pType === "trip" ? "VIAGEM / PROJETO" : "COMPRA PLANEJADA"}
                   </div>
-                  {selectedGoal.sim.projectedPositions.caixinhaPosition && (
-                    <div className="position-box">
-                      <div className="position-box-head"><PiggyBank size={15} /> <strong>{selectedGoal.sim.projectedPositions.caixinhaPosition.caixinhaTitle}</strong></div>
-                      <small>Guardado: <strong>{money(selectedGoal.sim.projectedPositions.caixinhaPosition.currentBalanceCents)}</strong> / {money(selectedGoal.sim.projectedPositions.caixinhaPosition.targetForPlanCents)}</small>
-                      <small>Faltam {money(selectedGoal.sim.projectedPositions.caixinhaPosition.stillNeededCents)}</small>
-                    </div>
-                  )}
-                  {selectedGoal.sim.projectedPositions.cardPosition && (
-                    <div className="position-box">
-                      <div className="position-box-head"><CreditCard size={15} /> <strong>{selectedGoal.sim.projectedPositions.cardPosition.cardName}</strong></div>
-                      <small>
-                        Limite na data: <strong>{money(selectedGoal.sim.projectedPositions.cardPosition.availableLimitBeforeCents)}</strong> →{" "}
-                        <strong>{money(selectedGoal.sim.projectedPositions.cardPosition.availableLimitAfterCents)}</strong>
-                      </small>
-                      <small>1ª fatura: {selectedGoal.sim.projectedPositions.cardPosition.firstInvoiceMonth}</small>
-                    </div>
-                  )}
+                  <h2 id="goalDetailTitle">{g.title}</h2>
                 </div>
-              )}
-
-              <div className="detail-actions">
-                <button
-                  type="button"
-                  className="dark-button"
-                  onClick={() => {
-                    const g = selectedGoal.raw;
-                    const savedQuotes = Array.isArray(g.quotes_json) && g.quotes_json.length > 0
-                      ? g.quotes_json.map((q) => ({
-                          ...q,
-                          target: centsToMask(cents(q.targetCents)),
-                          downPayment: centsToMask(cents(q.downPaymentCents)),
-                          installmentCount: String(q.installmentCount || 1),
-                          interestPct: q.interestBps ? String((Number(q.interestBps) / 100).toFixed(2)).replace(".", ",") : "",
-                        }))
-                      : null;
-                    setSelectedGoal(null);
-                    setForm({
-                      ...defaultForm("expense"),
-                      goalId: g.id,
-                      goalPlanType: g.plan_type || "purchase",
-                      goalBudgetCategoryId: g.budget_category_id || "",
-                      goalWizardStep: 2,
-                      goalActiveQuoteIdx: 0,
-                      goalQuotes: savedQuotes,
-                      description: g.title,
-                      goalTarget: centsToMask(cents(g.target_cents)),
-                      goalDownPayment: centsToMask(cents(g.down_payment_cents)),
-                      goalInstallments: String(g.installment_count || 1),
-                      goalDesiredOn: isoDate(g.desired_on) || TODAY,
-                      downPaymentSource: g.source_goal_id ? "caixinha" : "checking",
-                      sourceGoalId: g.source_goal_id || "",
-                      goalPaymentMethod: g.payment_method || "standard",
-                      goalCreditCardId: g.credit_card_id || creditCards[0]?.id || "",
-                      idempotencyKey: crypto.randomUUID(),
-                    });
-                    setSelectedTitle(null);
-                    setError("");
-                    setDrawer("goal_sim");
-                  }}
-                >
-                  Editar / comparar cotações
-                </button>
-                <button
-                  type="button"
-                  className="pill pill-outline-orange"
-                  style={{ justifyContent: "center" }}
-                  onClick={() => {
-                    const g = selectedGoal.raw;
-                    const win = selectedGoal.comparison?.winner;
-                    const amtCents = win?.targetCents || cents(g.target_cents);
-                    const inst = win?.installmentCount || Number(g.installment_count || 1);
-                    const ccId = win?.creditCardId || g.credit_card_id || "";
-                    setSelectedGoal(null);
-                    setForm({
-                      ...defaultForm("expense"),
-                      intent: "bill",
-                      direction: "expense",
-                      description: win && selectedGoal.comparison?.hasComparison ? `${g.title} — ${win.label}` : g.title,
-                      amount: centsToMask(amtCents),
-                      mode: inst > 1 ? "installments" : "single",
-                      count: String(Math.max(2, Math.min(60, inst))),
-                      valueMode: "total",
-                      creditCardId: ccId,
-                      walletId: g.selected_wallet_id || checkingWallets[0]?.id || "",
-                      occurredOn: TODAY,
-                      dueOn: isoDate(g.desired_on) >= TODAY ? isoDate(g.desired_on) : TODAY,
-                      settlementState: "pending",
-                      idempotencyKey: crypto.randomUUID(),
-                    });
-                    setSelectedTitle(null);
-                    setError("");
-                    setDrawer("title");
-                  }}
-                >
-                  Efetivar em lançamento
+                <button type="button" className="dialog-close" onClick={() => setSelectedGoal(null)} aria-label="Fechar">
+                  <X size={17} />
                 </button>
               </div>
+              <div className="detail-layout" style={{ padding: 0 }}>
+                {/* MODO LISTA DE COMPRAS (Estilo Lembretes iOS) */}
+                {pType === "shopping_list" ? (
+                  <>
+                    <div className={`goal-verdict ${!linkedBudget || linkedBudget.limitCents === null || (linkedBudget.remainingCents ?? 0) >= cents(g.target_cents) ? "ok" : "warn"}`}>
+                      <ListChecks size={18} />
+                      <div>
+                        <strong>
+                          Teto da compra: {money(cents(g.target_cents))} · {checkedItems.length}/{planItems.length} no carrinho
+                        </strong>
+                        <small>
+                          {linkedBudget && linkedBudget.limitCents !== null
+                            ? `Orçamento ${linkedBudget.categoryName}: restam ${money(linkedBudget.remainingCents ?? 0)} no mês.`
+                            : `Data prevista: ${fmtDate(g.desired_on)}`}
+                        </small>
+                      </div>
+                    </div>
+
+                    <form
+                      className="checklist-quick-add"
+                      onSubmit={async (e) => {
+                        e.preventDefault();
+                        const label = inlineListItemText.trim();
+                        if (!label) return;
+                        const newItem = {
+                          id: `it-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+                          title: label.slice(0, 120),
+                          amountCents: 0,
+                          paymentMethod: "standard",
+                          creditCardId: null,
+                          installmentCount: 1,
+                          checked: false,
+                        };
+                        setInlineListItemText("");
+                        await saveGoalItems(g, [...planItems, newItem]);
+                      }}
+                    >
+                      <input
+                        placeholder="Adicionar item na hora (ex.: Leite, Pão)..."
+                        value={inlineListItemText}
+                        maxLength={120}
+                        onChange={(e) => setInlineListItemText(e.target.value)}
+                      />
+                      <button type="submit" className="pill pill-primary pill-compact">
+                        <Plus size={15} /> Add
+                      </button>
+                    </form>
+
+                    {planItems.length ? (
+                      <div className="ios-checklist">
+                        {uncheckedItems.map((it) => (
+                          <button
+                            type="button"
+                            key={it.id}
+                            className="ios-check-row"
+                            onClick={() =>
+                              saveGoalItems(
+                                g,
+                                planItems.map((x) => (x.id === it.id ? { ...x, checked: true } : x))
+                              )
+                            }
+                          >
+                            <span className="ios-check-circle" aria-hidden="true" />
+                            <span className="ios-check-title">{it.title}</span>
+                            {cents(it.amountCents) > 0 && <small className="ios-check-price">{money(it.amountCents)}</small>}
+                          </button>
+                        ))}
+                        {checkedItems.length > 0 && (
+                          <div className="ios-check-done-group">
+                            <span className="field-caption">No carrinho ({checkedItems.length})</span>
+                            {checkedItems.map((it) => (
+                              <button
+                                type="button"
+                                key={it.id}
+                                className="ios-check-row done"
+                                onClick={() =>
+                                  saveGoalItems(
+                                    g,
+                                    planItems.map((x) => (x.id === it.id ? { ...x, checked: false } : x))
+                                  )
+                                }
+                              >
+                                <span className="ios-check-circle checked" aria-hidden="true">
+                                  <Check size={13} strokeWidth={3} />
+                                </span>
+                                <span className="ios-check-title">{it.title}</span>
+                                {cents(it.amountCents) > 0 && <small className="ios-check-price">{money(it.amountCents)}</small>}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <Empty>Nenhum item cadastrado nesta lista. Use o campo acima para adicionar.</Empty>
+                    )}
+
+                    <div className="detail-actions">
+                      <button
+                        type="button"
+                        className="pill pill-primary"
+                        style={{ justifyContent: "center" }}
+                        onClick={() => {
+                          const pricedSum = pricedItems.reduce((s, it) => s + cents(it.amountCents), 0);
+                          const defaultAmt = pricedSum > 0 ? pricedSum : cents(g.target_cents);
+                          setSelectedGoal(null);
+                          setCheckoutListPlan({
+                            goal: g,
+                            amountMask: centsToMask(defaultAmt),
+                            walletId: g.selected_wallet_id || checkingWallets[0]?.id || wallets[0]?.id || "",
+                            creditCardId: g.credit_card_id || "",
+                            paidOn: TODAY,
+                            category: linkedBudget?.categoryName || "Alimentação",
+                          });
+                        }}
+                      >
+                        <CheckCircle2 size={16} /> Finalizar no caixa
+                      </button>
+                      <button
+                        type="button"
+                        className="light-button"
+                        disabled={busy}
+                        onClick={() => reuseGoalList(g)}
+                      >
+                        Reutilizar lista (novo mês)
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className={`goal-verdict ${selectedGoal.sim.isFeasible ? "ok" : "warn"}`}>
+                      <Award size={18} />
+                      <div>
+                        <strong>
+                          {selectedGoal.sim.isFeasible
+                            ? `Cabe no plano na data desejada (${fmtDate(g.desired_on)})`
+                            : selectedGoal.sim.firstFeasibleDate
+                              ? `Melhor momento: a partir de ${fmtDate(selectedGoal.sim.firstFeasibleDate)}`
+                              : "Ainda não cabe no plano"}
+                        </strong>
+                        <small>
+                          {selectedGoal.sim.bottleneckDate
+                            ? `Gargalo em ${fmtDate(selectedGoal.sim.bottleneckDate)} (falta de ${money(selectedGoal.sim.bottleneckShortfallCents)}).`
+                            : `Todas as ${selectedGoal.sim.installmentCountVerified || 1} parcela(s) verificadas sem comprometer o piso protegido.`}
+                        </small>
+                      </div>
+                    </div>
+
+                    {pricedItems.length > 0 && (
+                      <div className="wizard-items-box">
+                        <div className="section-header" style={{ marginBottom: 6 }}>
+                          <span className="field-caption" style={{ fontWeight: 600 }}>Itens deste planejamento ({pricedItems.length})</span>
+                          <strong style={{ fontSize: 13 }}>{money(pricedItems.reduce((s, it) => s + cents(it.amountCents), 0))}</strong>
+                        </div>
+                        <ul className="wizard-items-list">
+                          {pricedItems.map((it) => {
+                            const cName = it.creditCardId ? creditCards.find((c) => c.id === it.creditCardId)?.name : null;
+                            return (
+                              <li key={it.id}>
+                                <span>
+                                  <strong>{it.title}</strong>
+                                  <small className="hint" style={{ marginLeft: 6 }}>
+                                    {it.paymentMethod === "credit_card"
+                                      ? `${it.installmentCount || 1}x no cartão${cName ? ` (${cName})` : ""}`
+                                      : "À vista / Conta"}
+                                  </small>
+                                </span>
+                                <strong>{money(it.amountCents)}</strong>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    )}
+
+                    {selectedGoal.sim.projectedPositions && (
+                      <div className="positions-grid">
+                        <div className="position-box">
+                          <div className="position-box-head"><Wallet size={15} /> <strong>Conta bancária</strong></div>
+                          <small>
+                            Na data: <strong>{money(selectedGoal.sim.projectedPositions.walletPosition.balanceOnDateBeforeCents)}</strong> →{" "}
+                            <strong className={selectedGoal.sim.projectedPositions.walletPosition.balanceOnDateAfterCents < 0 ? "red" : ""}>
+                              {money(selectedGoal.sim.projectedPositions.walletPosition.balanceOnDateAfterCents)}
+                            </strong>
+                          </small>
+                          <small>
+                            Menor saldo futuro: <strong>{money(selectedGoal.sim.projectedPositions.walletPosition.minFutureBalanceAfterCents)}</strong>
+                          </small>
+                        </div>
+                        {selectedGoal.sim.projectedPositions.caixinhaPosition && (
+                          <div className="position-box">
+                            <div className="position-box-head"><PiggyBank size={15} /> <strong>{selectedGoal.sim.projectedPositions.caixinhaPosition.caixinhaTitle}</strong></div>
+                            <small>Guardado: <strong>{money(selectedGoal.sim.projectedPositions.caixinhaPosition.currentBalanceCents)}</strong> / {money(selectedGoal.sim.projectedPositions.caixinhaPosition.targetForPlanCents)}</small>
+                            <small>Faltam {money(selectedGoal.sim.projectedPositions.caixinhaPosition.stillNeededCents)}</small>
+                          </div>
+                        )}
+                        {selectedGoal.sim.projectedPositions.cardPosition && (
+                          <div className="position-box">
+                            <div className="position-box-head"><CreditCard size={15} /> <strong>{selectedGoal.sim.projectedPositions.cardPosition.cardName}</strong></div>
+                            <small>
+                              Limite na data: <strong>{money(selectedGoal.sim.projectedPositions.cardPosition.availableLimitBeforeCents)}</strong> →{" "}
+                              <strong>{money(selectedGoal.sim.projectedPositions.cardPosition.availableLimitAfterCents)}</strong>
+                            </small>
+                            <small>1ª fatura: {selectedGoal.sim.projectedPositions.cardPosition.firstInvoiceMonth}</small>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="detail-actions">
+                      <button
+                        type="button"
+                        className="dark-button"
+                        onClick={() => {
+                          const savedQuotes = Array.isArray(g.quotes_json) && g.quotes_json.length > 0
+                            ? g.quotes_json.map((q) => ({
+                                ...q,
+                                target: centsToMask(cents(q.targetCents)),
+                                downPayment: centsToMask(cents(q.downPaymentCents)),
+                                installmentCount: String(q.installmentCount || 1),
+                                interestPct: q.interestBps ? String((Number(q.interestBps) / 100).toFixed(2)).replace(".", ",") : "",
+                              }))
+                            : null;
+                          setSelectedGoal(null);
+                          setForm({
+                            ...defaultForm("expense"),
+                            goalId: g.id,
+                            goalPlanType: g.plan_type || "purchase",
+                            goalBudgetCategoryId: g.budget_category_id || "",
+                            goalQuotes: savedQuotes,
+                            description: g.title,
+                            goalTarget: centsToMask(cents(g.target_cents)),
+                            goalDownPayment: centsToMask(cents(g.down_payment_cents)),
+                            goalInstallments: String(g.installment_count || 1),
+                            goalDesiredOn: isoDate(g.desired_on) || TODAY,
+                            downPaymentSource: g.source_goal_id ? "caixinha" : "checking",
+                            sourceGoalId: g.source_goal_id || "",
+                            goalPaymentMethod: g.payment_method || "standard",
+                            goalCreditCardId: g.credit_card_id || creditCards[0]?.id || "",
+                            idempotencyKey: crypto.randomUUID(),
+                          });
+                          setSelectedTitle(null);
+                          setError("");
+                          setDrawer("goal_sim");
+                        }}
+                      >
+                        Editar planejamento
+                      </button>
+                      <button
+                        type="button"
+                        className="pill pill-outline-orange"
+                        style={{ justifyContent: "center" }}
+                        onClick={() => {
+                          if (pricedItems.length > 0) {
+                            const execItems = buildExecutionTitlesFromGoal(g, {
+                              defaultWalletId: checkingWallets[0]?.id || wallets[0]?.id || "",
+                              defaultCategory: linkedBudget?.categoryName || "Outros",
+                              today: TODAY,
+                            }).map((it) => ({ ...it, selected: true }));
+                            setSelectedGoal(null);
+                            setBatchExecutePlan({
+                              goal: g,
+                              items: execItems,
+                              dueOn: isoDate(g.desired_on) >= TODAY ? isoDate(g.desired_on) : TODAY,
+                              category: linkedBudget?.categoryName || "Outros",
+                              markFulfilled: true,
+                            });
+                            return;
+                          }
+                          const win = selectedGoal.comparison?.winner;
+                          const amtCents = win?.targetCents || cents(g.target_cents);
+                          const inst = win?.installmentCount || Number(g.installment_count || 1);
+                          const ccId = win?.creditCardId || g.credit_card_id || "";
+                          setSelectedGoal(null);
+                          setForm({
+                            ...defaultForm("expense"),
+                            intent: "bill",
+                            direction: "expense",
+                            description: g.title,
+                            amount: centsToMask(amtCents),
+                            category: linkedBudget?.categoryName || "",
+                            mode: inst > 1 ? "installments" : "single",
+                            count: String(Math.max(2, Math.min(60, inst))),
+                            valueMode: "total",
+                            creditCardId: ccId,
+                            walletId: g.selected_wallet_id || checkingWallets[0]?.id || "",
+                            occurredOn: TODAY,
+                            dueOn: isoDate(g.desired_on) >= TODAY ? isoDate(g.desired_on) : TODAY,
+                            settlementState: "pending",
+                            idempotencyKey: crypto.randomUUID(),
+                          });
+                          setSelectedTitle(null);
+                          setError("");
+                          setDrawer("title");
+                        }}
+                      >
+                        {pricedItems.length > 0 ? `Efetivar ${pricedItems.length} itens` : "Efetivar em lançamento"}
+                      </button>
+                    </div>
+                  </>
+                )}
+
+                {pType === "shopping_list" && (
+                  <button
+                    type="button"
+                    className="light-button"
+                    onClick={() => {
+                      const savedQuotes = Array.isArray(g.quotes_json) && g.quotes_json.length > 0
+                        ? g.quotes_json.map((q) => ({
+                            ...q,
+                            target: centsToMask(cents(q.targetCents)),
+                            downPayment: centsToMask(cents(q.downPaymentCents)),
+                            installmentCount: String(q.installmentCount || 1),
+                            interestPct: "",
+                          }))
+                        : null;
+                      setSelectedGoal(null);
+                      setForm({
+                        ...defaultForm("expense"),
+                        goalId: g.id,
+                        goalPlanType: "shopping_list",
+                        goalBudgetCategoryId: g.budget_category_id || "",
+                        goalQuotes: savedQuotes,
+                        description: g.title,
+                        goalTarget: centsToMask(cents(g.target_cents)),
+                        goalDesiredOn: isoDate(g.desired_on) || TODAY,
+                        downPaymentSource: "checking",
+                        sourceGoalId: "",
+                        idempotencyKey: crypto.randomUUID(),
+                      });
+                      setDrawer("goal_sim");
+                    }}
+                  >
+                    Editar nome, teto ou orçamento da lista
+                  </button>
+                )}
 
               <button
                 type="button"
@@ -3170,6 +3561,286 @@ export default function Dashboard({ user }) {
               </button>
             </div>
           </div>
+        </div>
+        );
+      })()}
+
+      {compareModalOpen && (() => {
+        const picked = purchaseGoals.filter((g) => compareIds.includes(g.id));
+        const compared = compareSavedPlans(data || {}, picked, { today: TODAY });
+        return (
+          <div
+            className="action-overlay open"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) setCompareModalOpen(false);
+            }}
+          >
+            <div className="dialog dialog-wide" role="dialog" aria-modal="true" aria-labelledby="comparePlansTitle">
+              <div className="dialog-head">
+                <div>
+                  <div className="eyebrow">COMPARAÇÃO LADO A LADO</div>
+                  <h2 id="comparePlansTitle">Qual planejamento cabe melhor?</h2>
+                </div>
+                <button type="button" className="dialog-close" onClick={() => setCompareModalOpen(false)} aria-label="Fechar">
+                  <X size={17} />
+                </button>
+              </div>
+              {compared.winner && (
+                <div className="goal-verdict ok" style={{ marginBottom: 14 }}>
+                  <Award size={18} />
+                  <div>
+                    <strong>Melhor escolha: {compared.winner.title}</strong>
+                    <small>
+                      {compared.winnerReasonText}
+                      {compared.totalSavedVsWorstCents > 0 ? ` · Diferença de até ${money(compared.totalSavedVsWorstCents)} no custo total.` : ""}
+                    </small>
+                  </div>
+                </div>
+              )}
+              <div className="compare-quotes-grid">
+                {compared.plans.map((p) => {
+                  const minAfter = p.sim.projectedPositions?.walletPosition?.minFutureBalanceAfterCents ?? 0;
+                  const cardAfter = p.sim.projectedPositions?.cardPosition?.availableLimitAfterCents;
+                  return (
+                    <div key={p.id} className={`quote-compare-card${p.isWinner ? " winner" : ""}`}>
+                      <div className="quote-compare-head">
+                        <strong>{p.title}</strong>
+                        <span className={`status ${p.sim.isFeasible ? "done" : p.sim.firstFeasibleDate ? "partial" : "late"}`}>
+                          {p.isWinner ? "🏆 Melhor" : p.sim.isFeasible ? "Viável" : "Aperta caixa"}
+                        </span>
+                      </div>
+                      <div className="quote-compare-nums">
+                        <span>Total: <strong>{money(p.sim.totalCostCents || p.targetCents)}</strong></span>
+                        <span>{p.installmentCount > 1 ? `${p.installmentCount}x de ${money(p.sim.perInstallmentCents)}` : "À vista"}</span>
+                      </div>
+                      <small className="hint">
+                        Data desejada: <strong>{fmtDate(p.desiredOn)}</strong> ·{" "}
+                        {p.sim.isFeasible ? "Cabe na data" : p.sim.firstFeasibleDate ? `Cabe em ${fmtDate(p.sim.firstFeasibleDate)}` : "Sem folga no horizonte"}
+                      </small>
+                      <small className="hint">
+                        Menor saldo futuro: <strong className={minAfter < 0 ? "red" : ""}>{money(minAfter)}</strong>
+                        {cardAfter !== undefined ? ` · Limite cartão após: ${money(cardAfter)}` : ""}
+                      </small>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="detail-actions" style={{ marginTop: 14 }}>
+                <button type="button" className="light-button" onClick={() => setCompareModalOpen(false)}>
+                  Fechar comparação
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {batchExecutePlan && (
+        <div
+          className="action-overlay open"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setBatchExecutePlan(null);
+          }}
+        >
+          <form className="dialog dialog-wide" role="dialog" aria-modal="true" aria-labelledby="batchExecTitle" onSubmit={executeBatchTitles}>
+            <div className="dialog-head">
+              <div>
+                <div className="eyebrow">EFETIVAÇÃO INDIVIDUAL</div>
+                <h2 id="batchExecTitle">{batchExecutePlan.goal.title}</h2>
+              </div>
+              <button type="button" className="dialog-close" onClick={() => setBatchExecutePlan(null)} aria-label="Fechar">
+                <X size={17} />
+              </button>
+            </div>
+            <p className="hint" style={{ margin: "0 0 12px" }}>
+              Cada item será lançado separadamente com sua própria forma de pagamento e parcelamento.
+            </p>
+            <div className="batch-items-list">
+              {batchExecutePlan.items.map((it, idx) => {
+                const cName = it.creditCardId ? creditCards.find((c) => c.id === it.creditCardId)?.name : null;
+                const wName = wallets.find((w) => w.id === it.walletId)?.name || "Conta";
+                return (
+                  <label key={it.itemId || idx} className="batch-item-row">
+                    <input
+                      type="checkbox"
+                      checked={it.selected}
+                      onChange={(e) =>
+                        setBatchExecutePlan((old) => ({
+                          ...old,
+                          items: old.items.map((x, i) => (i === idx ? { ...x, selected: e.target.checked } : x)),
+                        }))
+                      }
+                    />
+                    <span className="batch-item-info">
+                      <strong>{it.description}</strong>
+                      <small className="hint">
+                        {it.paymentMethod === "credit_card"
+                          ? `💳 ${cName || "Cartão"} · ${it.installmentCount}x`
+                          : `🏦 ${wName} · ${it.installmentCount > 1 ? `${it.installmentCount}x` : "À vista"}`}
+                      </small>
+                    </span>
+                    <strong>{money(it.amountCents)}</strong>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="form-grid" style={{ marginTop: 12 }}>
+              <label>
+                Data prevista / início
+                <input
+                  type="date"
+                  required
+                  value={batchExecutePlan.dueOn}
+                  onChange={(e) =>
+                    setBatchExecutePlan((old) => ({
+                      ...old,
+                      dueOn: e.target.value,
+                      items: old.items.map((x) => ({ ...x, dueOn: e.target.value })),
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                Categoria dos lançamentos
+                <select
+                  value={batchExecutePlan.category}
+                  onChange={(e) =>
+                    setBatchExecutePlan((old) => ({
+                      ...old,
+                      category: e.target.value,
+                      items: old.items.map((x) => ({ ...x, category: e.target.value })),
+                    }))
+                  }
+                >
+                  {(data?.categories || [])
+                    .filter((c) => c.direction === "expense" && !c.parent_id)
+                    .map((c) => (
+                      <option key={c.id} value={c.name}>
+                        {c.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
+            </div>
+            <label className="kc-check" style={{ marginTop: 10 }}>
+              <input
+                type="checkbox"
+                checked={batchExecutePlan.markFulfilled}
+                onChange={(e) => setBatchExecutePlan((old) => ({ ...old, markFulfilled: e.target.checked }))}
+              />
+              <span className="kc-check-box" aria-hidden="true">
+                <Check size={12} strokeWidth={3} />
+              </span>
+              <span>Marcar planejamento como concluído após lançar</span>
+            </label>
+            <div className="detail-actions" style={{ marginTop: 14 }}>
+              <button type="button" className="light-button" onClick={() => setBatchExecutePlan(null)}>
+                Cancelar
+              </button>
+              <button type="submit" className="pill pill-primary" style={{ justifyContent: "center" }} disabled={busy}>
+                {busy
+                  ? "Lançando..."
+                  : `Lançar ${batchExecutePlan.items.filter((x) => x.selected).length} item(ns)`}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {checkoutListPlan && (
+        <div
+          className="action-overlay open"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setCheckoutListPlan(null);
+          }}
+        >
+          <form className="dialog" role="dialog" aria-modal="true" aria-labelledby="checkoutListTitle" onSubmit={submitCheckoutList}>
+            <div className="dialog-head">
+              <div>
+                <div className="eyebrow">FINALIZAR COMPRA NO CAIXA</div>
+                <h2 id="checkoutListTitle">{checkoutListPlan.goal.title}</h2>
+              </div>
+              <button type="button" className="dialog-close" onClick={() => setCheckoutListPlan(null)} aria-label="Fechar">
+                <X size={17} />
+              </button>
+            </div>
+            <div className="form-group">
+              <label>
+                Valor total real pago no caixa (R$)
+                <MoneyInput
+                  value={checkoutListPlan.amountMask}
+                  onChange={(v) => setCheckoutListPlan((old) => ({ ...old, amountMask: v }))}
+                  ariaLabel="Valor pago no caixa"
+                />
+              </label>
+              <label>
+                Conta ou cartão utilizado
+                <select
+                  value={checkoutListPlan.creditCardId ? `card:${checkoutListPlan.creditCardId}` : checkoutListPlan.walletId}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v.startsWith("card:")) {
+                      const cid = v.slice(5);
+                      const c = creditCards.find((x) => x.id === cid);
+                      setCheckoutListPlan((old) => ({
+                        ...old,
+                        creditCardId: cid,
+                        walletId: c?.default_wallet_id || old.walletId,
+                      }));
+                    } else {
+                      setCheckoutListPlan((old) => ({ ...old, creditCardId: "", walletId: v }));
+                    }
+                  }}
+                >
+                  {checkingWallets.map((w) => (
+                    <option key={w.id} value={w.id}>
+                      🏦 {w.name}
+                    </option>
+                  ))}
+                  {creditCards.map((c) => (
+                    <option key={c.id} value={`card:${c.id}`}>
+                      💳 {c.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="form-grid">
+                <label>
+                  Categoria
+                  <select
+                    value={checkoutListPlan.category}
+                    onChange={(e) => setCheckoutListPlan((old) => ({ ...old, category: e.target.value }))}
+                  >
+                    {(data?.categories || [])
+                      .filter((c) => c.direction === "expense" && !c.parent_id)
+                      .map((c) => (
+                        <option key={c.id} value={c.name}>
+                          {c.name}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <label>
+                  Data da compra
+                  <input
+                    type="date"
+                    required
+                    max={TODAY}
+                    value={checkoutListPlan.paidOn}
+                    onChange={(e) => setCheckoutListPlan((old) => ({ ...old, paidOn: e.target.value }))}
+                  />
+                </label>
+              </div>
+            </div>
+            <div className="detail-actions" style={{ marginTop: 14 }}>
+              <button type="button" className="light-button" onClick={() => setCheckoutListPlan(null)}>
+                Voltar
+              </button>
+              <button type="submit" className="pill pill-primary" style={{ justifyContent: "center" }} disabled={busy}>
+                {busy ? "Registrando..." : "Confirmar pagamento"}
+              </button>
+            </div>
+          </form>
         </div>
       )}
 

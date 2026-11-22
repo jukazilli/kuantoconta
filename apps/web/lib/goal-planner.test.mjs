@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { comparePlanningQuotes, simulateGoalPurchase } from "./goal-planner.js";
+import { buildExecutionTitlesFromGoal, comparePlanningQuotes, compareSavedPlans, simulateGoalPurchase } from "./goal-planner.js";
 import { buildFinancialHealthPlan } from "./financial-health.js";
 
 test("FH-02: R$ 700 cash with R$ 600 rent tomorrow rejects R$ 500 down payment today", () => {
@@ -345,4 +345,88 @@ test("Trip planning (Viagem Paraná dia 19) and Caixinha without down payment co
   assert.ok(caixinhaNoDown.projectedPositions.caixinhaPosition);
   assert.equal(caixinhaNoDown.projectedPositions.caixinhaPosition.targetForPlanCents, 300000);
   assert.equal(caixinhaNoDown.projectedPositions.caixinhaPosition.stillNeededCents, 300000);
+});
+
+test("non-caixinha plan never leaks unrelated Caixinha (e.g. Entrada do carro) into caixinhaPosition", () => {
+  const rawData = {
+    wallets: [{ id: "w-chk", name: "Nubank", opening_balance_cents: 200000, opening_at: "2026-11-01T00:00:00Z", wallet_kind: "checking" }],
+    goals: [{ id: "g-car", title: "Entrada do carro", category: "capital_goal", target_cents: 1000000, wallet_id: "w-car" }],
+    creditCards: [{ id: "cc1", name: "Nubank", limit_cents: 300000, closing_day: 10, due_day: 17 }],
+    titles: [],
+    settlements: [],
+    assets: [],
+    liabilities: [],
+  };
+
+  const sim = simulateGoalPurchase(
+    rawData,
+    {
+      title: "Viagem ônibus ida e volta",
+      targetCents: 123000,
+      installmentCount: 12,
+      paymentMethod: "credit_card",
+      creditCardId: "cc1",
+      downPaymentSource: "checking",
+      sourceGoalId: "g-car", // stale/accidental sourceGoalId when not using caixinha
+      desiredOn: "2026-12-16",
+    },
+    { today: "2026-11-22" }
+  );
+
+  assert.equal(sim.projectedPositions.caixinhaPosition, null);
+});
+
+test("buildExecutionTitlesFromGoal launches each trip item individually with its own card and installments", () => {
+  const goalRecord = {
+    id: "g-trip",
+    title: "Viagem Paraná",
+    desired_on: "2026-12-16",
+    selected_wallet_id: "w-chk",
+    quotes_json: [
+      {
+        id: "q-1",
+        isChosen: true,
+        items: [
+          { id: "i1", title: "Passagens", amountCents: 56000, paymentMethod: "credit_card", creditCardId: "cc1", installmentCount: 12 },
+          { id: "i2", title: "Hospedagem", amountCents: 35000, paymentMethod: "credit_card", creditCardId: "cc1", installmentCount: 1 },
+          { id: "i3", title: "Alimentação", amountCents: 12000, paymentMethod: "standard", creditCardId: null, installmentCount: 1 },
+        ],
+      },
+    ],
+  };
+
+  const items = buildExecutionTitlesFromGoal(goalRecord, { defaultWalletId: "w-chk", defaultCategory: "Lazer", today: "2026-11-22" });
+  assert.equal(items.length, 3);
+  assert.equal(items[0].description, "Passagens");
+  assert.equal(items[0].amountCents, 56000);
+  assert.equal(items[0].mode, "installments");
+  assert.equal(items[0].installmentCount, 12);
+  assert.equal(items[0].creditCardId, "cc1");
+
+  assert.equal(items[1].description, "Hospedagem");
+  assert.equal(items[1].mode, "single");
+  assert.equal(items[1].creditCardId, "cc1");
+
+  assert.equal(items[2].description, "Alimentação");
+  assert.equal(items[2].paymentMethod, "standard");
+  assert.equal(items[2].creditCardId, null);
+});
+
+test("compareSavedPlans ranks 2+ saved plans side by side after creation", () => {
+  const rawData = {
+    wallets: [{ id: "w-chk", name: "Nubank", opening_balance_cents: 150000, opening_at: "2026-11-01T00:00:00Z", wallet_kind: "checking" }],
+    creditCards: [],
+    titles: [],
+    settlements: [],
+    assets: [],
+    liabilities: [],
+  };
+
+  const planBus = { id: "p-bus", title: "Viagem de ônibus", target_cents: 60000, installment_count: 1, desired_on: "2026-12-10", payment_method: "standard" };
+  const planPlane = { id: "p-plane", title: "Viagem de avião", target_cents: 220000, installment_count: 1, desired_on: "2026-12-10", payment_method: "standard" };
+
+  const cmp = compareSavedPlans(rawData, [planPlane, planBus], { today: "2026-11-22" });
+  assert.equal(cmp.hasComparison, true);
+  assert.equal(cmp.winner.id, "p-bus");
+  assert.equal(cmp.totalSavedVsWorstCents, 160000);
 });

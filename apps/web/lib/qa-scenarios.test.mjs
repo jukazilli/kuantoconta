@@ -208,10 +208,12 @@ test("Section 8: Migration 018, Unified Command Bar header with total balance pi
   assert.match(dashSrc, /checkingBalanceCents \+ capitalBalanceCents/);
   assert.match(dashSrc, />Planejamentos</);
   assert.match(dashSrc, />Novo planejamento</);
-  assert.match(wizardSrc, /comparePlanningQuotes/);
-  assert.match(wizardSrc, /1\. Objetivo/);
-  assert.match(wizardSrc, /2\. Opções e pagamento/);
-  assert.match(wizardSrc, /3\. Comparação e contas/);
+  assert.match(dashSrc, /compareSavedPlans/);
+  assert.match(dashSrc, /buildExecutionTitlesFromGoal/);
+  assert.match(wizardSrc, /Compra \/ Objetivo/);
+  assert.match(wizardSrc, /Viagem \/ Projeto/);
+  assert.match(wizardSrc, /Lista de compras/);
+  assert.match(wizardSrc, /Salvar planejamento/);
   assert.match(cssSrc, /\.drawer\.drawer-wide/);
 });
 

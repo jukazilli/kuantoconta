@@ -5212,3 +5212,148 @@ input:not([type=checkbox]):not([type=radio]), select, textarea { font-size: 16px
     display: none !important;
   }
 }
+
+/* ==========================================================================
+   Planejamento — Lista de Compras (iOS Reminders UX), Comparação e Lote
+   ========================================================================== */
+.compare-select-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  border-radius: 14px;
+  background: #fff4ed;
+  border: 1px solid #fed7aa;
+  font-size: 13px;
+  color: var(--kc-ink);
+}
+.goal-bento-card.compare-selected {
+  border-color: var(--kc-orange);
+  background: #fff4ed;
+}
+.compare-check-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 2px solid var(--kc-muted);
+  display: grid;
+  place-items: center;
+  background: #fff;
+}
+.compare-check-dot.checked {
+  border-color: var(--kc-orange);
+  background: var(--kc-orange);
+  color: #fff;
+}
+
+.checklist-quick-add {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.checklist-quick-add input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  border: 1px solid var(--kc-line);
+  border-radius: 12px;
+  background: var(--kc-surface-inner);
+  padding: 0 12px;
+  font-size: 15px;
+  color: var(--kc-ink);
+}
+.ios-checklist {
+  display: grid;
+  gap: 6px;
+  max-height: min(48dvh, 360px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.ios-check-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--kc-line);
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+  transition: transform .08s ease, background-color .12s ease;
+}
+.ios-check-row:active {
+  transform: scale(0.98);
+  background: #f8fafc;
+}
+.ios-check-circle {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  border: 2px solid #cbd5e1;
+  display: grid;
+  place-items: center;
+  background: #fff;
+}
+.ios-check-circle.checked {
+  border-color: var(--kc-orange);
+  background: var(--kc-orange);
+  color: #fff;
+}
+.ios-check-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--kc-ink);
+}
+.ios-check-row.done .ios-check-title {
+  text-decoration: line-through;
+  color: var(--kc-muted);
+}
+.ios-check-price {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--kc-muted-dark);
+}
+.ios-check-done-group {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--kc-line);
+}
+
+.batch-items-list {
+  display: grid;
+  gap: 8px;
+  max-height: min(44dvh, 320px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.batch-item-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--kc-line);
+  background: var(--kc-surface-inner);
+  cursor: pointer;
+}
+.batch-item-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--kc-orange);
+  flex: 0 0 auto;
+}
+.batch-item-info {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
