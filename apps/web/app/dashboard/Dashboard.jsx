@@ -18,6 +18,7 @@ import {
   Info,
   HeartPulse,
   Check,
+  CheckCircle2,
   Bell,
   Compass,
   Trash2,
