@@ -315,6 +315,7 @@ test("Mobile Exclusive UI/UX (Minhas Finanças + Kuantoconta Thesis): MobileWork
   assert.match(mobileSrc, /Nova caixinha/);
   assert.match(mobileSrc, /Efetivar planejamento/);
   assert.match(dashSrc, /kc-toast-popup/);
+  assert.match(dashSrc, /import\s*\{[^}]*\bCheckCircle2\b[^}]*\}\s*from "lucide-react"/);
   assert.match(dashSrc, /applyCutPlan/);
   assert.match(mobileSrc, /kc-mob-view-anim/);
   assert.match(cssSrc, /kcSheetSlideUpIn/);
